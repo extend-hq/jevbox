@@ -1,0 +1,5394 @@
+import { forwardRef, type SVGProps, type ReactNode } from "react";
+type IconProps = SVGProps<SVGSVGElement> & { size?: number | string };
+function icon(content: ReactNode) {
+  return forwardRef<SVGSVGElement, IconProps>(function Icon(
+    { size = 20, strokeWidth: _strokeWidth, ...props },
+    ref,
+  ) {
+    return (
+      <svg
+        ref={ref}
+        width={size}
+        height={size}
+        viewBox="0 0 20 20"
+        fill="currentColor"
+        aria-hidden="true"
+        {...props}
+      >
+        {content}
+      </svg>
+    );
+  });
+}
+export const Compose2 = icon(
+  <>
+    <path
+      d="m9.555,3h-3.555c-1.657,0-3,1.343-3,3v8c0,1.657,1.343,3,3,3h8c1.657,0,3-1.343,3-3v-3.545"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+    <path
+      d="m8,12l.5-3,5.707-5.699c.391-.391,1.024-.391,1.414,0l1.086,1.086c.391.391.391,1.024,0,1.414l-5.707,5.699-3,.5Z"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </>,
+);
+export const Cube = icon(
+  <g
+    fill="none"
+    stroke="currentColor"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    strokeWidth="2"
+  >
+    <polyline points="4.2639 6.406 10 9.752 15.7354 6.4064" />
+    <line x1="10" x2="10" y1="9.752" y2="16.9346" />
+    <path d="m8.9923,3.3378l-4,2.3333c-.6144.3584-.9923,1.0162-.9923,1.7276v5.2025c0,.7113.3778,1.3691.9923,1.7276l4,2.3333c.6227.3633,1.3928.3633,2.0155,0l4-2.3333c.6144-.3584.9923-1.0162.9923-1.7276v-5.2025c0-.7113-.3778-1.3691-.9923-1.7276l-4-2.3333c-.6227-.3633-1.3928-.3633-2.0155,0Z" />
+  </g>,
+);
+const NucleoAlignVertical = icon(
+  <>
+    <g>
+      <line
+        x1="17"
+        y1="10"
+        x2="3"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <rect
+        x="8"
+        y="5"
+        width="4"
+        height="10"
+        rx="1"
+        ry="1"
+        transform="translate(20 20) rotate(-180)"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoArrowDoorOut = icon(
+  <>
+    <g>
+      <path
+        d="m17,6c0-1.195-.703-2.217-1.714-2.7l-2.993,2.993c-.188.188-.293.442-.293.707v6c0,.265.105.52.293.707l2.993,2.993c1.011-.483,1.714-1.505,1.714-2.7V6Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+      <line
+        x1="3"
+        y1="10"
+        x2="9"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m7.44,15.544c.526.869,1.47,1.456,2.56,1.456h4c1.657,0,3-1.343,3-3V6c0-1.657-1.343-3-3-3h-4c-1.089,0-2.033.585-2.558,1.453"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <polyline
+        points="5.75 7.5 3 10 5.75 12.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoArrowDown = icon(
+  <>
+    <g>
+      <line
+        x1="10"
+        y1="3"
+        x2="10"
+        y2="17"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <polyline
+        points="5 12 10 17 15 12"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoArrowDownRight = icon(
+  <>
+    <g>
+      <line
+        x1="4"
+        y1="4"
+        x2="16"
+        y2="16"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <polyline
+        points="16 9 16 16 9 16"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoArrowLeft = icon(
+  <>
+    <g>
+      <line
+        x1="17"
+        y1="10"
+        x2="3"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <polyline
+        points="8 5 3 10 8 15"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoArrowRight = icon(
+  <>
+    <g>
+      <line
+        x1="3"
+        y1="10"
+        x2="17"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <polyline
+        points="12 15 17 10 12 5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoArrowRotateAnticlockwise = icon(
+  <>
+    <g>
+      <path
+        d="m5,5.101c1.271-1.297,3.041-2.101,5-2.101,3.866,0,7,3.134,7,7s-3.134,7-7,7c-2.792,0-5.203-1.635-6.326-4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <polygon
+        points="4.367 3.044 3.771 6.798 7.516 6.145 4.367 3.044"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></polygon>
+    </g>
+  </>,
+);
+const NucleoArrowUp = icon(
+  <>
+    <g>
+      <line
+        x1="10"
+        y1="17"
+        x2="10"
+        y2="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <polyline
+        points="15 8 10 3 5 8"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoArrowUpRight = icon(
+  <>
+    <g>
+      <line
+        x1="4"
+        y1="16"
+        x2="16"
+        y2="4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <polyline
+        points="16 11 16 4 9 4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoArrowsCross = icon(
+  <>
+    <g>
+      <line
+        x1="12.475"
+        y1="12.475"
+        x2="17"
+        y2="17"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="3"
+        y1="3"
+        x2="7.525"
+        y2="7.525"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <polyline
+        points="12 17 17 17 17 12"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <polyline
+        points="17 8 17 3 12 3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <line
+        x1="3"
+        y1="17"
+        x2="17"
+        y2="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoArrowsExpandX = icon(
+  <>
+    <g>
+      <polyline
+        points="14 6 18 10 14 14"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <line
+        x1="18"
+        y1="10"
+        x2="12"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <polyline
+        points="6 6 2 10 6 14"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <line
+        x1="2"
+        y1="10"
+        x2="8"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoArrowsExpandY = icon(
+  <>
+    <g>
+      <polyline
+        points="14 14 10 18 6 14"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <line
+        x1="10"
+        y1="18"
+        x2="10"
+        y2="12"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <polyline
+        points="14 6 10 2 6 6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <line
+        x1="10"
+        y1="2"
+        x2="10"
+        y2="8"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoArrowsReduceDiagonal = icon(
+  <>
+    <g>
+      <polyline
+        points="3 12 8 12 8 17"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <line
+        x1="8"
+        y1="12"
+        x2="3"
+        y2="17"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <polyline
+        points="17 8 12 8 12 3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <line
+        x1="12"
+        y1="8"
+        x2="17"
+        y2="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoBarsFilter = icon(
+  <>
+    <g>
+      <line
+        x1="14"
+        y1="10"
+        x2="6"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="3"
+        y1="5"
+        x2="17"
+        y2="5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="9"
+        y1="15"
+        x2="11"
+        y2="15"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoBook = icon(
+  <>
+    <g>
+      <line
+        x1="8"
+        y1="5"
+        x2="8"
+        y2="17"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m4,7v-.9164c0-1.485,1.0864-2.7465,2.555-2.9668l7.445-1.1168"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <rect
+        x="4"
+        y="5"
+        width="12"
+        height="12"
+        rx="2"
+        ry="2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <rect
+        x="11"
+        y="9"
+        width="2"
+        height="1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoBooks = icon(
+  <>
+    <g>
+      <path
+        d="m3,4h10.5c1.3807,0,2.5,1.1193,2.5,2.5h0c0,1.3807-1.1193,2.5-2.5,2.5H3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m11.5,14h-5c-1.3807,0-2.5-1.1193-2.5-2.5h0c0-1.3807,1.1193-2.5,2.5-2.5h10.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <line
+        x1="17"
+        y1="14"
+        x2="16"
+        y2="14"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m12.25,11.5h-3.5c-.4141,0-.75.3359-.75.75v5c0,.3203.2031.6055.5068.709.3037.1025.6387.0039.835-.248l1.1582-1.4893,1.1582,1.4893c.1445.1855.3652.2891.5918.2891.0811,0,.1631-.0137.2432-.041.3037-.1035.5068-.3887.5068-.709v-5c0-.4141-.3359-.75-.75-.75Z"
+        fill="currentColor"
+        strokeWidth="0"
+      ></path>
+      <path
+        d="m4,4c1.3333,1.6667,1.3333,3.3333,0,5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m16,14c-1.3333-1.6667-1.3333-3.3333,0-5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoBox = icon(
+  <>
+    <g>
+      <line
+        x1="10"
+        y1="3"
+        x2="10"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m13.4708,3h-6.9415c-.6459,0-1.252.3119-1.6275.8375l-1.5292,2.1409c-.2423.3392-.3725.7456-.3725,1.1625v6.8591c0,1.6569,1.3431,3,3,3h8c1.6569,0,3-1.3431,3-3v-6.8591c0-.4168-.1302-.8233-.3725-1.1625l-1.5292-2.1409c-.3754-.5256-.9816-.8375-1.6275-.8375Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <line
+        x1="3.1064"
+        y1="6.5"
+        x2="16.8934"
+        y2="6.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoBrightnessIncrease = icon(
+  <>
+    <g>
+      <circle
+        cx="10"
+        cy="10"
+        r="4"
+        strokeWidth="0"
+        fill="currentColor"
+      ></circle>
+      <line
+        x1="10"
+        y1="2"
+        x2="10"
+        y2="3.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="15.657"
+        y1="4.343"
+        x2="14.596"
+        y2="5.404"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="18"
+        y1="10"
+        x2="16.5"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="15.657"
+        y1="15.657"
+        x2="14.596"
+        y2="14.596"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="10"
+        y1="18"
+        x2="10"
+        y2="16.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="4.343"
+        y1="15.657"
+        x2="5.404"
+        y2="14.596"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="2"
+        y1="10"
+        x2="3.5"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="4.343"
+        y1="4.343"
+        x2="5.404"
+        y2="5.404"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoBrush = icon(
+  <>
+    <g>
+      <line
+        x1="11"
+        y1="3"
+        x2="11"
+        y2="7"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m8,3h7v7c0,1.6557-1.3443,3-3,3h-4c-1.6557,0-3-1.3443-3-3v-4c0-1.6557,1.3443-3,3-3Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m5,10h10c0,1.6557-1.3443,3-3,3h-4c-1.6557,0-3-1.3443-3-3h0Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+      <path
+        d="m10,17h0c-.4064,0-.7286-.3429-.7032-.7485l.2032-3.2515h1l.2032,3.2515c.0254.4056-.2968.7485-.7032.7485Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoBulletList = icon(
+  <>
+    <g>
+      <circle
+        cx="4"
+        cy="4"
+        r="1"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <line
+        x1="9"
+        y1="4"
+        x2="17"
+        y2="4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="9"
+        y1="8"
+        x2="17"
+        y2="8"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <circle
+        cx="4"
+        cy="12"
+        r="1"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <line
+        x1="9"
+        y1="12"
+        x2="17"
+        y2="12"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="9"
+        y1="16"
+        x2="17"
+        y2="16"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoCalendar = icon(
+  <>
+    <g>
+      <rect
+        x="3"
+        y="4"
+        width="14"
+        height="12"
+        rx="3"
+        ry="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <path
+        d="m17,8v-1c0-1.6569-1.3431-3-3-3H6c-1.6569,0-3,1.3431-3,3v1h14Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+      <line
+        x1="6"
+        y1="4"
+        x2="6"
+        y2="2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="14"
+        y1="4"
+        x2="14"
+        y2="2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoCamera = icon(
+  <>
+    <g>
+      <circle
+        cx="10"
+        cy="10.5"
+        r="3"
+        fill="currentColor"
+        strokeWidth="0"
+      ></circle>
+      <path
+        d="m14,5h-1.0833l-.6493-1.4167c-.1629-.3554-.5181-.5833-.9091-.5833h-2.7166c-.391,0-.7461.2279-.9091.5833l-.6493,1.4167h-1.0833c-1.6569,0-3,1.3431-3,3v5c0,1.6569,1.3431,3,3,3h8c1.6569,0,3-1.3431,3-3v-5c0-1.6569-1.3431-3-3-3Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoCarousel = icon(
+  <>
+    <g>
+      <path
+        d="m6,5.946l-2.684-.895c-.307-.101-.64-.051-.901.138-.261.188-.415.49-.415.811v8c0,.321.154.623.415.811.173.125.378.189.585.189.106,0,.213-.017.316-.051l2.684-.895V5.946Z"
+        fill="currentColor"
+        strokeWidth="0"
+      ></path>
+      <path
+        d="m14,5.946l2.684-.895c.307-.101.64-.051.901.138.261.188.415.49.415.811v8c0,.321-.154.623-.415.811-.173.125-.378.189-.585.189-.106,0-.213-.017-.316-.051l-2.684-.895V5.946Z"
+        fill="currentColor"
+        strokeWidth="0"
+      ></path>
+      <rect
+        x="4"
+        y="6"
+        width="12"
+        height="8"
+        rx="1"
+        ry="1"
+        transform="translate(20) rotate(90)"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoCheck = icon(
+  <>
+    <g>
+      <polyline
+        points="4 11 8 15 16 5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoCheckboxChecked = icon(
+  <g>
+    <rect
+      x="3"
+      y="3"
+      width="14"
+      height="14"
+      rx="3"
+      ry="3"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+    <polyline
+      points="6.5 10.5 8.75 13 13.5 7"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+  </g>,
+);
+const NucleoChevronDown = icon(
+  <>
+    <g>
+      <polyline
+        points="3.5 7.5 10 14 16.5 7.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoChevronExpandY = icon(
+  <>
+    <g>
+      <polyline
+        points="13 7 10 4 7 7"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <polyline
+        points="13 13 10 16 7 13"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoChevronLeft = icon(
+  <>
+    <g>
+      <polyline
+        points="12.5 3.5 6 10 12.5 16.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoChevronRight = icon(
+  <>
+    <g>
+      <polyline
+        points="7.5 16.5 14 10 7.5 3.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoChevronUp = icon(
+  <>
+    <g>
+      <polyline
+        points="16.5 12.5 10 6 3.5 12.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoCircleInfo = icon(
+  <>
+    <g>
+      <path
+        d="m10,2C5.589,2,2,5.589,2,10s3.589,8,8,8,8-3.589,8-8S14.411,2,10,2Zm1,12c0,.552-.447,1-1,1s-1-.448-1-1v-4.5c0-.552.447-1,1-1s1,.448,1,1v4.5Zm-1-6.5c-.689,0-1.25-.561-1.25-1.25s.561-1.25,1.25-1.25,1.25.561,1.25,1.25-.561,1.25-1.25,1.25Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoCircleMinus = icon(
+  <>
+    <g>
+      <circle
+        cx="10"
+        cy="10"
+        r="7"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <line
+        x1="7"
+        y1="10"
+        x2="13"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoCirclePlus = icon(
+  <>
+    <g>
+      <circle
+        cx="10"
+        cy="10"
+        r="7"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <line
+        x1="10"
+        y1="13"
+        x2="10"
+        y2="7"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="7"
+        y1="10"
+        x2="13"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoClipboard = icon(
+  <>
+    <g>
+      <rect
+        x="4"
+        y="4"
+        width="12"
+        height="13"
+        rx="3"
+        ry="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <rect
+        x="8"
+        y="3"
+        width="4"
+        height="2"
+        rx=".25"
+        ry=".25"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoClone = icon(
+  <g>
+    <path
+      d="m13,7h2c1.105,0,2,.895,2,2v6c0,1.105-.895,2-2,2h-6c-1.105,0-2-.895-2-2v-2"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <rect
+      x="3"
+      y="3"
+      width="10"
+      height="10"
+      rx="2"
+      ry="2"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </g>,
+);
+const NucleoCodeBranch = icon(
+  <>
+    <g>
+      <line
+        x1="6"
+        y1="7"
+        x2="6"
+        y2="13"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m6,12h0c0-1.1046.8954-2,2-2h4c1.1046,0,2-.8954,2-2v-1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <circle
+        cx="6"
+        cy="5"
+        r="2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <circle
+        cx="14"
+        cy="5"
+        r="2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <circle
+        cx="6"
+        cy="15"
+        r="2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+    </g>
+  </>,
+);
+const NucleoCodeCompare = icon(
+  <>
+    <g>
+      <path
+        d="m5,7v6c0,1.1046.8954,2,2,2h1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <polygon
+        points="8 13.25 10 15 8 16.75 8 13.25"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polygon>
+      <path
+        d="m15,13v-6c0-1.1046-.8954-2-2-2h-1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <polygon
+        points="12 6.75 10 5 12 3.25 12 6.75"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polygon>
+      <circle
+        cx="5"
+        cy="5"
+        r="2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <circle
+        cx="15"
+        cy="15"
+        r="2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+    </g>
+  </>,
+);
+const NucleoCodeEditor = icon(
+  <>
+    <g>
+      <rect
+        x="3"
+        y="4"
+        width="14"
+        height="12"
+        rx="3"
+        ry="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <path
+        d="m7,4h-1c-1.6569,0-3,1.3431-3,3v6c0,1.6569,1.3431,3,3,3h1V4Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+      <path
+        d="m11.25,8h-2.25c-.4141,0-.75-.3359-.75-.75s.3359-.75.75-.75h2.25c.4141,0,.75.3359.75.75s-.3359.75-.75.75Z"
+        fill="currentColor"
+        strokeWidth="0"
+      ></path>
+      <path
+        d="m11.25,13.5h-2.25c-.4141,0-.75-.3359-.75-.75s.3359-.75.75-.75h2.25c.4141,0,.75.3359.75.75s-.3359.75-.75.75Z"
+        fill="currentColor"
+        strokeWidth="0"
+      ></path>
+      <path
+        d="m14,10.75h-3.25c-.4141,0-.75-.3359-.75-.75s.3359-.75.75-.75h3.25c.4141,0,.75.3359.75.75s-.3359.75-.75.75Z"
+        fill="currentColor"
+        strokeWidth="0"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoCursorDefault = icon(
+  <>
+    <g>
+      <path
+        d="m3.5792,5.4666l3.3377,10.013c.4339,1.3017,2.2466,1.3771,2.7871.1159l1.5935-3.7181c.1117-.2607.3194-.4684.5801-.5801l3.7181-1.5935c1.2611-.5405,1.1857-2.3532-.1159-2.7871L5.4666,3.5792c-1.1665-.3888-2.2763.7209-1.8875,1.8875Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoCurve = icon(
+  <>
+    <g>
+      <path
+        d="m3.4783,16c9.6522,0,3.3913-12,13.0435-12"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoDividerX = icon(
+  <>
+    <g>
+      <line
+        x1="10"
+        y1="17"
+        x2="10"
+        y2="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m17,16h-1c-1.105,0-2-.895-2-2V6c0-1.105.895-2,2-2h1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m3,16h1c1.105,0,2-.895,2-2V6c0-1.105-.895-2-2-2h-1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoDividerY = icon(
+  <>
+    <g>
+      <line
+        x1="17"
+        y1="10"
+        x2="3"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m16,3v1c0,1.105-.895,2-2,2H6c-1.105,0-2-.895-2-2v-1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m16,17v-1c0-1.105-.895-2-2-2H6c-1.105,0-2,.895-2,2v1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoDots = icon(
+  <>
+    <g>
+      <circle
+        cx="10"
+        cy="10"
+        r="1.5"
+        fill="currentColor"
+        strokeWidth="0"
+      ></circle>
+      <circle
+        cx="16.5"
+        cy="10"
+        r="1.5"
+        strokeWidth="0"
+        fill="currentColor"
+      ></circle>
+      <circle
+        cx="3.5"
+        cy="10"
+        r="1.5"
+        strokeWidth="0"
+        fill="currentColor"
+      ></circle>
+    </g>
+  </>,
+);
+const NucleoDownload = icon(
+  <>
+    <g>
+      <polyline
+        points="12.75 10.25 10 13 7.25 10.25"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <line
+        x1="10"
+        y1="3"
+        x2="10"
+        y2="13"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m13.285,7c1.541,0,2.832,1.168,2.985,2.701l.4,4c.177,1.766-1.21,3.299-2.985,3.299h-7.37c-1.775,0-3.162-1.532-2.985-3.299l.4-4c.153-1.534,1.444-2.701,2.985-2.701"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoExternalLink = icon(
+  <>
+    <g>
+      <polyline
+        points="12 12 12 8 8 8"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <line
+        x1="3"
+        y1="17"
+        x2="12"
+        y2="8"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m7.95,17h5.05c1.657,0,3-1.343,3-3V6c0-1.657-1.343-3-3-3h-6c-1.657,0-3,1.343-3,3v5.05"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoEye = icon(
+  <g>
+    <path
+      d="m3.361,11.314c-.481-.8-.481-1.829,0-2.629.962-1.714,3.175-4.686,6.639-4.686s5.677,2.971,6.639,4.686c.481.8.481,1.829,0,2.629-.962,1.714-3.175,4.686-6.639,4.686s-5.677-2.857-6.639-4.686Z"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+    <circle
+      cx="10"
+      cy="10"
+      r="3"
+      fill="currentColor"
+      strokeWidth="0"
+      data-color="color-2"
+    />
+  </g>,
+);
+const NucleoEyeDropper = icon(
+  <>
+    <g>
+      <path
+        d="m10.5,6.5l2.8787-2.8787c.8284-.8284,2.1716-.8284,3,0h0c.8284.8284.8284,2.1716,0,3l-2.8787,2.8787-3-3Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+      <path
+        d="m13.5,9.5l-5.8787,5.8787c-.8284.8284-2.1716.8284-3,0h0c-.8284-.8284-.8284-2.1716,0-3l5.8787-5.8787"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m10.5,6.5l2.8787-2.8787c.8284-.8284,2.1716-.8284,3,0h0c.8284.8284.8284,2.1716,0,3l-2.8787,2.8787"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <line
+        x1="4.6213"
+        y1="15.3787"
+        x2="3"
+        y2="17"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="9"
+        y1="5"
+        x2="15"
+        y2="11"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoEyeSensor = icon(
+  <>
+    <g>
+      <path
+        d="m16,13c0,.571-2,4-6,4s-6-3.429-6-4,2-4,6-4,6,3.429,6,4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <circle
+        cx="10"
+        cy="13"
+        r="2"
+        strokeWidth="0"
+        fill="currentColor"
+      ></circle>
+      <path
+        d="m6.464,3.464c1.953-1.953,5.118-1.953,7.071,0"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m8.586,5.586c.781-.781,2.047-.781,2.828,0"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoFile = icon(
+  <>
+    <g>
+      <path
+        d="m4,7h3c.552,0,1-.448,1-1v-3"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m16,14v-8c0-1.657-1.343-3-3-3h-4.586c-.265,0-.52.105-.707.293l-3.414,3.414c-.188.188-.293.442-.293.707v6.586c0,1.657,1.343,3,3,3h6c1.657,0,3-1.343,3-3Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoFileContent = icon(
+  <>
+    <g>
+      <path
+        d="m4,7h3c.552,0,1-.448,1-1v-3"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></path>
+      <line
+        x1="12.5"
+        y1="9"
+        x2="10"
+        y2="9"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="12.5"
+        y1="13"
+        x2="7.5"
+        y2="13"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m16,14v-8c0-1.657-1.343-3-3-3h-4.586c-.265,0-.52.105-.707.293l-3.414,3.414c-.188.188-.293.442-.293.707v6.586c0,1.657,1.343,3,3,3h6c1.657,0,3-1.343,3-3Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoFilePlus = icon(
+  <>
+    <g>
+      <path
+        d="m4,7h3c.552,0,1-.448,1-1v-3"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></path>
+      <line
+        x1="14"
+        y1="17"
+        x2="14"
+        y2="11"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m16,8.149v-2.149c0-1.657-1.343-3-3-3h-4.586c-.265,0-.52.105-.707.293l-3.414,3.414c-.188.188-.293.442-.293.707v6.586c0,1.657,1.343,3,3,3h2.239"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <line
+        x1="11"
+        y1="14"
+        x2="17"
+        y2="14"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoFileZip = icon(
+  <>
+    <g>
+      <path
+        d="m4,7h3c.552,0,1-.448,1-1v-3"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></path>
+      <path
+        d="m16,14v-8c0-1.657-1.343-3-3-3h-4.586c-.265,0-.52.105-.707.293l-3.414,3.414c-.188.188-.293.442-.293.707v6.586c0,1.657,1.343,3,3,3h6c1.657,0,3-1.343,3-3Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <rect
+        x="8.5"
+        y="14"
+        width="2.5"
+        height="2"
+        fill="currentColor"
+        strokeWidth="0"
+      ></rect>
+      <rect
+        x="11"
+        y="12"
+        width="2.5"
+        height="2"
+        fill="currentColor"
+        strokeWidth="0"
+      ></rect>
+      <rect
+        x="8.5"
+        y="10"
+        width="2.5"
+        height="2"
+        fill="currentColor"
+        strokeWidth="0"
+      ></rect>
+      <rect
+        x="11"
+        y="8"
+        width="2.5"
+        height="2"
+        fill="currentColor"
+        strokeWidth="0"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoFlag2 = icon(
+  <>
+    <g>
+      <path
+        d="m5,4h8c1.1038,0,2,.8962,2,2v3c0,1.1038-.8962,2-2,2H5v-7h0Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <line
+        x1="5"
+        y1="3"
+        x2="5"
+        y2="17"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoFloppyDisk = icon(
+  <>
+    <g>
+      <path
+        d="m17.707,6.293l-4-4c-.188-.188-.441-.293-.707-.293h-1v4c0,.552-.447,1-1,1h-5c-.553,0-1-.448-1-1v-3.858c-1.721.447-3,2-3,3.858v8c0,2.206,1.794,4,4,4h8c2.206,0,4-1.794,4-4v-7c0-.265-.105-.52-.293-.707Zm-2.707,7.707c0,.552-.447,1-1,1H6c-.553,0-1-.448-1-1v-2c0-.552.447-1,1-1h8c.553,0,1,.448,1,1v2Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+      <rect
+        x="8"
+        y="2"
+        width="2"
+        height="3"
+        fill="currentColor"
+        strokeWidth="0"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoFolder = icon(
+  <g>
+    <path
+      d="m13.5,6h-3.5l-1.703-2.555c-.185-.278-.498-.445-.832-.445h-2.965c-.828,0-1.5.672-1.5,1.5v9.5c0,.781.299,1.491.789,2.025-.254-.42-.365-.931-.248-1.459l1.111-5c.203-.915,1.015-1.566,1.952-1.566h8.396v-.5c0-.828-.672-1.5-1.5-1.5Z"
+      fill="currentColor"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <path
+      d="m14.041,17H5.493c-1.279,0-2.23-1.185-1.952-2.434l1.111-5c.203-.915,1.015-1.566,1.952-1.566h8.548c1.279,0,2.23,1.185,1.952,2.434l-1.111,5c-.203.915-1.015,1.566-1.952,1.566Z"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </g>,
+);
+const NucleoFolderPlus = icon(
+  <>
+    <g>
+      <path
+        d="m10,6H3v-1.5c0-.828.672-1.5,1.5-1.5h2.965c.334,0,.647.167.832.445l1.703,2.555Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></path>
+      <line
+        x1="14"
+        y1="17"
+        x2="14"
+        y2="11"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="11"
+        y1="14"
+        x2="17"
+        y2="14"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m17,9.239v-1.739c0-.828-.672-1.5-1.5-1.5H3v8c0,1.657,1.343,3,3,3h3.239"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoFolderTree = icon(
+  <>
+    <g>
+      <polyline
+        points="4 3 4 6 7 6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <path
+        d="m4,6v7c0,1.105.895,2,2,2h1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m12.75,4.5l-1-1.5h-1.25c-.276,0-.5.224-.5.5v3.5c0,.552.448,1,1,1h4c.552,0,1-.448,1-1v-2c0-.276-.224-.5-.5-.5h-2.75Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></path>
+      <path
+        d="m12.75,13.5l-1-1.5h-1.25c-.276,0-.5.224-.5.5v3.5c0,.552.448,1,1,1h4c.552,0,1-.448,1-1v-2c0-.276-.224-.5-.5-.5h-2.75Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoFullScreen4 = icon(
+  <>
+    <g>
+      <path
+        d="m3,7v-1c0-1.657,1.343-3,3-3h1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m7,17h-1c-1.657,0-3-1.343-3-3v-1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m17,13v1c0,1.657-1.343,3-3,3h-1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m13,3h1c1.657,0,3,1.343,3,3v1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <rect
+        x="8"
+        y="8"
+        width="4"
+        height="4"
+        rx="1"
+        ry="1"
+        transform="translate(20 0) rotate(90)"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoGear4 = icon(
+  <>
+    <g>
+      <path
+        d="m17.447,8.605l-.673-.336c-.167-.653-.425-1.268-.761-1.834l.238-.715c.12-.359.026-.756-.242-1.023l-.707-.707c-.268-.269-.665-.363-1.023-.242l-.715.238c-.565-.336-1.181-.594-1.834-.761l-.336-.673c-.169-.339-.516-.553-.895-.553h-1c-.379,0-.725.214-.895.553l-.336.673c-.653.167-1.268.425-1.834.761l-.715-.238c-.359-.121-.755-.026-1.023.242l-.707.707c-.268.268-.361.664-.242,1.023l.238.715c-.336.565-.594,1.181-.761,1.834l-.673.336c-.339.169-.553.516-.553.895v1c0,.379.214.725.553.895l.673.336c.167.653.425,1.268.761,1.834l-.238.715c-.12.359-.026.756.242,1.023l.707.707c.19.191.446.293.707.293.106,0,.212-.017.316-.051l.715-.238c.565.336,1.181.594,1.834.761l.336.673c.169.339.516.553.895.553h1c.379,0,.725-.214.895-.553l.336-.673c.653-.167,1.268-.425,1.834-.761l.715.238c.104.035.21.051.316.051.261,0,.517-.103.707-.293l.707-.707c.268-.268.361-.664.242-1.023l-.238-.715c.336-.565.594-1.181.761-1.834l.673-.336c.339-.169.553-.516.553-.895v-1c0-.379-.214-.725-.553-.895Zm-7.447,6.395c-2.761,0-5-2.239-5-5s2.239-5,5-5,5,2.239,5,5-2.239,5-5,5Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoGearKeyhole = icon(
+  <>
+    <g>
+      <path
+        d="m17.447,8.605l-1.278-.639c-.101-.307-.227-.602-.371-.887l.453-1.359c.12-.359.026-.756-.242-1.023l-.707-.707c-.268-.269-.664-.363-1.023-.242l-1.359.453c-.285-.144-.58-.269-.887-.371l-.639-1.278c-.169-.339-.516-.553-.895-.553h-1c-.379,0-.725.214-.895.553l-.639,1.278c-.307.101-.602.227-.887.371l-1.359-.453c-.361-.121-.756-.026-1.023.242l-.707.707c-.268.268-.361.664-.242,1.023l.453,1.359c-.144.285-.269.58-.371.887l-1.278.639c-.339.169-.553.516-.553.895v1c0,.379.214.725.553.895l1.278.639c.101.307.227.602.371.887l-.453,1.359c-.12.359-.026.756.242,1.023l.707.707c.19.191.446.293.707.293.106,0,.212-.017.316-.051l1.359-.453c.285.144.58.269.887.371l.639,1.278c.169.339.516.553.895.553h1c.379,0,.725-.214.895-.553l.639-1.278c.307-.101.602-.227.887-.371l1.359.453c.104.035.21.051.316.051.261,0,.517-.103.707-.293l.707-.707c.268-.268.361-.664.242-1.023l-.453-1.359c.144-.285.269-.58.371-.887l1.278-.639c.339-.169.553-.516.553-.895v-1c0-.379-.214-.725-.553-.895Zm-6.447,2.617v1.277c0,.552-.448,1-1,1s-1-.448-1-1v-1.277c-.595-.346-1-.984-1-1.723,0-1.105.895-2,2-2s2,.895,2,2c0,.738-.405,1.376-1,1.723Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoGlobe = icon(
+  <>
+    <g>
+      <ellipse
+        cx="10"
+        cy="10"
+        rx="7"
+        ry="2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></ellipse>
+      <ellipse
+        cx="10"
+        cy="10"
+        rx="2.5"
+        ry="7"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></ellipse>
+      <circle
+        cx="10"
+        cy="10"
+        r="7"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+    </g>
+  </>,
+);
+const NucleoGrid2 = icon(
+  <>
+    <g>
+      <rect
+        x="3"
+        y="3"
+        width="5"
+        height="5"
+        rx="1.5"
+        ry="1.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <rect
+        x="12"
+        y="3"
+        width="5"
+        height="5"
+        rx="1.5"
+        ry="1.5"
+        transform="translate(8.136 -8.642) rotate(45)"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <rect
+        x="3"
+        y="12"
+        width="5"
+        height="5"
+        rx="1.5"
+        ry="1.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <rect
+        x="12"
+        y="12"
+        width="5"
+        height="5"
+        rx="1.5"
+        ry="1.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoGridLayout = icon(
+  <>
+    <g>
+      <rect
+        x="12"
+        y="3"
+        width="5"
+        height="7"
+        rx="1"
+        ry="1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <rect
+        x="3"
+        y="10"
+        width="5"
+        height="7"
+        rx="1"
+        ry="1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <rect
+        x="2"
+        y="2"
+        width="7"
+        height="5"
+        rx="2"
+        ry="2"
+        fill="currentColor"
+        strokeWidth="0"
+      ></rect>
+      <rect
+        x="11"
+        y="13"
+        width="7"
+        height="5"
+        rx="2"
+        ry="2"
+        fill="currentColor"
+        strokeWidth="0"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoGridLayoutCols3 = icon(
+  <>
+    <g>
+      <rect
+        x="9"
+        y="3"
+        width="2"
+        height="14"
+        rx=".5"
+        ry=".5"
+        transform="translate(20 20) rotate(-180)"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <rect
+        x="15"
+        y="3"
+        width="2"
+        height="14"
+        rx=".5"
+        ry=".5"
+        transform="translate(32 20) rotate(-180)"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></rect>
+      <rect
+        x="3"
+        y="3"
+        width="2"
+        height="14"
+        rx=".5"
+        ry=".5"
+        transform="translate(8 20) rotate(-180)"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoGripDotsVertical = icon(
+  <>
+    <g>
+      <circle
+        cx="6.5"
+        cy="10"
+        r="1.5"
+        fill="currentColor"
+        strokeWidth="0"
+      ></circle>
+      <circle
+        cx="6.5"
+        cy="16.5"
+        r="1.5"
+        strokeWidth="0"
+        fill="currentColor"
+      ></circle>
+      <circle
+        cx="6.5"
+        cy="3.5"
+        r="1.5"
+        strokeWidth="0"
+        fill="currentColor"
+      ></circle>
+      <circle
+        cx="13.5"
+        cy="10"
+        r="1.5"
+        fill="currentColor"
+        strokeWidth="0"
+      ></circle>
+      <circle
+        cx="13.5"
+        cy="16.5"
+        r="1.5"
+        strokeWidth="0"
+        fill="currentColor"
+      ></circle>
+      <circle
+        cx="13.5"
+        cy="3.5"
+        r="1.5"
+        strokeWidth="0"
+        fill="currentColor"
+      ></circle>
+    </g>
+  </>,
+);
+const NucleoHand2 = icon(
+  <>
+    <g>
+      <line
+        x1="16"
+        y1="5"
+        x2="16"
+        y2="11"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="13"
+        y1="4"
+        x2="13"
+        y2="12"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="10"
+        y1="3"
+        x2="10"
+        y2="13"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="7"
+        y1="4"
+        x2="7"
+        y2="12"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="7.384"
+        y1="15.082"
+        x2="3.5"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.5"
+      ></line>
+      <path
+        d="m7,10.5v1.5l-.793,1.43c.615,2.065,2.528,3.57,4.793,3.57,2.761,0,5-2.239,5-5v-1.5H7Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoHighlighter = icon(
+  <>
+    <g>
+      <path
+        d="m7.8219,15.6915l-2.412-1.901c-.1439-.1134-.2604-.2467-.3642-.3873-.0153.0164-.0361.0239-.0505.0416l-2.376,2.9248c-.2432.2993-.292.7119-.127,1.0601.166.3486.5176.5703.9033.5703h2.8545c.2969,0,.5791-.1318.7686-.3604l1.2803-1.5386c.0294-.0352.0389-.0782.0626-.116-.1889-.0707-.3726-.162-.5396-.2935Z"
+        fill="currentColor"
+        strokeWidth="0"
+      ></path>
+      <rect
+        x="4.1027"
+        y="6.0249"
+        width="13.1924"
+        height="7.0711"
+        rx="2"
+        ry="2"
+        transform="translate(-3.4324 12.0454) rotate(-51.7571)"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <line
+        x1="14.7819"
+        y1="4.3798"
+        x2="10.9928"
+        y2="9.1874"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoImageSparkle = icon(
+  <>
+    <g>
+      <path
+        d="m17,11.5859l-2.7324-2.7324c-.9746-.9746-2.5605-.9746-3.5352,0l-6.9937,6.9937c-.017.017-.0217.0414-.0372.0594.5503.6625,1.3699,1.0934,2.2985,1.0934h8c1.6569,0,3-1.3431,3-3v-2.4141Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+      <rect
+        x="3"
+        y="3"
+        width="14"
+        height="14"
+        rx="3"
+        ry="3"
+        transform="translate(0 20) rotate(-90)"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <path
+        d="m9.6526,6.978l-1.2005-.4533-.4506-1.2087c-.1562-.4214-.8468-.4214-1.0031,0l-.4506,1.2087-1.2005.4533c-.2086.079-.3474.2802-.3474.505s.1388.4259.3474.505l1.2005.4533.4506,1.2087c.0781.2107.2783.3501.5015.3501s.4234-.1394.5015-.3501l.4506-1.2087,1.2005-.4533c.2086-.079.3474-.2802.3474-.505s-.1388-.4259-.3474-.505Z"
+        fill="currentColor"
+        strokeWidth="0"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoInputPassword = icon(
+  <>
+    <g>
+      <circle
+        cx="6.25"
+        cy="7.75"
+        r="1.25"
+        strokeWidth="0"
+        fill="currentColor"
+      ></circle>
+      <rect
+        x="9"
+        y="13"
+        width="8"
+        height="4"
+        rx="1"
+        ry="1"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <path
+        d="m18,7.722v-1.722c0-1.657-1.343-3-3-3H5c-1.657,0-3,1.343-3,3v4c0,1.657,1.343,3,3,3h.619"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m11,13v-3c0-1.105.895-2,2-2h0c1.105,0,2,.895,2,2v3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoKeyboard = icon(
+  <>
+    <g>
+      <path
+        d="m15,4H5c-1.6543,0-3,1.3457-3,3v6c0,1.6543,1.3457,3,3,3h10c1.6543,0,3-1.3457,3-3v-6c0-1.6543-1.3457-3-3-3Zm-3,2.75c0-.4142.3358-.75.75-.75h.5c.4142,0,.75.3358.75.75v.5c0,.4142-.3358.75-.75.75h-.5c-.4142,0-.75-.3358-.75-.75v-.5Zm-.25,2.25c.4142,0,.75.3358.75.75v.5c0,.4142-.3358.75-.75.75h-.5c-.4142,0-.75-.3358-.75-.75v-.5c0-.4142.3358-.75.75-.75h.5Zm-2.75-2.25c0-.4142.3358-.75.75-.75h.5c.4142,0,.75.3358.75.75v.5c0,.4142-.3358.75-.75.75h-.5c-.4142,0-.75-.3358-.75-.75v-.5Zm-.25,2.25c.4142,0,.75.3358.75.75v.5c0,.4142-.3358.75-.75.75h-.5c-.4142,0-.75-.3358-.75-.75v-.5c0-.4142.3358-.75.75-.75h.5Zm-2.75-2.25c0-.4142.3358-.75.75-.75h.5c.4142,0,.75.3358.75.75v.5c0,.4142-.3358.75-.75.75h-.5c-.4142,0-.75-.3358-.75-.75v-.5Zm-.75,4.25c-.4142,0-.75-.3358-.75-.75v-.5c0-.4142.3358-.75.75-.75h.5c.4142,0,.75.3358.75.75v.5c0,.4142-.3358.75-.75.75h-.5Zm7.75,3h-6c-.5522,0-1-.4478-1-1s.4478-1,1-1h6c.5522,0,1,.4478,1,1s-.4478,1-1,1Zm2.5-3.75c0,.4142-.3358.75-.75.75h-.5c-.4142,0-.75-.3358-.75-.75v-.5c0-.4142.3358-.75.75-.75h.5c.4142,0,.75.3358.75.75v.5Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoLayers2 = icon(
+  <g>
+    <path
+      d="m3.034,12.231c-.111.475.072,1.01.555,1.286l5.83,3.332c.36.206.801.206,1.161,0l5.83-3.332c.483-.276.667-.811.555-1.286"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <path
+      d="m10.58,3.154l5.83,3.332c.786.449.786,1.582,0,2.031l-5.83,3.332c-.36.205-.801.205-1.161,0l-5.83-3.332c-.786-.449-.786-1.582,0-2.031l5.83-3.332c.36-.205.801-.205,1.161,0Z"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </g>,
+);
+const NucleoLayoutBottom = icon(
+  <>
+    <g>
+      <rect
+        x="3"
+        y="3"
+        width="14"
+        height="14"
+        rx="3"
+        ry="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <line
+        x1="13"
+        y1="13"
+        x2="7"
+        y2="13"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoLayoutTop = icon(
+  <>
+    <g>
+      <rect
+        x="3"
+        y="3"
+        width="14"
+        height="14"
+        rx="3"
+        ry="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <line
+        x1="13"
+        y1="7"
+        x2="7"
+        y2="7"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoLink = icon(
+  <>
+    <g>
+      <path
+        d="m11,6l-1.9645-1.9645c-1.3807-1.3807-3.6193-1.3807-5,0h0c-1.3807,1.3807-1.3807,3.6193,0,5l1.9645,1.9645"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m9,14l1.9645,1.9645c1.3807,1.3807,3.6193,1.3807,5,0h0c1.3807-1.3807,1.3807-3.6193,0-5l-1.9645-1.9645"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <line
+        x1="12"
+        y1="12"
+        x2="8"
+        y2="8"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoLoader = icon(
+  <>
+    <g className="loader-lines" transform="translate(20 0) scale(-1 1)">
+      <line
+        x1="10"
+        y1="3"
+        x2="10"
+        y2="5.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="14.95"
+        y1="5.05"
+        x2="13.182"
+        y2="6.818"
+        fill="none"
+        opacity=".88"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="17"
+        y1="10"
+        x2="14.5"
+        y2="10"
+        fill="none"
+        opacity=".75"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="14.95"
+        y1="14.95"
+        x2="13.182"
+        y2="13.182"
+        fill="none"
+        opacity=".63"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="10"
+        y1="17"
+        x2="10"
+        y2="14.5"
+        fill="none"
+        opacity=".5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="5.05"
+        y1="14.95"
+        x2="6.818"
+        y2="13.182"
+        fill="none"
+        opacity=".38"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="3"
+        y1="10"
+        x2="5.5"
+        y2="10"
+        fill="none"
+        opacity=".25"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="5.05"
+        y1="5.05"
+        x2="6.818"
+        y2="6.818"
+        fill="none"
+        opacity=".13"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoLock = icon(
+  <>
+    <g>
+      <path
+        d="m6.5,9v-2.5c0-1.933,1.567-3.5,3.5-3.5h0c1.933,0,3.5,1.567,3.5,3.5v2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <line
+        x1="10"
+        y1="12.5"
+        x2="10"
+        y2="13.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <rect
+        x="4"
+        y="9"
+        width="12"
+        height="8"
+        rx="2"
+        ry="2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoMagnifier = icon(
+  <>
+    <g>
+      <line
+        x1="16.5"
+        y1="16.5"
+        x2="12.0355"
+        y2="12.0355"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <circle
+        cx="8.5"
+        cy="8.5"
+        r="5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+    </g>
+  </>,
+);
+const NucleoMenu = icon(
+  <>
+    <g>
+      <line
+        x1="17"
+        y1="10"
+        x2="3"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="17"
+        y1="5"
+        x2="3"
+        y2="5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="17"
+        y1="15"
+        x2="3"
+        y2="15"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoMinus = icon(
+  <>
+    <g>
+      <line
+        x1="3.5"
+        y1="10"
+        x2="16.5"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoMsg = icon(
+  <g>
+    <path
+      d="m10,3c-3.866,0-7,3.134-7,7,0,1.376.403,2.655,1.088,3.737l-1.088,3.263,3.263-1.088c1.082.685,2.361,1.088,3.737,1.088,3.866,0,7-3.134,7-7s-3.134-7-7-7Z"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </g>,
+);
+const NucleoMsgContent = icon(
+  <>
+    <g>
+      <path
+        d="m10,3c-3.866,0-7,3.134-7,7,0,1.376.403,2.655,1.088,3.737l-1.088,3.263,3.263-1.088c1.082.685,2.361,1.088,3.737,1.088,3.866,0,7-3.134,7-7s-3.134-7-7-7Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <line
+        x1="13"
+        y1="8"
+        x2="7"
+        y2="8"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="11"
+        y1="12"
+        x2="7"
+        y2="12"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoMsgs = icon(
+  <>
+    <g>
+      <path
+        d="m13.912,5.561c-1.085-1.547-2.879-2.561-4.912-2.561-3.314,0-6,2.686-6,6,0,1.179.345,2.275.932,3.203l-.932,2.797,2.595-.865"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m9,13c0,2.209,1.791,4,4,4,.786,0,1.517-.23,2.135-.622l1.865.622-.622-1.865c.392-.618.622-1.349.622-2.135,0-2.209-1.791-4-4-4s-4,1.791-4,4Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoNightShift = icon(
+  <>
+    <g>
+      <circle
+        cx="10"
+        cy="10"
+        r="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <path
+        d="m12,11c-1.6569,0-3-1.3431-3-3,0-.301.0577-.5857.1402-.8598-1.2348.3715-2.1402,1.5039-2.1402,2.8598,0,1.6569,1.3431,3,3,3,1.3559,0,2.4883-.9054,2.8598-2.1402-.2741.0825-.5588.1402-.8598.1402Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+      <line
+        x1="10"
+        y1="2"
+        x2="10"
+        y2="3.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="15.6569"
+        y1="4.3431"
+        x2="14.5962"
+        y2="5.4038"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="18"
+        y1="10"
+        x2="16.5"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="15.6569"
+        y1="15.6569"
+        x2="14.5962"
+        y2="14.5962"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="10"
+        y1="18"
+        x2="10"
+        y2="16.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="4.3431"
+        y1="15.6569"
+        x2="5.4038"
+        y2="14.5962"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="2"
+        y1="10"
+        x2="3.5"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="4.3431"
+        y1="4.3431"
+        x2="5.4038"
+        y2="5.4038"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoNote = icon(
+  <>
+    <g>
+      <rect
+        x="4"
+        y="3"
+        width="12"
+        height="14"
+        rx="3"
+        ry="3"
+        transform="translate(20) rotate(90)"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <line
+        x1="13"
+        y1="8"
+        x2="7"
+        y2="8"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="10"
+        y1="12"
+        x2="7"
+        y2="12"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoObjsGroup = icon(
+  <>
+    <g>
+      <rect
+        x="3"
+        y="3"
+        width="14"
+        height="14"
+        rx="3"
+        ry="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <rect
+        x="6"
+        y="6"
+        width="5"
+        height="5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <polyline
+        points="11 9 14 9 14 14 9 14 9 11"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoObjsUngroup = icon(
+  <>
+    <g>
+      <path
+        d="m9,14.5v.5c0,1.1046.8954,2,2,2h4c1.1046,0,2-.8954,2-2v-4c0-1.1046-.8954-2-2-2h-.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <rect
+        x="3"
+        y="3"
+        width="8"
+        height="8"
+        rx="2"
+        ry="2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoOrderedList = icon(
+  <>
+    <g>
+      <path
+        d="m5,8.5V3.5s-.611,1.134-2,1.467"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <line
+        x1="10"
+        y1="6"
+        x2="17"
+        y2="6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="10"
+        y1="14"
+        x2="17"
+        y2="14"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m3.596,12.082s.474-.582,1.333-.582c.962,0,1.355.729,1.355,1.207,0,.316-.038.682-.558,1.293l-2.13,2.5h2.808"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoPalette = icon(
+  <>
+    <g>
+      <line
+        x1="3"
+        y1="7.5"
+        x2="17"
+        y2="7.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="3"
+        y1="12.5"
+        x2="17"
+        y2="12.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <rect
+        x="3"
+        y="3"
+        width="14"
+        height="14"
+        rx="3"
+        ry="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoPaperPlane2 = icon(
+  <>
+    <g>
+      <line
+        x1="11.292"
+        y1="8.708"
+        x2="8.351"
+        y2="11.649"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m16.942,4.442l-3.937,11.81c-.301.903-1.532,1.017-1.994.185l-2.66-4.788-4.788-2.66c-.832-.462-.718-1.693.185-1.994l11.81-3.937c.855-.285,1.669.529,1.384,1.384Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoPaperclip = icon(
+  <>
+    <g>
+      <path
+        d="m8,7v4c0,1.105.895,2,2,2h0c1.105,0,2-.895,2-2v-4c0-2.209-1.791-4-4-4h0c-2.209,0-4,1.791-4,4v4c0,3.314,2.686,6,6,6h0c3.314,0,6-2.686,6-6v-4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoPen = icon(
+  <>
+    <g>
+      <path
+        d="m3,17l1-5L12.414,3.586c.781-.781,2.047-.781,2.828,0l1.172,1.172c.781.781.781,2.047,0,2.828l-8.414,8.414-5,1Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoPenNib2 = icon(
+  <>
+    <g>
+      <line
+        x1="3.59"
+        y1="16.41"
+        x2="8.323"
+        y2="11.677"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="9.5"
+        y1="2.5"
+        x2="17.5"
+        y2="10.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <circle
+        cx="9"
+        cy="11"
+        r="1"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <path
+        d="m16,9l-1.626,4.877c-.231.693-.821,1.205-1.54,1.335l-8.414,1.53c-.687.125-1.288-.475-1.163-1.163l1.53-8.414c.131-.718.642-1.309,1.335-1.54l4.877-1.626"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoPencil2 = icon(
+  <>
+    <g>
+      <polygon
+        points="13 7 10 3 7 7 13 7"
+        fill="currentColor"
+        strokeWidth="0"
+      ></polygon>
+      <polyline
+        points="4 11 10 3 16 11"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <path
+        d="m7,17v-3c0-1.657,1.343-3,3-3h0c1.657,0,3,1.343,3,3v3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m4,17v-6h0c1.657,0,3,1.343,3,3v3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m16,17v-6s0,0,0,0c-1.657,0-3,1.343-3,3v3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoPhoto = icon(
+  <g>
+    <path
+      d="m17,11.586l-2.732-2.732c-.975-.975-2.561-.975-3.535,0l-6.994,6.994c-.017.017-.022.041-.037.059.55.663,1.37,1.093,2.298,1.093h8c1.657,0,3-1.343,3-3v-2.414Z"
+      fill="currentColor"
+      strokeWidth="0"
+      data-color="color-2"
+    />
+    <rect
+      x="3"
+      y="3"
+      width="14"
+      height="14"
+      rx="3"
+      ry="3"
+      transform="translate(0 20) rotate(-90)"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+    <circle
+      cx="7.5"
+      cy="7.5"
+      r="1.5"
+      fill="currentColor"
+      strokeWidth="0"
+      data-color="color-2"
+    />
+  </g>,
+);
+const NucleoPlus = icon(
+  <>
+    <g>
+      <line
+        x1="10"
+        y1="16.5"
+        x2="10"
+        y2="3.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="3.5"
+        y1="10"
+        x2="16.5"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoPrint = icon(
+  <>
+    <g>
+      <path
+        d="m7,7v-2.5c0-.828.672-1.5,1.5-1.5h3c.828,0,1.5.672,1.5,1.5v2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m15.5,7H4.5c-.828,0-1.5.672-1.5,1.5v3c0,.828.672,1.5,1.5,1.5h2.5v-3h6v3h2.5c.828,0,1.5-.672,1.5-1.5v-3c0-.828-.672-1.5-1.5-1.5Zm-.5,3c-.552,0-1-.448-1-1s.448-1,1-1,1,.448,1,1-.448,1-1,1Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+      <path
+        d="m7,13h-2.5c-.828,0-1.5-.672-1.5-1.5v-3c0-.828.672-1.5,1.5-1.5h11c.828,0,1.5.672,1.5,1.5v3c0,.828-.672,1.5-1.5,1.5h-2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m7,10h6v5.5c0,.828-.672,1.5-1.5,1.5h-3c-.828,0-1.5-.672-1.5-1.5v-5.5h0Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoRadioChecked = icon(
+  <>
+    <g>
+      <path
+        d="m10,2C5.589,2,2,5.589,2,10s3.589,8,8,8,8-3.589,8-8S14.411,2,10,2Zm0,11c-1.657,0-3-1.343-3-3s1.343-3,3-3,3,1.343,3,3-1.343,3-3,3Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoRedo = icon(
+  <>
+    <g>
+      <path
+        d="m17,11.855c-.616-.538-3.15-2.626-7-2.626s-6.384,2.088-7,2.626"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <polyline
+        points="15.104 6.719 17 11.855 11.715 13.281"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoRefresh = icon(
+  <>
+    <g>
+      <path
+        d="m4,10c0,3.314,2.686,6,6,6,1.227,0,2.367-.368,3.317-1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <polygon
+        points="14.25 10 16 12 17.75 10 14.25 10"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></polygon>
+      <path
+        d="m16,10c0-3.314-2.686-6-6-6-1.227,0-2.367.368-3.317,1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <polygon
+        points="5.75 10 4 8 2.25 10 5.75 10"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polygon>
+    </g>
+  </>,
+);
+const NucleoRotateObjClockwise = icon(
+  <>
+    <g>
+      <rect
+        x="8"
+        y="9"
+        width="8"
+        height="8"
+        rx="2"
+        ry="2"
+        transform="translate(24 26) rotate(-180)"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></rect>
+      <path
+        d="m9,4h-2c-1.657,0-3,1.343-3,3v1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <polygon
+        points="9 5.75 11 4 9 2.25 9 5.75"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polygon>
+    </g>
+  </>,
+);
+const NucleoScissors = icon(
+  <>
+    <g>
+      <circle
+        cx="14.7495"
+        cy="14.2495"
+        r="2.25"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <line
+        x1="7"
+        y1="3.5"
+        x2="12.7444"
+        y2="15.2702"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <circle
+        cx="5.2505"
+        cy="14.2495"
+        r="2.25"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <line
+        x1="13"
+        y1="3.5"
+        x2="7.2556"
+        y2="15.2702"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoScribble = icon(
+  <>
+    <g>
+      <path
+        d="m3,10.9136s4.2249-4.3628,6.6287-6.2544c1.6074-1.2641,2.5542-1.3886,3.137-.8068,1.063,1.0588-.4221,3.0261-2.4453,5.7161s-3.4876,4.2332-2.379,5.2796c1.0941,1.0329,3.3569-1.2776,4.2-2.2193s2.7679-3.0302,3.7105-2.1519c.8348.7778-.4044,2.6569-.8431,3.4969s-.9779,1.707-.337,2.2867c.9064.8203,2.3281-.9084,2.3281-.9084"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoSearchArea = icon(
+  <>
+    <g>
+      <path
+        d="m3,7v-1c0-1.6569,1.3431-3,3-3h1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m7,17h-1c-1.6569,0-3-1.3431-3-3v-1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m13,3h1c1.6569,0,3,1.3431,3,3v1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <circle
+        cx="10"
+        cy="10"
+        r="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <line
+        x1="12.121"
+        y1="12.121"
+        x2="16"
+        y2="16"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoShapeCircle = icon(
+  <>
+    <g>
+      <circle
+        cx="10"
+        cy="10"
+        r="7"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+    </g>
+  </>,
+);
+const NucleoShapePolygon = icon(
+  <>
+    <g>
+      <path
+        d="m8.2366,3.5169l-3.9725,2.8862c-1.0515.7639-1.4914,2.118-1.0898,3.3541l1.5174,4.6699c.4016,1.2361,1.5535,2.0729,2.8532,2.0729h4.9102c1.2997,0,2.4515-.8369,2.8532-2.0729l1.5174-4.6699c.4016-1.2361-.0384-2.5902-1.0898-3.3541l-3.9725-2.8862c-1.0515-.7639-2.4752-.7639-3.5267,0Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoShapeSquare = icon(
+  <>
+    <g>
+      <rect
+        x="3"
+        y="3"
+        width="14"
+        height="14"
+        rx="3"
+        ry="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoSharing = icon(
+  <g>
+    <line
+      x1="7.731"
+      y1="8.885"
+      x2="12.268"
+      y2="6.616"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <line
+      x1="7.731"
+      y1="11.115"
+      x2="12.268"
+      y2="13.384"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <circle
+      cx="5.5"
+      cy="10"
+      r="2.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+    <circle
+      cx="14.5"
+      cy="14.5"
+      r="2.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+    <circle
+      cx="14.5"
+      cy="5.5"
+      r="2.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </g>,
+);
+const NucleoShield = icon(
+  <>
+    <g>
+      <path
+        d="m4,5l6-2,6,2v7c0,4-6,5-6,5,0,0-6-1-6-5v-7Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoSidebarLeft = icon(
+  <>
+    <g>
+      <path
+        d="m6,4h2v12h-2c-1.656,0-3-1.344-3-3v-6c0-1.656,1.344-3,3-3Z"
+        fill="currentColor"
+        strokeWidth="0"
+      ></path>
+      <rect
+        x="3"
+        y="4"
+        width="14"
+        height="12"
+        rx="3"
+        ry="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoSidebarRight = icon(
+  <>
+    <g>
+      <path
+        d="m15,4h2v12h-2c-1.656,0-3-1.344-3-3v-6c0-1.656,1.344-3,3-3Z"
+        transform="translate(29 20) rotate(180)"
+        fill="currentColor"
+        strokeWidth="0"
+      ></path>
+      <rect
+        x="3"
+        y="4"
+        width="14"
+        height="12"
+        rx="3"
+        ry="3"
+        transform="translate(20 20) rotate(180)"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoSignature = icon(
+  <>
+    <g>
+      <path
+        d="m9,17c1.654-2.937,2.535-3.694,3.018-3.543.774.241.549,2.831,1.368,2.982.604.112,1.139-1.219,1.789-1.053.525.134.493,1.08,1.087,1.263.239.073.496,0,.737-.135"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m6,14l-1.5,3-1.5-3V4c0-.552.448-1,1-1h1c.552,0,1,.448,1,1v10Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></path>
+      <path
+        d="m4,6h3.5c.828,0,1.5.672,1.5,1.5v3.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoSlider = icon(
+  <>
+    <g>
+      <line
+        x1="3"
+        y1="6"
+        x2="10"
+        y2="6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <circle
+        cx="12.5"
+        cy="6"
+        r="2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <line
+        x1="15"
+        y1="6"
+        x2="17"
+        y2="6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="17"
+        y1="14"
+        x2="10"
+        y2="14"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <circle
+        cx="7.5"
+        cy="14"
+        r="2.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></circle>
+      <line
+        x1="5"
+        y1="14"
+        x2="3"
+        y2="14"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoSortArrows = icon(
+  <>
+    <g>
+      <path
+        d="m7.3,6.6l2.5-3.333c.1-.133.3-.133.4,0l2.5,3.333c.124.165.006.4-.2.4h-5c-.206,0-.324-.235-.2-.4Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></path>
+      <path
+        d="m7.3,13.4l2.5,3.333c.1.133.3.133.4,0l2.5-3.333c.124-.165.006-.4-.2-.4h-5c-.206,0-.324.235-.2.4Z"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoSparkle = icon(
+  <>
+    <g>
+      <polygon
+        points="6.5 10 7.3077 12.6923 10 13.5 7.3077 14.3077 6.5 17 5.6923 14.3077 3 13.5 5.6923 12.6923 6.5 10"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></polygon>
+      <polygon
+        points="13.5 3 14.3077 5.6923 17 6.5 14.3077 7.3077 13.5 10 12.6923 7.3077 10 6.5 12.6923 5.6923 13.5 3"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></polygon>
+      <path
+        d="m6.6526,3.978l-1.2005-.4533-.4506-1.2087c-.1563-.4214-.8468-.4214-1.0031,0l-.4506,1.2087-1.2005.4533c-.2086.079-.3474.2802-.3474.505s.1388.4259.3474.505l1.2005.4533.4506,1.2087c.0781.2107.2783.3501.5015.3501s.4234-.1394.5015-.3501l.4506-1.2087,1.2005-.4533c.2086-.079.3474-.2802.3474-.505s-.1388-.4259-.3474-.505Z"
+        fill="currentColor"
+        strokeWidth="0"
+      ></path>
+      <path
+        d="m17.6526,14.978l-1.2005-.4533-.4506-1.2087c-.1563-.4214-.8468-.4214-1.0031,0l-.4506,1.2087-1.2005.4533c-.2086.079-.3474.2802-.3474.505s.1388.4259.3474.505l1.2005.4533.4506,1.2087c.0781.2107.2783.3501.5015.3501s.4234-.1394.5015-.3501l.4506-1.2087,1.2005-.4533c.2086-.079.3474-.2802.3474-.505s-.1388-.4259-.3474-.505Z"
+        fill="currentColor"
+        strokeWidth="0"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoSquareDotted = icon(
+  <>
+    <g>
+      <circle cx="12" cy="4" r="1" strokeWidth="0" fill="currentColor"></circle>
+      <circle cx="16" cy="4" r="1" fill="currentColor" strokeWidth="0"></circle>
+      <circle cx="8" cy="4" r="1" strokeWidth="0" fill="currentColor"></circle>
+      <circle cx="4" cy="4" r="1" fill="currentColor" strokeWidth="0"></circle>
+      <circle cx="16" cy="8" r="1" strokeWidth="0" fill="currentColor"></circle>
+      <circle cx="4" cy="8" r="1" strokeWidth="0" fill="currentColor"></circle>
+      <circle
+        cx="16"
+        cy="12"
+        r="1"
+        strokeWidth="0"
+        fill="currentColor"
+      ></circle>
+      <circle cx="4" cy="12" r="1" strokeWidth="0" fill="currentColor"></circle>
+      <circle
+        cx="12"
+        cy="16"
+        r="1"
+        strokeWidth="0"
+        fill="currentColor"
+      ></circle>
+      <circle
+        cx="16"
+        cy="16"
+        r="1"
+        fill="currentColor"
+        strokeWidth="0"
+      ></circle>
+      <circle cx="8" cy="16" r="1" strokeWidth="0" fill="currentColor"></circle>
+      <circle cx="4" cy="16" r="1" fill="currentColor" strokeWidth="0"></circle>
+    </g>
+  </>,
+);
+const NucleoSquarePlus = icon(
+  <>
+    <g>
+      <rect
+        x="3"
+        y="3"
+        width="14"
+        height="14"
+        rx="3"
+        ry="3"
+        transform="translate(0 20) rotate(-90)"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+      <line
+        x1="10"
+        y1="13"
+        x2="10"
+        y2="7"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="7"
+        y1="10"
+        x2="13"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoStamp = icon(
+  <>
+    <g>
+      <line
+        x1="4"
+        y1="17"
+        x2="16"
+        y2="17"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m3.3,14h13.3999c.4088,0,.7765-.2489.9284-.6284l.2515-.6284c.2471-.6177.1719-1.3145-.2007-1.8647-.3726-.5498-.9917-.8784-1.6562-.8784H3.9771c-.6646,0-1.2837.3286-1.6562.8784-.3726.5503-.4478,1.2471-.2007,1.8647l.2515.6284c.1519.3796.5196.6284.9284.6284Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+      <path
+        d="m11.1,12l.701-7.0099c.1066-1.0655-.7302-1.9901-1.801-1.9901s-1.9075.9246-1.801,1.9901l.701,7.0099h2.2Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoSwap = icon(
+  <>
+    <g>
+      <path
+        d="m14,3c1.105,0,2,.895,2,2v1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m6,17c-1.105,0-2-.895-2-2v-1"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <polygon
+        points="17.75 6 16 8 14.25 6 17.75 6"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polygon>
+      <polygon
+        points="2.25 14 4 12 5.75 14 2.25 14"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polygon>
+      <path
+        d="m10.983,6.67c.003-.058.017-.112.017-.17,0-1.933-1.567-3.5-3.5-3.5s-3.5,1.567-3.5,3.5c0,1.597,1.077,2.93,2.539,3.349"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <circle
+        cx="12.5"
+        cy="13.5"
+        r="3.5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+        fill="currentColor"
+      ></circle>
+    </g>
+  </>,
+);
+const NucleoTableCols2 = icon(
+  <>
+    <g>
+      <line
+        x1="10"
+        y1="17"
+        x2="10"
+        y2="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <rect
+        x="3"
+        y="3"
+        width="14"
+        height="14"
+        rx="3"
+        ry="3"
+        transform="translate(0 20) rotate(-90)"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoTableRows = icon(
+  <>
+    <g>
+      <line
+        x1="3"
+        y1="10"
+        x2="17"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <rect
+        x="3"
+        y="3"
+        width="14"
+        height="14"
+        rx="3"
+        ry="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoText = icon(
+  <>
+    <g>
+      <line
+        x1="16"
+        y1="4"
+        x2="4"
+        y2="4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="10"
+        y1="16"
+        x2="10"
+        y2="4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoTextAlignCenter = icon(
+  <>
+    <g>
+      <line
+        x1="7"
+        y1="10"
+        x2="13"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="3"
+        y1="5"
+        x2="17"
+        y2="5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="3"
+        y1="15"
+        x2="17"
+        y2="15"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoTextAlignJustify = icon(
+  <>
+    <g>
+      <line
+        x1="3"
+        y1="10"
+        x2="17"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="3"
+        y1="5"
+        x2="17"
+        y2="5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="3"
+        y1="15"
+        x2="17"
+        y2="15"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoTextAlignLeft = icon(
+  <>
+    <g>
+      <line
+        x1="3"
+        y1="10"
+        x2="9"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="3"
+        y1="5"
+        x2="17"
+        y2="5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="3"
+        y1="15"
+        x2="17"
+        y2="15"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoTextAlignRight = icon(
+  <>
+    <g>
+      <line
+        x1="17"
+        y1="10"
+        x2="11"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="17"
+        y1="5"
+        x2="3"
+        y2="5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="17"
+        y1="15"
+        x2="3"
+        y2="15"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoTextBold = icon(
+  <>
+    <g>
+      <path
+        d="m11,10h-5v-5c0-.5523.4477-1,1-1h4c1.6569,0,3,1.3431,3,3h0c0,1.6569-1.3431,3-3,3Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m12,16h-5c-.5523,0-1-.4477-1-1v-5h6c1.6569,0,3,1.3431,3,3h0c0,1.6569-1.3431,3-3,3Z"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoTextColor = icon(
+  <>
+    <g>
+      <polyline
+        points="6.5 11 9.75 3 10.25 3 13.5 11"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <line
+        x1="12.6875"
+        y1="9"
+        x2="7.3125"
+        y2="9"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <rect
+        x="3"
+        y="15"
+        width="14"
+        height="2"
+        rx=".5"
+        ry=".5"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></rect>
+    </g>
+  </>,
+);
+const NucleoTextInput = icon(
+  <>
+    <g>
+      <path
+        d="m14,2H6c-2.206,0-4,1.794-4,4v8c0,2.206,1.794,4,4,4h8c2.206,0,4-1.794,4-4V6c0-2.206-1.794-4-4-4Zm-2,11c.552,0,1,.447,1,1s-.448,1-1,1c-.771,0-1.468-.301-2-.78-.532.48-1.229.78-2,.78-.552,0-1-.447-1-1s.448-1,1-1,1-.448,1-1v-4c0-.552-.449-1-1-1s-1-.447-1-1,.448-1,1-1c.771,0,1.468.301,2,.78.532-.48,1.229-.78,2-.78.552,0,1,.447,1,1s-.448,1-1,1-1,.448-1,1v4c0,.552.449,1,1,1Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoTextItalic = icon(
+  <>
+    <g>
+      <polyline
+        points="9 6.5 12 6.5 9 16"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <line
+        x1="12"
+        y1="16"
+        x2="6"
+        y2="16"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <circle
+        cx="13"
+        cy="2.75"
+        r="1.25"
+        fill="currentColor"
+        strokeWidth="0"
+      ></circle>
+    </g>
+  </>,
+);
+const NucleoTextSizeDecrease = icon(
+  <>
+    <g>
+      <line
+        x1="15"
+        y1="4"
+        x2="3"
+        y2="4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="9"
+        y1="16"
+        x2="9"
+        y2="4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="12.5"
+        y1="11"
+        x2="17.5"
+        y2="11"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoTextSizeIncrease = icon(
+  <>
+    <g>
+      <line
+        x1="15"
+        y1="4"
+        x2="3"
+        y2="4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="9"
+        y1="16"
+        x2="9"
+        y2="4"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="15"
+        y1="13.5"
+        x2="15"
+        y2="8.5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="12.5"
+        y1="11"
+        x2="17.5"
+        y2="11"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoTextStrikethrough = icon(
+  <>
+    <g>
+      <path
+        d="m10,10c-3.2708-.8542-4.8235-2.7176-4.1244-4.7341.6436-1.8564,2.7852-2.6822,5.2539-2.0528,1.5176.3869,2.8706,2.1619,2.8706,2.1619"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <path
+        d="m6,14.625s1.3529,1.775,2.8706,2.1619c2.4686.6294,4.6103-.1964,5.2539-2.0528.2078-.5993.2166-1.185.0407-1.7348"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <line
+        x1="17"
+        y1="10"
+        x2="3"
+        y2="10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+const NucleoTextUnderline = icon(
+  <>
+    <g>
+      <line
+        x1="3"
+        y1="16"
+        x2="17"
+        y2="16"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m14,3v5c0,2.2091-1.7909,4-4,4h0c-2.2091,0-4-1.7909-4-4V3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoTrash = icon(
+  <g>
+    <line
+      x1="17"
+      y1="5"
+      x2="3"
+      y2="5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <rect
+      x="8"
+      y="3"
+      width="4"
+      height="2"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+      fill="currentColor"
+    />
+    <path
+      d="m14.95,8l-.355,7.1c-.053,1.064-.932,1.9-1.998,1.9h-5.195c-1.066,0-1.944-.836-1.998-1.9l-.355-7.1"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </g>,
+);
+const NucleoTriangleWarning = icon(
+  <g>
+    <path
+      d="m9,8c0-.552.447-1,1-1s1,.448,1,1v4.5c0,.552-.447,1-1,1s-1-.448-1-1v-4.5Z"
+      fill="currentColor"
+      strokeWidth="0"
+      data-color="color-2"
+    />
+    <circle
+      cx="10"
+      cy="15.75"
+      r="1.25"
+      fill="currentColor"
+      strokeWidth="0"
+      data-color="color-2"
+    />
+    <path
+      d="m13.725,16h1.471c1.54,0,2.502-1.667,1.732-3l-5.196-9c-.77-1.333-2.694-1.333-3.464,0L3.072,13c-.77,1.333.192,3,1.732,3h1.471"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </g>,
+);
+const NucleoUndo = icon(
+  <>
+    <g>
+      <path
+        d="m17,11.855c-.616-.538-3.15-2.626-7-2.626s-6.384,2.088-7,2.626"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+      <polyline
+        points="8.285 13.281 3 11.855 4.896 6.719"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+    </g>
+  </>,
+);
+const NucleoUpload = icon(
+  <>
+    <g>
+      <polyline
+        points="7.25 5.75 10 3 12.75 5.75"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></polyline>
+      <line
+        x1="10"
+        y1="13"
+        x2="10"
+        y2="3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <path
+        d="m6,9.07c-1.216.268-2.168,1.277-2.328,2.557l-.25,2c-.224,1.791,1.172,3.372,2.977,3.372h7.203c1.804,0,3.201-1.582,2.977-3.372l-.25-2c-.16-1.281-1.113-2.289-2.328-2.557"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></path>
+    </g>
+  </>,
+);
+const NucleoUsers = icon(
+  <g>
+    <circle
+      cx="6.5"
+      cy="8.5"
+      r="2.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+    <circle
+      cx="13.5"
+      cy="5.5"
+      r="2.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <path
+      d="m10.875,11.845c.739-.532,1.645-.845,2.625-.845,1.959,0,3.626,1.252,4.244,3"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <path
+      d="m2.256,17c.618-1.748,2.285-3,4.244-3s3.626,1.252,4.244,3"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </g>,
+);
+const NucleoXmark = icon(
+  <>
+    <g>
+      <line
+        x1="5"
+        y1="5"
+        x2="15"
+        y2="15"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+      <line
+        x1="5"
+        y1="15"
+        x2="15"
+        y2="5"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2"
+      ></line>
+    </g>
+  </>,
+);
+export const ArrowRight = NucleoArrowRight;
+export const ChevronDown = NucleoChevronDown;
+export const FileText = NucleoFileContent;
+export const Folder = NucleoFolder;
+export const FolderPlus = NucleoFolderPlus;
+export const GitBranch = NucleoCodeBranch;
+export const Library = NucleoBooks;
+export const LockKeyhole = NucleoLock;
+export const LogOut = NucleoArrowDoorOut;
+export const Menu = NucleoMenu;
+export const MessageSquare = NucleoMsg;
+export const MessageSquareOutline = icon(
+  <path
+    d="m10,3c-3.866,0-7,3.134-7,7,0,1.376.403,2.655,1.088,3.737l-1.088,3.263,3.263-1.088c1.082.685,2.361,1.088,3.737,1.088,3.866,0,7-3.134,7-7s-3.134-7-7-7Z"
+    fill="none"
+    stroke="currentColor"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    strokeWidth="2"
+  />,
+);
+export const FolderOpenOutline = icon(
+  <g>
+    <path
+      d="m13.5,6h-3.5l-1.703-2.555c-.185-.278-.498-.445-.832-.445h-2.965c-.828,0-1.5.672-1.5,1.5v9.5c0,.781.299,1.491.789,2.025-.254-.42-.365-.931-.248-1.459l1.111-5c.203-.915,1.015-1.566,1.952-1.566h8.396v-.5c0-.828-.672-1.5-1.5-1.5Z"
+      fill="currentColor"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+    <path
+      d="m14.041,17H5.493c-1.279,0-2.23-1.185-1.952-2.434l1.111-5c.203-.915,1.015-1.566,1.952-1.566h8.548c1.279,0,2.23,1.185,1.952,2.434l-1.111,5c-.203.915-1.015,1.566-1.952,1.566Z"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </g>,
+);
+export const UsersOutline = icon(
+  <g
+    fill="none"
+    stroke="currentColor"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    strokeWidth="2"
+  >
+    <circle cx="6.5" cy="8.5" r="2.5" />
+    <circle cx="13.5" cy="5.5" r="2.5" />
+    <path d="m10.875,11.845c.739-.532,1.645-.845,2.625-.845,1.959,0,3.626,1.252,4.244,3" />
+    <path d="m2.256,17c.618-1.748,2.285-3,4.244-3s3.626,1.252,4.244,3" />
+  </g>,
+);
+export const UsersFilled = icon(
+  <g fill="currentColor">
+    <circle cx="6.5" cy="8" r="2" stroke="currentColor" strokeWidth="2" />
+    <circle cx="13.5" cy="5" r="2" stroke="currentColor" strokeWidth="2" />
+    <path d="m18.16,12.226c-.744-1.96-2.573-3.226-4.66-3.226-1.509,0-2.876.669-3.803,1.776,1.498.77,2.699,2.071,3.332,3.74.058.153.092.309.127.465.115.005.229.02.344.02,1.297,0,2.594-.299,3.881-.898.711-.331,1.053-1.155.778-1.876Z" />
+    <path d="m11.16,15.226c-.744-1.96-2.573-3.226-4.66-3.226s-3.916,1.266-4.66,3.226c-.275.722.067,1.546.778,1.877,1.288.599,2.584.898,3.881.898s2.594-.299,3.881-.898c.711-.331,1.053-1.155.778-1.876Z" />
+  </g>,
+);
+export const Plus = NucleoPlus;
+export const Search = NucleoMagnifier;
+export const Settings = NucleoGear4;
+export const Share2 = NucleoSharing;
+export const Upload = NucleoUpload;
+export const X = NucleoXmark;
+export const Box = NucleoBox;
+export const LoaderCircle = NucleoLoader;
+export const XIcon = NucleoXmark;
+export const ChevronDownIcon = NucleoChevronDown;
+export const ChevronsUpDownIcon = NucleoChevronExpandY;
+export const ChevronUpIcon = NucleoChevronUp;
+export const ArrowUpRight = NucleoArrowUpRight;
+export const Send = NucleoPaperPlane2;
+export const Sparkles = NucleoSparkle;
+export const Trash2 = NucleoTrash;
+export const ArrowLeft = NucleoArrowLeft;
+export const Check = NucleoCheck;
+export const Link2 = NucleoLink;
+export const RefreshCw = NucleoRefresh;
+export const ChevronsUpDown = NucleoChevronExpandY;
+export const Copy = NucleoClone;
+export const Pipette = NucleoEyeDropper;
+export const AlignCenter = NucleoTextAlignCenter;
+export const AlignJustify = NucleoTextAlignJustify;
+export const AlignLeft = NucleoTextAlignLeft;
+export const AlignRight = NucleoTextAlignRight;
+export const ArrowDownRight = NucleoArrowDownRight;
+export const Baseline = NucleoTextColor;
+export const Bold = NucleoTextBold;
+export const CircleMinus = NucleoCircleMinus;
+export const CirclePlusIcon = NucleoCirclePlus;
+export const Columns3Cog = NucleoTableCols2;
+export const Columns3Icon = NucleoGridLayoutCols3;
+export const Download = NucleoDownload;
+export const FileDiff = NucleoCodeCompare;
+export const Grid2x2 = NucleoGrid2;
+export const Highlighter = NucleoHighlighter;
+export const ImagePlus = NucleoImageSparkle;
+export const Italic = NucleoTextItalic;
+export const Link = NucleoLink;
+export const ListOrdered = NucleoOrderedList;
+export const Minus = NucleoMinus;
+export const Moon = NucleoNightShift;
+export const PanelBottom = NucleoLayoutBottom;
+export const PanelLeft = NucleoSidebarLeft;
+export const PanelRight = NucleoSidebarRight;
+export const PanelTop = NucleoLayoutTop;
+export const PencilOff = NucleoPen;
+export const Redo2 = NucleoRedo;
+export const SeparatorHorizontal = NucleoDividerX;
+export const SeparatorVertical = NucleoDividerY;
+export const SquareDashed = NucleoSquareDotted;
+export const SquarePlus = NucleoSquarePlus;
+export const Strikethrough = NucleoTextStrikethrough;
+export const Subscript = NucleoTextSizeDecrease;
+export const Sun = NucleoBrightnessIncrease;
+export const Superscript = NucleoTextSizeIncrease;
+export const TableIcon = NucleoTableRows;
+export const Underline = NucleoTextUnderline;
+export const Undo2 = NucleoUndo;
+export const Ellipsis = NucleoDots;
+export const ArrowUpDown = NucleoSortArrows;
+export const Calendar = NucleoCalendar;
+export const ChevronLeft = NucleoChevronLeft;
+export const ChevronUp = NucleoChevronUp;
+export const Columns3 = NucleoGridLayoutCols3;
+export const FileArchiveIcon = NucleoFileZip;
+export const Filter = NucleoBarsFilter;
+export const GalleryThumbnails = NucleoCarousel;
+export const LayoutGrid = NucleoGridLayout;
+export const AlignVerticalJustifyCenter = NucleoAlignVertical;
+export const ArrowDown = NucleoArrowDown;
+export const ArrowDownToLine = NucleoDownload;
+export const ArrowUp = NucleoArrowUp;
+export const ArrowUpToLine = NucleoUpload;
+export const BookOpen = NucleoBook;
+export const Brush = NucleoBrush;
+export const Camera = NucleoCamera;
+export const ChevronRight = NucleoChevronRight;
+export const Circle = NucleoShapeCircle;
+export const CircleDot = NucleoRadioChecked;
+export const CirclePlus = NucleoCirclePlus;
+export const Clipboard = NucleoClipboard;
+export const ExternalLink = NucleoExternalLink;
+export const Eye = NucleoEye;
+export const EyeOff = NucleoEyeSensor;
+export const File = NucleoFile;
+export const FilePlus = NucleoFilePlus;
+export const Flag = NucleoFlag2;
+export const Group = NucleoObjsGroup;
+export const Hand = NucleoHand2;
+export const Image = NucleoPhoto;
+export const Info = NucleoCircleInfo;
+export const Key = NucleoGearKeyhole;
+export const Keyboard = NucleoKeyboard;
+export const Layers = NucleoLayers2;
+export const LineSquiggle = NucleoScribble;
+export const List = NucleoBulletList;
+export const ListTree = NucleoFolderTree;
+export const Lock = NucleoLock;
+export const LockOpen = NucleoLock;
+export const Maximize = NucleoFullScreen4;
+export const Merge = NucleoSwap;
+export const MessageCircle = NucleoMsg;
+export const MessageSquareText = NucleoMsgContent;
+export const MessagesSquare = NucleoMsgs;
+export const Minimize = NucleoArrowsReduceDiagonal;
+export const MousePointer2 = NucleoCursorDefault;
+export const Move = NucleoArrowsCross;
+export const MoveHorizontal = NucleoArrowsExpandX;
+export const MoveUpRight = NucleoArrowUpRight;
+export const MoveVertical = NucleoArrowsExpandY;
+export const Palette = NucleoPalette;
+export const Paperclip = NucleoPaperclip;
+export const Pen = NucleoPenNib2;
+export const Pencil = NucleoPencil2;
+export const Pentagon = NucleoShapePolygon;
+export const Printer = NucleoPrint;
+export const RectangleEllipsis = NucleoInputPassword;
+export const Replace = NucleoSwap;
+export const RotateCw = NucleoRotateObjClockwise;
+export const Save = NucleoFloppyDisk;
+export const ScanSearch = NucleoSearchArea;
+export const Scissors = NucleoScissors;
+export const ShieldCheck = NucleoShield;
+export const Signature = NucleoSignature;
+export const SlidersHorizontal = NucleoSlider;
+export const Spline = NucleoCurve;
+export const Square = NucleoShapeSquare;
+export const SquareCheck = NucleoCheckboxChecked;
+export const Stamp = NucleoStamp;
+export const StickyNote = NucleoNote;
+export const TextAlignCenter = NucleoTextAlignCenter;
+export const TextAlignEnd = NucleoTextAlignRight;
+export const TextAlignStart = NucleoTextAlignLeft;
+export const TextCursorInput = NucleoTextInput;
+export const TriangleAlert = NucleoTriangleWarning;
+export const Type = NucleoText;
+export const Ungroup = NucleoObjsUngroup;
+export const FileArchive = NucleoFileZip;
+export const RotateCcw = NucleoArrowRotateAnticlockwise;
+export const KeyRound = NucleoGearKeyhole;
+export const Users = NucleoUsers;
+export const GripVertical = NucleoGripDotsVertical;
+export const Loader2 = NucleoLoader;
+export const Loader2Icon = NucleoLoader;
+export const FileCode2 = NucleoCodeEditor;
+export const Globe2 = NucleoGlobe;
+
+export const CircleCheck = icon(
+  <g>
+    <circle
+      cx="10"
+      cy="10"
+      r="7"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+    <polyline
+      points="7 10.5 9 12.5 13 7.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+  </g>,
+);
+
+export const ShapeTriangle = icon(
+  <g>
+    <path
+      d="m8.2646,4.2796L3.2659,13.0059c-.7638,1.3333.1989,2.9941,1.7354,2.9941h9.9973c1.5366,0,2.4992-1.6608,1.7354-2.9941l-4.9986-8.7263c-.7683-1.3412-2.7026-1.3412-3.4709,0Z"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      fill="currentColor"
+    />
+  </g>,
+);
+
+export const BranchOut = icon(
+  <g>
+    <polyline
+      points="14.5 16.5 17 14 14.5 11.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    ></polyline>
+    <line
+      x1="3"
+      y1="14"
+      x2="17"
+      y2="14"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    ></line>
+    <polyline
+      points="12.5 8.5 15 6 12.5 3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></polyline>
+    <path
+      d="m15,6h-4.301c-1.054,0-2.03.553-2.572,1.457l-2.126,3.543"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></path>
+  </g>,
+);
+
+export const IndexTreeIcon = icon(
+  <g>
+    <polyline
+      points="4 3 4 6 8 6"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <path
+      d="m4,6v7c0,1.105.895,2,2,2h2"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <rect
+      x="11"
+      y="3"
+      width="5"
+      height="5"
+      rx="1"
+      ry="1"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+    <rect
+      x="11"
+      y="12"
+      width="5"
+      height="5"
+      rx="1"
+      ry="1"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </g>,
+);
+
+export const LockOutline = icon(
+  <g>
+    <path
+      d="m6.5,9v-2.5c0-1.933,1.567-3.5,3.5-3.5h0c1.933,0,3.5,1.567,3.5,3.5v2.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <line
+      x1="10"
+      y1="12.5"
+      x2="10"
+      y2="13.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <rect
+      x="4"
+      y="9"
+      width="12"
+      height="8"
+      rx="2"
+      ry="2"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </g>,
+);
+
+export const DownloadOutline = icon(
+  <g>
+    <polyline
+      points="12.75 10.25 10 13 7.25 10.25"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <line
+      x1="10"
+      y1="3"
+      x2="10"
+      y2="13"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    />
+    <path
+      d="m13.285,7c1.541,0,2.832,1.168,2.985,2.701l.4,4c.177,1.766-1.21,3.299-2.985,3.299h-7.37c-1.775,0-3.162-1.532-2.985-3.299l.4-4c.153-1.534,1.444-2.701,2.985-2.701"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    />
+  </g>,
+);
+
+export const MessageSquareFilled = icon(
+  <>
+    <g>
+      <path
+        d="m10,2C5.589,2,2,5.589,2,10c0,1.44.388,2.789,1.057,3.958l-1.018,3.055c-.09.27-.02.567.181.768.143.143.334.22.53.22.08,0,.16-.013.237-.039l3.055-1.018c1.169.669,2.518,1.057,3.958,1.057,4.411,0,8-3.589,8-8S14.411,2,10,2Z"
+        strokeWidth="0"
+        fill="currentColor"
+      ></path>
+    </g>
+  </>,
+);
+
+export const FolderFilled = icon(
+  <>
+    <path
+      d="m6.171,6h9.374c.137,0,.272.011,.407.023-.224-1.151-1.237-2.023-2.452-2.023h-4.096l-.74-1.109c-.372-.558-.994-.891-1.664-.891h-2.5c-1.378,0-2.5,1.122-2.5,2.5v4.338c.674-1.695,2.307-2.838,4.171-2.838Z"
+      fill="currentColor"
+    />
+    <path
+      d="m17.516,8.961c-.477-.611-1.195-.961-1.971-.961H6.171c-1.149,0-2.147.779-2.426,1.894l-1.25,5c-.188.752-.022,1.534.456,2.145.477.611,1.195.961,1.97.961h9.374c1.149,0,2.146-.779,2.425-1.894l1.25-5c.188-.752.022-1.534-.455-2.145Z"
+      fill="currentColor"
+    />
+  </>,
+);
+
+export const CircleCheckFilled = icon(
+  <g>
+    <path
+      d="m10,2C5.589,2,2,5.589,2,10s3.589,8,8,8,8-3.589,8-8S14.411,2,10,2Zm4.284,5.621l-4.75,6c-.183.231-.458.37-.753.379-.01,0-.021,0-.031,0-.283,0-.554-.12-.743-.331l-2.25-2.5c-.369-.411-.336-1.043.074-1.412.41-.37,1.042-.336,1.412.074l1.458,1.62,4.015-5.071c.343-.432.971-.506,1.405-.164.433.343.506.972.163,1.405Z"
+      strokeWidth="0"
+      fill="currentColor"
+    />
+  </g>,
+);
+
+export const LockFilled = icon(
+  <g>
+    <path
+      d="m6.5,9v-2.5c0-1.933,1.567-3.5,3.5-3.5h0c1.933,0,3.5,1.567,3.5,3.5v2.5"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></path>
+    <path
+      d="m14,8H6c-1.6543,0-3,1.3457-3,3v4c0,1.6543,1.3457,3,3,3h8c1.6543,0,3-1.3457,3-3v-4c0-1.6543-1.3457-3-3-3Zm-3,5.5c0,.5522-.4473,1-1,1s-1-.4478-1-1v-1c0-.5522.4473-1,1-1s1,.4478,1,1v1Z"
+      strokeWidth="0"
+      fill="currentColor"
+    ></path>
+  </g>,
+);
+
+export const ImageFilled = icon(
+  <g>
+    <path
+      d="m14,2H6c-2.206,0-4,1.794-4,4v8c0,2.206,1.794,4,4,4h8c2.206,0,4-1.794,4-4V6c0-2.206-1.794-4-4-4Zm-7.25,3.5c.69,0,1.25.56,1.25,1.25s-.56,1.25-1.25,1.25-1.25-.56-1.25-1.25.56-1.25,1.25-1.25Zm7.25,10.5H6c-.688,0-1.296-.349-1.656-.88l5.888-5.888c.943-.944,2.591-.944,3.536,0l2.232,2.232v2.536c0,1.103-.897,2-2,2Z"
+      strokeWidth="0"
+      fill="currentColor"
+    ></path>
+  </g>,
+);
+
+export const CameraFilled = icon(
+  <g>
+    <path
+      d="m14,4h-.4419l-.3818-.8335c-.3247-.7085-1.0386-1.1665-1.8179-1.1665h-2.7168c-.7793,0-1.4932.458-1.8184,1.167l-.3813.833h-.4419c-2.2056,0-4,1.7944-4,4v5c0,2.2056,1.7944,4,4,4h8c2.2056,0,4-1.7944,4-4v-5c0-2.2056-1.7944-4-4-4Zm-4,10c-1.933,0-3.5-1.567-3.5-3.5s1.567-3.5,3.5-3.5,3.5,1.567,3.5,3.5-1.567,3.5-3.5,3.5Z"
+      strokeWidth="0"
+      fill="currentColor"
+    ></path>
+  </g>,
+);
+
+export const SquareFilled = icon(
+  <g>
+    <rect
+      x="3"
+      y="3"
+      width="14"
+      height="14"
+      rx="3"
+      ry="3"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      fill="currentColor"
+    ></rect>
+  </g>,
+);
+
+export const IndexTreeFilled = icon(
+  <g>
+    <polyline
+      points="4 3 4 6 8 6"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></polyline>
+    <path
+      d="m4,6v7c0,1.105.895,2,2,2h2"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></path>
+    <rect
+      x="11"
+      y="3"
+      width="5"
+      height="5"
+      rx="1"
+      ry="1"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      fill="currentColor"
+    ></rect>
+    <rect
+      x="11"
+      y="12"
+      width="5"
+      height="5"
+      rx="1"
+      ry="1"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      fill="currentColor"
+    ></rect>
+  </g>,
+);
+
+export const TriangleWarningFilled = icon(
+  <g>
+    <path
+      d="m17.794,12.5L12.598,3.5c-.542-.939-1.514-1.5-2.598-1.5s-2.056.561-2.598,1.5L2.206,12.5c-.542.938-.543,2.061,0,3,.542.939,1.514,1.5,2.598,1.5h10.393c1.084,0,2.056-.561,2.598-1.5.542-.939.542-2.062,0-3Zm-8.794-5.5c0-.552.447-1,1-1s1,.448,1,1v3.5c0,.552-.447,1-1,1s-1-.448-1-1v-3.5Zm1,8c-.689,0-1.25-.561-1.25-1.25s.561-1.25,1.25-1.25,1.25.561,1.25,1.25-.561,1.25-1.25,1.25Z"
+      strokeWidth="0"
+      fill="currentColor"
+    ></path>
+  </g>,
+);
+
+export const FolderBolt = icon(
+  <g
+    fill="currentColor"
+    stroke="currentColor"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    strokeWidth="2"
+  >
+    <path d="m10,6H3v-1.5c0-.828.672-1.5,1.5-1.5h2.965c.334,0,.647.167.832.445l1.703,2.555Z" />
+    <path
+      d="m17,7.565v-.065c0-.828-.672-1.5-1.5-1.5H3v8c0,1.657,1.343,3,3,3h4.226"
+      fill="none"
+    />
+    <polyline fill="none" points="14 14 14.5 10 12 14 17 14 14.5 18 15 14" />
+  </g>,
+);

@@ -1,0 +1,1365 @@
+import { createChatRuntime } from "./chat";
+import { createLinkSharingRouter } from "./link-sharing";
+import { createOrganization } from "./organization";
+import { asyncFilter, asyncEvery } from "./async";
+import { fileMime, supportsIndex, extension } from "../shared/file-types";
+import { availableChatModels, validateProviderURL } from "./ai";
+import { providerCatalog } from "../shared/providers";
+import express, {
+  type Request,
+  type Response,
+  type NextFunction,
+} from "express";
+import cookieParser from "cookie-parser";
+import multer from "multer";
+import { rateLimit, ipKeyGenerator } from "express-rate-limit";
+import {
+  randomBytes,
+  randomUUID,
+  createHash,
+  scrypt as rawScrypt,
+  timingSafeEqual,
+} from "node:crypto";
+import { promisify } from "node:util";
+import { z } from "zod";
+import {
+  createStore,
+  HttpError,
+  requireResource,
+  resourceAccess,
+  visibleResources,
+  type Actor,
+  type Resource,
+} from "./db";
+import {
+  createProviders,
+  getSettings,
+  type Fetch,
+  type Settings,
+} from "./providers";
+const scrypt = promisify(rawScrypt);
+const digest = (s: string) => createHash("sha256").update(s).digest("hex");
+const now = () => new Date().toISOString();
+const email = z
+  .string()
+  .trim()
+  .email()
+  .max(254)
+  .transform((s) => s.toLowerCase());
+const name = z
+  .string()
+  .trim()
+  .min(1)
+  .max(160)
+  .refine(
+    (s) => !/[\x00-\x1f/\\]/.test(s),
+    "Use a name without slashes or control characters",
+  );
+const password = z.string().min(12).max(128);
+const id = z.string().uuid();
+const cookieName = "jevbox_session";
+type AuthedRequest = Request & {
+  actor: Actor;
+};
+type Chat = {
+  id: string;
+  title: string;
+  messages: string;
+  dependencies: string;
+  updated: string;
+};
+export async function createApp(options: {
+  directory: string;
+  databaseUrl?: string;
+  origin: string;
+  fetcher?: Fetch;
+  secure?: boolean;
+  rateLimits?: boolean;
+}) {
+  const store = await createStore(options.directory, options.databaseUrl);
+  const providers = createProviders(store, options.fetcher);
+  const organization = createOrganization(store, options.fetcher);
+  const app = express();
+  app.disable("x-powered-by");
+  const trustedProxies = process.env.TRUST_PROXY_CIDRS?.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (trustedProxies?.length) app.set("trust proxy", trustedProxies);
+  app.get("/health/live", (_req, res) => res.json({ ok: true }));
+  app.get("/health/ready", async (_req, res) => {
+    try {
+      await store.one("SELECT 1");
+      await store.authorization.ready();
+      res.json({ ok: true });
+    } catch {
+      res.status(503).json({ ok: false });
+    }
+  });
+  app.use((req, res, next) => {
+    res.set({
+      "Cache-Control": "no-store, private",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer",
+      "X-Frame-Options": "SAMEORIGIN",
+    });
+    if (
+      !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
+      (req.headers.origin !== options.origin ||
+        req.headers["x-jevbox-request"] !== "1")
+    )
+      return res.status(403).json({ error: "Request origin rejected" });
+    next();
+  });
+  app.use(express.json({ limit: "1mb" }), cookieParser());
+  if (options.rateLimits !== false)
+    app.use(
+      "/api",
+      rateLimit({
+        windowMs: 60000,
+        limit: 180,
+        keyGenerator: (req) =>
+          `${ipKeyGenerator(req.ip ?? "127.0.0.1")}:${["GET", "HEAD"].includes(req.method) ? "read" : "write"}`,
+        message: { error: "Too many requests. Wait a moment and try again." },
+        standardHeaders: true,
+        legacyHeaders: false,
+      }),
+    );
+  if (options.rateLimits !== false)
+    app.use(
+      "/api/auth",
+      rateLimit({
+        windowMs: 15 * 60000,
+        limit: 40,
+        message: { error: "Too many sign-in attempts. Try again later." },
+        standardHeaders: true,
+        legacyHeaders: false,
+      }),
+    );
+  const audit = async (
+    actor: Actor,
+    action: string,
+    resourceId: string | null = null,
+  ) =>
+    await store.run(
+      "INSERT INTO audit(org_id,user_id,action,resource_id,created) VALUES(?,?,?,?,?)",
+      actor.orgId,
+      actor.userId,
+      action,
+      resourceId,
+      now(),
+    );
+  async function authenticate(req: Request): Promise<Actor> {
+    return authenticateToken(digest(req.cookies[cookieName] ?? ""));
+  }
+  async function authenticateToken(token: string): Promise<Actor> {
+    const session = await store.one<{
+      user_id: string;
+      org_id: string;
+      role: string;
+    }>(
+      "SELECT s.*,m.role FROM sessions s JOIN members m ON m.org_id=s.org_id AND m.user_id=s.user_id WHERE token=? AND expires>?",
+      token,
+      Date.now(),
+    );
+    if (!session) throw new HttpError(401, "Please sign in");
+    const a = {
+      userId: session.user_id,
+      orgId: session.org_id,
+      role: session.role,
+      token,
+    };
+    if (!(await store.permission(a, "organization", a.orgId, "active_member")))
+      throw new HttpError(401, "Please sign in");
+    return a;
+  }
+  async function session(res: Response, userId: string, orgId: string) {
+    const token = randomBytes(32).toString("hex");
+    await store.run(
+      "INSERT INTO sessions VALUES(?,?,?,?)",
+      digest(token),
+      userId,
+      orgId,
+      Date.now() + 7 * 86400000,
+    );
+    res.cookie(cookieName, token, {
+      httpOnly: true,
+      secure: options.secure ?? false,
+      sameSite: "strict",
+      path: "/",
+      maxAge: 7 * 86400000,
+    });
+  }
+  async function hashPassword(value: string) {
+    const salt = randomBytes(16).toString("hex");
+    return (
+      salt + ":" + ((await scrypt(value, salt, 64)) as Buffer).toString("hex")
+    );
+  }
+  async function verifyPassword(value: string, hash: string) {
+    const [salt, expected] = hash.split(":");
+    return timingSafeEqual(
+      (await scrypt(value, salt, 64)) as Buffer,
+      Buffer.from(expected, "hex"),
+    );
+  }
+  function mutation(
+    handler: (
+      req: Request,
+      res: Response,
+    ) => Promise<{ status: number; body: unknown }>,
+    anonymous = false,
+  ) {
+    return async (req: Request, res: Response) => {
+      const result = await store.transaction(async () => {
+        if (!anonymous) (req as AuthedRequest).actor = await authenticate(req);
+        return handler(req, res);
+      });
+      res.status(result.status).json(result.body);
+    };
+  }
+  app.post(
+    "/api/auth/register",
+    mutation(async (req, res) => {
+      const input = z
+        .object({
+          email,
+          password,
+          name,
+          organization: name.optional(),
+          invite: z.string().optional(),
+          bootstrapToken: z.string().optional(),
+        })
+        .parse(req.body);
+      const passwordHash = await hashPassword(input.password);
+      const userId = randomUUID();
+      let orgId: string = randomUUID();
+      await store.transaction(async () => {
+        if (
+          process.env.NODE_ENV === "production" &&
+          process.env.ALLOW_SIGNUP !== "true" &&
+          !input.invite
+        ) {
+          const tokenMatches =
+            process.env.BOOTSTRAP_TOKEN &&
+            input.bootstrapToken &&
+            digest(process.env.BOOTSTRAP_TOKEN) ===
+              digest(input.bootstrapToken);
+          if (
+            !tokenMatches ||
+            (await store.one("SELECT id FROM users LIMIT 1"))
+          )
+            throw new HttpError(
+              403,
+              "An invitation is required. First-time setup requires the deployment bootstrap token.",
+            );
+        }
+        if (await store.one("SELECT id FROM users WHERE email=?", input.email))
+          throw new HttpError(409, "Unable to create account. Try signing in.");
+        const invite = input.invite
+          ? await store.one<{
+              org_id: string;
+              email: string;
+            }>(
+              "SELECT * FROM invites WHERE token=? AND expires>?",
+              digest(input.invite),
+              Date.now(),
+            )
+          : undefined;
+        if (input.invite && (!invite || invite.email !== input.email))
+          throw new HttpError(400, "Invitation is invalid or expired");
+        await store.run(
+          "INSERT INTO users VALUES(?,?,?,?)",
+          userId,
+          input.email,
+          input.name,
+          passwordHash,
+        );
+        if (invite) {
+          orgId = invite.org_id;
+          await store.run(
+            "DELETE FROM invites WHERE token=?",
+            digest(input.invite!),
+          );
+        } else
+          await store.run(
+            "INSERT INTO orgs(id,name) VALUES(?,?)",
+            orgId,
+            input.organization ?? `${input.name}'s organization`,
+          );
+        await store.run(
+          "INSERT INTO members VALUES(?,?,?)",
+          orgId,
+          userId,
+          invite ? "member" : "admin",
+        );
+        await session(res, userId, orgId);
+      });
+      return {
+        status: 201,
+        body: { ok: true },
+      };
+    }, true),
+  );
+  app.post(
+    "/api/auth/login",
+    mutation(async (req, res) => {
+      const input = z
+        .object({ email, password: z.string().max(128) })
+        .parse(req.body);
+      const user = await store.one<{
+        id: string;
+        password: string;
+      }>("SELECT id,password FROM users WHERE email=?", input.email);
+      const valid = await verifyPassword(
+        input.password,
+        user?.password ?? `00000000000000000000000000000000:${"00".repeat(64)}`,
+      );
+      if (!user || !valid)
+        throw new HttpError(401, "Email or password is incorrect");
+      const membership = await store.one<{
+        org_id: string;
+      }>("SELECT org_id FROM members WHERE user_id=? ORDER BY org_id", user.id);
+      if (!membership) throw new HttpError(403, "No organization membership");
+      await session(res, user.id, membership.org_id);
+      return {
+        status: 200,
+        body: { ok: true },
+      };
+    }, true),
+  );
+  app.use("/api/shared", createLinkSharingRouter(store));
+  app.use("/api", async (req, _res, next) => {
+    try {
+      (req as AuthedRequest).actor = await authenticate(req);
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
+  const actor = (req: Request) => (req as AuthedRequest).actor;
+  async function admin(req: Request) {
+    const a = await authenticate(req);
+    if (!(await store.permission(a, "organization", a.orgId, "manage")))
+      throw new HttpError(403, "Organization administrator required");
+    return a;
+  }
+  app.get("/api/me", async (req, res) => {
+    const a = actor(req);
+    const settings = await getSettings(store, a.orgId);
+    res.json({
+      user: await store.one(
+        "SELECT id,email,name FROM users WHERE id=?",
+        a.userId,
+      ),
+      organization: await store.one(
+        "SELECT id,name FROM orgs WHERE id=?",
+        a.orgId,
+      ),
+      role: a.role,
+      organizations: await store.all(
+        "SELECT o.id,o.name FROM orgs o JOIN members m ON o.id=m.org_id WHERE m.user_id=?",
+        a.userId,
+      ),
+      chatEnabled: availableChatModels(settings).length > 0,
+      chatModels: availableChatModels(settings),
+      defaultChatModel:
+        availableChatModels(settings).find(
+          (model) =>
+            model.provider === settings.provider &&
+            model.model === settings.model,
+        ) ?? availableChatModels(settings)[0],
+      semanticEnabled: Boolean(settings.jevKey),
+      extendEnabled: Boolean(settings.extendKey),
+    });
+  });
+  app.post(
+    "/api/auth/logout",
+    mutation(async (req, res) => {
+      await store.run("DELETE FROM sessions WHERE token=?", actor(req).token);
+      res.clearCookie(cookieName, { path: "/" });
+      return {
+        status: 200,
+        body: { ok: true },
+      };
+    }),
+  );
+  app.post(
+    "/api/organization/switch",
+    mutation(async (req, res) => {
+      const orgId = id.parse(req.body.orgId);
+      const a = actor(req);
+      if (
+        !(await store.one(
+          "SELECT 1 FROM members WHERE org_id=? AND user_id=?",
+          orgId,
+          a.userId,
+        ))
+      )
+        throw new HttpError(404, "Organization not found");
+      await store.run(
+        "UPDATE sessions SET org_id=? WHERE token=?",
+        orgId,
+        a.token,
+      );
+      return {
+        status: 200,
+        body: { ok: true },
+      };
+    }),
+  );
+  app.post(
+    "/api/invitations/accept",
+    mutation(async (req, res) => {
+      const token = z.string().min(32).parse(req.body.token);
+      const a = actor(req);
+      await store.transaction(async () => {
+        const invite = await store.one<{
+          org_id: string;
+          email: string;
+        }>(
+          "SELECT * FROM invites WHERE token=? AND expires>?",
+          digest(token),
+          Date.now(),
+        );
+        const user = (await store.one<{
+          email: string;
+        }>("SELECT email FROM users WHERE id=?", a.userId))!;
+        if (!invite || invite.email !== user.email)
+          throw new HttpError(400, "Invitation is invalid or expired");
+        await store.run(
+          "INSERT INTO members VALUES(?,?,'member') ON CONFLICT DO NOTHING",
+          invite.org_id,
+          a.userId,
+        );
+        await store.run("DELETE FROM invites WHERE token=?", digest(token));
+        await store.run(
+          "UPDATE sessions SET org_id=? WHERE token=?",
+          invite.org_id,
+          a.token,
+        );
+      });
+      return {
+        status: 200,
+        body: { ok: true },
+      };
+    }),
+  );
+  app.get("/api/members", async (req, res) =>
+    res.json(
+      await store.all(
+        "SELECT u.id,u.name,u.email,m.role FROM members m JOIN users u ON m.user_id=u.id WHERE m.org_id=?",
+        actor(req).orgId,
+      ),
+    ),
+  );
+  app.post(
+    "/api/invitations",
+    mutation(async (req, res) => {
+      const a = await admin(req);
+      const address = email.parse(req.body.email);
+      const token = randomBytes(32).toString("hex");
+      await store.run(
+        "INSERT INTO invites VALUES(?,?,?,?)",
+        digest(token),
+        a.orgId,
+        address,
+        Date.now() + 7 * 86400000,
+      );
+      await audit(a, "invite.create");
+      return {
+        status: 201,
+        body: { url: `${options.origin}/?invite=${token}`, expiresInDays: 7 },
+      };
+    }),
+  );
+  app.patch(
+    "/api/members/:id",
+    mutation(async (req, res) => {
+      const a = await admin(req);
+      const userId = id.parse(req.params.id);
+      const { role } = z
+        .object({ role: z.enum(["admin", "member"]) })
+        .strict()
+        .parse(req.body);
+      await store.transaction(async () => {
+        const member = await store.one<{
+          role: string;
+        }>(
+          "SELECT role FROM members WHERE org_id=? AND user_id=?",
+          a.orgId,
+          userId,
+        );
+        if (!member) throw new HttpError(404, "Member not found");
+        if (
+          member.role === "admin" &&
+          role === "member" &&
+          (await store.one<{
+            count: number;
+          }>(
+            "SELECT count(*) AS count FROM members WHERE org_id=? AND role='admin'",
+            a.orgId,
+          ))!.count <= 1
+        )
+          throw new HttpError(400, "Keep at least one organization admin");
+        await store.run(
+          "UPDATE members SET role=? WHERE org_id=? AND user_id=?",
+          role,
+          a.orgId,
+          userId,
+        );
+      });
+      await audit(a, "member.role");
+      return {
+        status: 200,
+        body: { ok: true },
+      };
+    }),
+  );
+  app.delete(
+    "/api/members/:id",
+    mutation(async (req, res) => {
+      const a = await admin(req);
+      const userId = id.parse(req.params.id);
+      const member = await store.one<{
+        role: string;
+      }>(
+        "SELECT role FROM members WHERE org_id=? AND user_id=?",
+        a.orgId,
+        userId,
+      );
+      if (!member || userId === a.userId)
+        throw new HttpError(400, "This membership cannot be removed");
+      await store.transaction(async () => {
+        await store.run(
+          "DELETE FROM members WHERE org_id=? AND user_id=?",
+          a.orgId,
+          userId,
+        );
+        await store.run(
+          "DELETE FROM sessions WHERE org_id=? AND user_id=?",
+          a.orgId,
+          userId,
+        );
+        await store.run(
+          "DELETE FROM grants WHERE user_id=? AND resource_id IN (SELECT id FROM resources WHERE org_id=?)",
+          userId,
+          a.orgId,
+        );
+      });
+      await audit(a, "member.remove");
+      return {
+        status: 200,
+        body: { ok: true },
+      };
+    }),
+  );
+  app.get("/api/settings", async (req, res) => {
+    const a = await admin(req);
+    const s = await getSettings(store, a.orgId);
+    res.json({
+      provider: s.provider ?? "openai",
+      model: s.model ?? "gpt-6-luna",
+      organization: {
+        enabled: s.organization?.enabled !== false,
+        model: s.organization?.model ?? null,
+      },
+      chatModels: availableChatModels(s),
+      configured: {
+        extendKey: Boolean(s.extendKey),
+        jevKey: Boolean(s.jevKey),
+      },
+      providers: Object.fromEntries(
+        Object.entries(s.credentials ?? {}).map(([key, value]) => [
+          key,
+          {
+            configured: Boolean(value.apiKey || value.config),
+            enabled: value.enabled !== false,
+            model: value.model,
+            models: value.models ?? [],
+            hasConfig: Boolean(
+              value.config && Object.keys(value.config).length,
+            ),
+          },
+        ]),
+      ),
+    });
+  });
+  app.patch(
+    "/api/settings/providers/:provider",
+    mutation(async (req) => {
+      const a = await admin(req);
+      const { enabled } = z
+        .object({ enabled: z.boolean() })
+        .strict()
+        .parse(req.body);
+      const provider = z
+        .string()
+        .refine((id) => providerCatalog.some((item) => item.id === id))
+        .parse(req.params.provider);
+      const settings = await getSettings(store, a.orgId);
+      const credential = settings.credentials?.[provider];
+      if (!credential)
+        throw new HttpError(404, "Configure this provider first.");
+      credential.enabled = enabled;
+      if (
+        enabled &&
+        !availableChatModels(settings).some(
+          (model) => model.provider === provider,
+        )
+      )
+        throw new HttpError(
+          400,
+          "Add credentials and at least one model before enabling this provider.",
+        );
+      await store.run(
+        "UPDATE orgs SET settings=? WHERE id=?",
+        store.encrypt(JSON.stringify(settings)),
+        a.orgId,
+      );
+      await audit(a, "settings.provider.update");
+      return { status: 200, body: { ok: true } };
+    }),
+  );
+  app.put(
+    "/api/settings",
+    mutation(async (req, res) => {
+      const a = await admin(req);
+      const providerSetup = z.object({
+        providerKey: z.string().max(10000).optional(),
+        providerEnabled: z.boolean().optional(),
+        providerConfig: z.record(z.unknown()).optional(),
+        provider: z
+          .string()
+          .refine((p) => providerCatalog.some((c) => c.id === p)),
+        model: z.string().trim().max(150),
+        models: z.array(z.string().trim().min(1).max(150)).max(30).optional(),
+      });
+      const common = {
+        extendKey: z.string().max(1000).optional(),
+        jevKey: z.string().max(1000).optional(),
+        organization: z
+          .object({
+            enabled: z.boolean(),
+            model: z
+              .object({
+                provider: z.string(),
+                model: z.string().trim().min(1).max(150),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict()
+          .optional(),
+      };
+      const input = z
+        .union([
+          providerSetup.extend(common).strict(),
+          z
+            .object({
+              ...common,
+              removedProviders: z
+                .array(
+                  z
+                    .string()
+                    .refine((id) =>
+                      providerCatalog.some((item) => item.id === id),
+                    ),
+                )
+                .max(providerCatalog.length)
+                .optional(),
+              chatProviders: z
+                .array(providerSetup.strict())
+                .max(providerCatalog.length)
+                .refine(
+                  (items) =>
+                    new Set(items.map((item) => item.provider)).size ===
+                    items.length,
+                  "Each provider can only be configured once.",
+                ),
+            })
+            .strict(),
+        ])
+        .parse(req.body);
+      const setups = "chatProviders" in input ? input.chatProviders : [input];
+      for (const setup of setups) {
+        if (setup.providerConfig) {
+          const allowed = new Set([
+            "baseURL",
+            "resourceName",
+            "region",
+            "project",
+            "location",
+            "accessKeyId",
+            "secretAccessKey",
+            "sessionToken",
+            "googleAuthOptions",
+            "headers",
+            "extension",
+          ]);
+          if (Object.keys(setup.providerConfig).some((k) => !allowed.has(k)))
+            throw new HttpError(
+              400,
+              "Unsupported provider configuration field",
+            );
+          if (setup.providerConfig.baseURL)
+            validateProviderURL(z.string().parse(setup.providerConfig.baseURL));
+          if (setup.providerConfig.googleAuthOptions) {
+            const auth = z
+              .object({
+                credentials: z
+                  .object({ client_email: z.string(), private_key: z.string() })
+                  .strict(),
+              })
+              .strict()
+              .parse(setup.providerConfig.googleAuthOptions);
+            setup.providerConfig.googleAuthOptions = auth;
+          }
+        }
+      }
+      const s = await getSettings(store, a.orgId);
+      if (input.extendKey !== undefined) s.extendKey = input.extendKey.trim();
+      if (input.jevKey !== undefined) s.jevKey = input.jevKey.trim();
+      s.credentials ??= {};
+      if ("removedProviders" in input) {
+        for (const provider of input.removedProviders ?? []) {
+          if (setups.some((setup) => setup.provider === provider))
+            throw new HttpError(
+              400,
+              "A provider cannot be saved and removed together.",
+            );
+          delete s.credentials[provider];
+        }
+      }
+      for (const setup of setups) {
+        const credential = (s.credentials[setup.provider] ??= {});
+        credential.model = setup.model;
+        if (setup.providerEnabled !== undefined)
+          credential.enabled = setup.providerEnabled;
+        if (setup.models) credential.models = [...new Set(setup.models)];
+        if (setup.providerKey !== undefined)
+          credential.apiKey = setup.providerKey.trim();
+        if (setup.providerConfig !== undefined)
+          credential.config = setup.providerConfig;
+      }
+      if (!("chatProviders" in input)) {
+        s.provider = input.provider;
+        s.model = input.model;
+      } else {
+        const defaultModel =
+          availableChatModels(s).find(
+            (model) => model.provider === s.provider,
+          ) ?? availableChatModels(s)[0];
+        if (defaultModel) {
+          s.provider = defaultModel.provider;
+          s.model =
+            s.credentials[defaultModel.provider]?.model || defaultModel.model;
+        }
+      }
+      if (input.organization) {
+        const selection = input.organization.model;
+        if (
+          selection &&
+          !availableChatModels(s).some(
+            (model) =>
+              model.provider === selection.provider &&
+              model.model === selection.model,
+          )
+        )
+          throw new HttpError(
+            400,
+            "Choose an enabled model for folder naming.",
+          );
+        s.organization = input.organization;
+      }
+      await store.run(
+        "UPDATE orgs SET settings=? WHERE id=?",
+        store.encrypt(JSON.stringify(s)),
+        a.orgId,
+      );
+      await store.run(
+        "UPDATE resources SET status='queued',error=NULL WHERE org_id=? AND status='awaiting_key'",
+        a.orgId,
+      );
+      await store.run(
+        "UPDATE document_filing SET state='pending',error=NULL WHERE state='awaiting_key' AND resource_id IN (SELECT id FROM resources WHERE org_id=?)",
+        a.orgId,
+      );
+      await store.run(
+        "UPDATE organization_reviews SET state='pending',error=NULL WHERE state='awaiting_key' AND org_id=?",
+        a.orgId,
+      );
+      await audit(a, "settings.update");
+      return {
+        status: 200,
+        body: { ok: true },
+      };
+    }),
+  );
+  async function publicResource(r: Resource, a: Actor) {
+    const { parsed, parse_run, org_id, ...rest } = r;
+    const filing =
+      r.kind === "document"
+        ? await store.one<{
+            state: string;
+            error: string | null;
+            reason: string | null;
+          }>(
+            "SELECT state,error,outcome->>'reason' AS reason FROM document_filing WHERE resource_id=?",
+            r.id,
+          )
+        : undefined;
+    return {
+      ...rest,
+      filing,
+      canWrite: await resourceAccess(store, a, r.id, "write"),
+      canShare: await resourceAccess(store, a, r.id, "share"),
+      pages: parsed ? JSON.parse(parsed).pages : 0,
+    };
+  }
+  app.get("/api/resources", async (req, res) =>
+    res.json(
+      await Promise.all(
+        (await visibleResources(store, actor(req))).map(
+          async (r) => await publicResource(r, actor(req)),
+        ),
+      ),
+    ),
+  );
+  app.post(
+    "/api/folders",
+    mutation(async (req, res) => {
+      const a = actor(req);
+      const input = z
+        .object({
+          name,
+          description: z.string().max(1000).default(""),
+          parentId: id.nullable().default(null),
+        })
+        .parse(req.body);
+      if (
+        input.parentId &&
+        (await requireResource(store, a, input.parentId, "write")).kind !==
+          "folder"
+      )
+        throw new HttpError(400, "Invalid parent");
+      const rid = randomUUID();
+      await store.run(
+        "INSERT INTO resources(id,org_id,owner_id,parent_id,kind,name,description,created) VALUES(?,?,?,?,'folder',?,?,?)",
+        rid,
+        a.orgId,
+        a.userId,
+        input.parentId,
+        input.name,
+        input.description,
+        now(),
+      );
+      await audit(a, "folder.create", rid);
+      return {
+        status: 201,
+        body: { id: rid },
+      };
+    }),
+  );
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 30 * 1024 * 1024, files: 1, fields: 1 },
+  });
+  app.post(
+    "/api/documents",
+    upload.single("file"),
+    mutation(async (req, res) => {
+      const a = actor(req);
+      const file = req.file;
+      if (!file) throw new HttpError(400, "Choose a document");
+      const filename = name.parse(file.originalname);
+      const mime = fileMime(filename);
+      if (!file.size) throw new HttpError(400, "The document is empty");
+      const parentId = req.body.parentId ? id.parse(req.body.parentId) : null;
+      if (
+        parentId &&
+        (await requireResource(store, a, parentId, "write")).kind !== "folder"
+      )
+        throw new HttpError(400, "Invalid parent");
+      const rid = randomUUID();
+      await store.transaction(async () => {
+        await store.run(
+          "INSERT INTO resources(id,org_id,owner_id,parent_id,kind,name,mime,size,status,created) VALUES(?,?,?,?,'document',?,?,?,?,?)",
+          rid,
+          a.orgId,
+          a.userId,
+          parentId,
+          filename,
+          mime,
+          file.size,
+          supportsIndex(filename) ? "queued" : "stored",
+          now(),
+        );
+        await store.run("INSERT INTO blobs VALUES(?,?)", rid, file.buffer);
+        if (supportsIndex(filename))
+          await store.run(
+            "INSERT INTO document_filing(resource_id,scope_id) VALUES(?,?)",
+            rid,
+            parentId,
+          );
+        await audit(a, "document.upload", rid);
+      });
+      return {
+        status: 201,
+        body: { id: rid },
+      };
+    }),
+  );
+  app.get("/api/resources/:id", async (req, res) => {
+    const a = actor(req);
+    const r = await requireResource(store, a, id.parse(req.params.id));
+    res.json({
+      ...(await publicResource(r, a)),
+      parsed: r.parsed ? JSON.parse(r.parsed) : null,
+    });
+  });
+  app.get("/api/documents/:id/content", async (req, res) => {
+    const r = await requireResource(store, actor(req), id.parse(req.params.id));
+    const body = await store.one<{
+      body: Uint8Array;
+    }>("SELECT body FROM blobs WHERE resource_id=?", r.id);
+    if (!body) throw new HttpError(404, "Content not found");
+    res.set({
+      "Content-Type": r.mime,
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+      "Content-Disposition": `${["text/html", "text/xml", "image/svg+xml", "application/octet-stream"].includes(r.mime) ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(r.name)}`,
+    });
+    await requireResource(store, actor(req), r.id);
+    const content = Buffer.from(body.body);
+    res.set("Accept-Ranges", "bytes");
+    const range = req.range(content.length);
+    if (
+      range === -1 ||
+      (Array.isArray(range) && range.type === "bytes" && range.length !== 1)
+    ) {
+      res.status(416).set("Content-Range", `bytes */${content.length}`).end();
+      return;
+    }
+    if (Array.isArray(range) && range.type === "bytes") {
+      const { start, end } = range[0];
+      res
+        .status(206)
+        .set("Content-Range", `bytes ${start}-${end}/${content.length}`)
+        .send(content.subarray(start, end + 1));
+      return;
+    }
+    res.send(content);
+  });
+  app.post(
+    "/api/documents/:id/filing/retry",
+    mutation(async (req) => {
+      const r = await requireResource(
+        store,
+        actor(req),
+        id.parse(req.params.id),
+        "share",
+      );
+      if (r.kind !== "document" || r.status !== "ready")
+        throw new HttpError(409, "Wait for indexing before retrying filing.");
+      await store.run(
+        "INSERT INTO document_filing(resource_id,scope_id,outcome) VALUES(?,?,?) ON CONFLICT(resource_id) DO UPDATE SET scope_id=excluded.scope_id,state='pending',is_review=false,outcome=excluded.outcome,error=NULL,lease_id=NULL,lease_until=NULL",
+        r.id,
+        r.parent_id,
+        JSON.stringify({ requested: true }),
+      );
+      return { status: 200, body: { ok: true } };
+    }),
+  );
+  app.post("/api/documents/organize", async (req, res) => {
+    const a = actor(req);
+    const { ids } = z
+      .object({ ids: z.array(id).min(1).max(100) })
+      .strict()
+      .parse(req.body);
+    const claims = await store.transaction(async () => {
+      const documents: Resource[] = [];
+      for (const resourceId of new Set<string>(ids)) {
+        const document = await requireResource(store, a, resourceId, "share");
+        if (
+          document.kind !== "document" ||
+          document.status !== "ready" ||
+          !document.parsed
+        )
+          throw new HttpError(409, "Select indexed documents to organize.");
+        if (
+          document.access !== "restricted" ||
+          (await store.one(
+            "SELECT 1 FROM grants WHERE resource_id=? LIMIT 1",
+            document.id,
+          ))
+        )
+          throw new HttpError(
+            409,
+            "Only private documents without sharing grants can be organized automatically.",
+          );
+        documents.push(document);
+      }
+      if (!(await getSettings(store, a.orgId)).jevKey)
+        throw new HttpError(
+          409,
+          "Connect TypeSafe in organization settings to organize documents.",
+        );
+      const claims = [];
+      for (const document of documents) {
+        const leaseId = randomUUID();
+        await store.run(
+          "INSERT INTO document_filing(resource_id,scope_id,state,outcome,lease_id,lease_until) VALUES(?,NULL,'working',?,?,now()+interval '5 minutes') ON CONFLICT(resource_id) DO UPDATE SET scope_id=NULL,state='working',is_review=false,outcome=excluded.outcome,error=NULL,lease_id=excluded.lease_id,lease_until=excluded.lease_until",
+          document.id,
+          JSON.stringify({ requested: true }),
+          leaseId,
+        );
+        await audit(a, "document.organize", document.id);
+        claims.push({ document, leaseId });
+      }
+      return claims;
+    });
+    res.json(await organization.organize(claims));
+  });
+  app.post(
+    "/api/documents/:id/retry",
+    mutation(async (req, res) => {
+      const r = await requireResource(
+        store,
+        actor(req),
+        id.parse(req.params.id),
+        "write",
+      );
+      if (!supportsIndex(r.name))
+        throw new HttpError(
+          400,
+          "Indexing is unavailable for this file format",
+        );
+      if (r.kind !== "document" || ["queued", "processing"].includes(r.status))
+        throw new HttpError(409, "Document is already processing");
+      await store.run(
+        "UPDATE resources SET status='queued',error=NULL,parse_run=NULL WHERE id=?",
+        r.id,
+      );
+      return {
+        status: 200,
+        body: { ok: true },
+      };
+    }),
+  );
+  app.patch(
+    "/api/resources/:id",
+    mutation(async (req, res) => {
+      const a = actor(req);
+      const r = await requireResource(
+        store,
+        a,
+        id.parse(req.params.id),
+        "write",
+      );
+      const input = z
+        .object({ name, description: z.string().max(1000).default("") })
+        .parse(req.body);
+      await store.run(
+        "UPDATE resources SET name=?,description=? WHERE id=?",
+        input.name,
+        input.description,
+        r.id,
+      );
+      await audit(a, "resource.update", r.id);
+      return {
+        status: 200,
+        body: { ok: true },
+      };
+    }),
+  );
+  app.post(
+    "/api/resources/:id/move",
+    mutation(async (req) => {
+      const a = actor(req);
+      const resource = await requireResource(
+        store,
+        a,
+        id.parse(req.params.id),
+        "share",
+      );
+      const { parentId } = z
+        .object({ parentId: id.nullable() })
+        .strict()
+        .parse(req.body);
+      await store.run(
+        "UPDATE document_filing SET state='completed',outcome=?,lease_id=NULL,lease_until=NULL,error=NULL WHERE resource_id=?",
+        JSON.stringify({ reason: "manual", parentId }),
+        resource.id,
+      );
+      if (parentId === resource.parent_id)
+        return { status: 200, body: { ok: true } };
+      if (parentId) {
+        const destination = await requireResource(store, a, parentId, "write");
+        if (destination.kind !== "folder")
+          throw new HttpError(400, "Choose a folder as the destination");
+        let ancestor: string | null = parentId;
+        const seen = new Set<string>();
+        while (ancestor) {
+          if (ancestor === resource.id || seen.has(ancestor))
+            throw new HttpError(
+              400,
+              "A folder cannot be moved into itself or its descendants",
+            );
+          seen.add(ancestor);
+          const parent: { parent_id: string | null } | undefined =
+            await store.one(
+              "SELECT parent_id FROM resources WHERE id=? AND org_id=?",
+              ancestor,
+              a.orgId,
+            );
+          ancestor = parent?.parent_id ?? null;
+        }
+      }
+      await store.run(
+        "UPDATE resources SET parent_id=?,access=CASE WHEN ?::text IS NULL AND access='inherit' THEN 'restricted' ELSE access END WHERE id=?",
+        parentId,
+        parentId,
+        resource.id,
+      );
+      await audit(a, "resource.move", resource.id);
+      return { status: 200, body: { ok: true } };
+    }),
+  );
+  async function deleteResources(a: Actor, selectedIds: string[]) {
+    for (const resourceId of selectedIds)
+      await requireResource(store, a, resourceId, "share");
+    const descendants = await store.all<{ id: string }>(
+      `WITH RECURSIVE subtree AS (
+        SELECT id FROM resources WHERE org_id=? AND id=ANY(?::text[])
+        UNION
+        SELECT r.id FROM resources r JOIN subtree s ON r.parent_id=s.id WHERE r.org_id=?
+      ) SELECT id FROM subtree`,
+      a.orgId,
+      selectedIds,
+      a.orgId,
+    );
+    const resourceIds = descendants.map((resource) => resource.id);
+    for (const resourceId of resourceIds)
+      if (!selectedIds.includes(resourceId))
+        await requireResource(store, a, resourceId, "share");
+    await store.run(
+      "DELETE FROM resources WHERE org_id=? AND id=ANY(?::text[])",
+      a.orgId,
+      resourceIds,
+    );
+    for (const resourceId of resourceIds)
+      await audit(a, "resource.delete", resourceId);
+    return resourceIds.length;
+  }
+  app.post(
+    "/api/resources/delete-batch",
+    mutation(async (req) => {
+      const a = actor(req);
+      const { ids } = z
+        .object({ ids: z.array(id).min(1).max(100) })
+        .strict()
+        .parse(req.body);
+      const count = await deleteResources(a, [...new Set(ids)]);
+      return { status: 200, body: { ok: true, count } };
+    }),
+  );
+  app.delete(
+    "/api/resources/:id",
+    mutation(async (req, res) => {
+      const a = actor(req);
+      await deleteResources(a, [id.parse(req.params.id)]);
+      return {
+        status: 200,
+        body: { ok: true },
+      };
+    }),
+  );
+  async function shareUrl(resourceId: string) {
+    const link = await store.one<{ encrypted_token: string }>(
+      "SELECT encrypted_token FROM share_links WHERE resource_id=?",
+      resourceId,
+    );
+    return link
+      ? `${options.origin}/s/${store.decrypt(link.encrypted_token)}`
+      : null;
+  }
+  app.get("/api/resources/:id/access", async (req, res) => {
+    const a = actor(req);
+    const r = await requireResource(store, a, id.parse(req.params.id), "share");
+    res.json({
+      access: r.access,
+      ownerId: r.owner_id,
+      parentId: r.parent_id,
+      shareUrl: await shareUrl(r.id),
+      grants: await store.all(
+        'SELECT user_id AS "userId",role FROM grants WHERE resource_id=?',
+        r.id,
+      ),
+    });
+  });
+  app.put(
+    "/api/resources/:id/access",
+    mutation(async (req, res) => {
+      const a = actor(req);
+      const r = await requireResource(
+        store,
+        a,
+        id.parse(req.params.id),
+        "share",
+      );
+      const input = z
+        .object({
+          access: z.enum(["restricted", "organization", "inherit", "link"]),
+          grants: z
+            .array(z.object({ userId: id, role: z.enum(["viewer", "editor"]) }))
+            .max(200),
+        })
+        .strict()
+        .parse(req.body);
+      if (input.access === "inherit" && !r.parent_id)
+        throw new HttpError(400, "A parent category is required");
+      for (const grant of input.grants)
+        if (
+          grant.userId === r.owner_id ||
+          !(await store.one(
+            "SELECT 1 FROM members WHERE org_id=? AND user_id=?",
+            a.orgId,
+            grant.userId,
+          ))
+        )
+          throw new HttpError(400, "Invalid organization member");
+      await store.transaction(async () => {
+        await store.run(
+          "UPDATE resources SET access=? WHERE id=?",
+          input.access,
+          r.id,
+        );
+        if (input.access === "link") {
+          if (
+            !(await store.one(
+              "SELECT 1 FROM share_links WHERE resource_id=?",
+              r.id,
+            ))
+          ) {
+            const token = randomBytes(32).toString("hex");
+            await store.run(
+              "INSERT INTO share_links(resource_id,org_id,token_hash,encrypted_token) VALUES(?,?,?,?)",
+              r.id,
+              a.orgId,
+              digest(token),
+              store.encrypt(token),
+            );
+          }
+        } else {
+          await store.run("DELETE FROM share_links WHERE resource_id=?", r.id);
+        }
+        await store.run("DELETE FROM grants WHERE resource_id=?", r.id);
+        for (const grant of input.grants)
+          await store.run(
+            "INSERT INTO grants VALUES(?,?,?)",
+            r.id,
+            grant.userId,
+            grant.role,
+          );
+        await audit(a, "resource.share", r.id);
+      });
+      return {
+        status: 200,
+        body: { ok: true, shareUrl: await shareUrl(r.id) },
+      };
+    }),
+  );
+  app.post("/api/search", async (req, res) => {
+    const a = actor(req);
+    const query = z.string().trim().min(1).max(2000).parse(req.body.query);
+    const result = await providers.retrieve(a, query);
+    await authenticate(req);
+    result.results = await asyncFilter(
+      result.results,
+      async (s) => await resourceAccess(store, a, s.documentId),
+    );
+    result.trace = await asyncFilter(
+      result.trace,
+      async (t) =>
+        !t.resourceId || (await resourceAccess(store, a, t.resourceId)),
+    );
+    res.json(result);
+  });
+  const chats = createChatRuntime(
+    store,
+    providers,
+    authenticate,
+    authenticateToken,
+  );
+  app.use("/api/chats", chats.router);
+  app.get("/api/audit", async (req, res) => {
+    const a = await admin(req);
+    res.json(
+      await store.all(
+        "SELECT action,created,user_id FROM audit WHERE org_id=? ORDER BY id DESC LIMIT 100",
+        a.orgId,
+      ),
+    );
+  });
+  app.use("/api", (_req, res) => res.status(404).json({ error: "Not found" }));
+  app.use(
+    (error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+      if (error instanceof z.ZodError)
+        return res
+          .status(400)
+          .json({ error: error.issues[0]?.message ?? "Invalid input" });
+      if (error instanceof multer.MulterError)
+        return res
+          .status(400)
+          .json({ error: "Upload must contain one file smaller than 30 MB" });
+      if (error instanceof HttpError)
+        return res.status(error.status).json({ error: error.message });
+      res
+        .status(500)
+        .json({ error: "The request could not be completed. Please retry." });
+    },
+  );
+  let working = false;
+  async function tick() {
+    if (working) return;
+    working = true;
+    try {
+      const docs = await store.all<Resource>(
+        "SELECT * FROM resources WHERE status IN ('queued','processing') ORDER BY created LIMIT 5",
+      );
+      for (const doc of docs) {
+        try {
+          await store.run(
+            "UPDATE resources SET status='processing' WHERE id=?",
+            doc.id,
+          );
+          const parsed = await providers.processDocument(doc);
+          if (parsed)
+            await store.run(
+              "UPDATE resources SET parsed=?,status='ready',error=NULL WHERE id=?",
+              JSON.stringify(parsed),
+              doc.id,
+            );
+        } catch (error) {
+          await store.run(
+            "UPDATE resources SET status='failed',error=? WHERE id=?",
+            error instanceof HttpError
+              ? error.message
+              : "Could not index this document. Verify the format and retry.",
+            doc.id,
+          );
+        }
+      }
+      await organization.tick();
+    } finally {
+      working = false;
+    }
+  }
+  return {
+    app,
+    store,
+    tick,
+    providers,
+    tickChats: chats.tick,
+    closeChats: chats.close,
+  };
+}

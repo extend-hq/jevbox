@@ -1,0 +1,18 @@
+image:
+  repository: registry.example.org/team/jevbox
+  tag: replace-with-commit-sha
+appOrigin: https://knowledge.example.org
+existingSecret: jevbox-secrets
+postgres:
+  allowedCidrs: [10.20.30.0/24]
+ingress:
+  enabled: true
+  className: nginx
+  host: knowledge.example.org
+  tlsSecretName: jevbox-tls
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 32m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+networkPolicy:
+  ingressNamespace: ingress-nginx

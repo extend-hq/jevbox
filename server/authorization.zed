@@ -1,0 +1,29 @@
+definition jevbox/user {}
+definition jevbox/link {}
+definition jevbox/organization {
+  relation member: jevbox/user
+  relation admin: jevbox/user
+  permission active_member = member + admin
+  permission manage = admin
+}
+definition jevbox/resource {
+  relation organization: jevbox/organization
+  relation owner: jevbox/user
+  relation viewer: jevbox/user
+  relation editor: jevbox/user
+  relation parent: jevbox/resource
+  relation root: jevbox/organization
+  relation inherited: jevbox/resource
+  relation org_access: jevbox/organization
+  relation link_viewer: jevbox/link
+  permission link_read = link_viewer + inherited->link_read
+  permission ancestor_access = parent->read + root->active_member
+  permission read = (owner + viewer + editor + inherited->read + org_access->active_member) & organization->active_member & ancestor_access
+  permission write = (owner + editor + inherited->write) & organization->active_member & ancestor_access
+  permission share = owner & organization->active_member & ancestor_access
+}
+definition jevbox/chat {
+  relation organization: jevbox/organization
+  relation owner: jevbox/user
+  permission read = owner & organization->active_member
+}

@@ -1,0 +1,120 @@
+{{- include "jevbox.guard" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "jevbox.name" . }}
+  labels:
+    {{- include "jevbox.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "jevbox.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "jevbox.labels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 4310
+          env:
+            - name: APP_ORIGIN
+              value: {{ .Values.appOrigin | quote }}
+            - name: ALLOW_SIGNUP
+              value: {{ .Values.allowSignup | quote }}
+            - name: TRUST_PROXY_CIDRS
+              value: {{ .Values.trustProxyCidrs | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: DATABASE_URL
+            - name: SPICEDB_PRESHARED_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: SPICEDB_PRESHARED_KEY
+            - name: SPICEDB_HTTP_URL
+              value: "http://{{ include "jevbox.name" . }}-spicedb:8443"
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: ENCRYPTION_KEY
+            - name: BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: BOOTSTRAP_TOKEN
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.postgres.caSecret }}
+            - name: postgres-ca
+              mountPath: /etc/postgres-ca
+              readOnly: true
+            {{- end }}
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        {{- if .Values.postgres.caSecret }}
+        - name: postgres-ca
+          secret:
+            secretName: {{ .Values.postgres.caSecret }}
+        {{- end }}
+        - name: data
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi

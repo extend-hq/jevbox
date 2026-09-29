@@ -1,0 +1,41 @@
+name: Verify
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm setup:local
+      - run: pnpm services:up
+      - run: pnpm test
+      - run: pnpm build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+      - run: docker build -t jevbox:ci .
+      - if: always()
+        run: docker compose down -v
+  deployment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4.3.1
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.11.1
+      - run: helm lint infra/k8s/charts/jevbox -f infra/k8s/values/portable.yaml
+      - run: helm template sandbox infra/k8s/charts/jevbox --namespace jevbox-sandbox -f infra/k8s/values/portable.yaml
+      - run: terraform -chdir=infra/terraform/aws fmt -check
+      - run: terraform -chdir=infra/terraform/aws init -backend=false
+      - run: terraform -chdir=infra/terraform/aws validate

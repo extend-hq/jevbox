@@ -1,0 +1,279 @@
+import { z } from "zod";
+import type { ParsedBlock } from "../shared/parsed-blocks";
+export type IndexNode = {
+  id: string;
+  title: string;
+  summary: string;
+  page: number;
+  endPage: number;
+  content: string;
+  links: { label: string; url: string }[];
+  blocks: ParsedBlock[];
+  children: IndexNode[];
+  passages?: IndexPassage[];
+};
+export type IndexPassage = {
+  id: string;
+  page: number;
+  endPage: number;
+  content: string;
+  blockIds: string[];
+};
+export type ParsedDocument = {
+  source: "extend" | "text";
+  pages: number;
+  nodes: IndexNode[];
+  blocks: ParsedBlock[];
+  markdown: string;
+  indexedAt: string;
+  version?: number;
+  summary?: string;
+};
+
+export function splitPassages(content: string, size = 2400, overlap = 200) {
+  const passages: { content: string; start: number; end: number }[] = [];
+  for (let start = 0; start < content.length;) {
+    let end = Math.min(start + size, content.length);
+    if (end < content.length) {
+      const boundary = content.lastIndexOf("\n\n", end);
+      if (boundary > start + size / 2) end = boundary;
+    }
+    const text = content.slice(start, end);
+    if (text.trim()) passages.push({ content: text, start, end });
+    if (end === content.length) break;
+    start = Math.max(start + 1, end - overlap);
+  }
+  return passages;
+}
+
+function sectionParts(content: string) {
+  const offsets = [0];
+  let offset = 0;
+  let fence: string | undefined;
+  for (const line of content.split(/(?<=\n)/)) {
+    const marker = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+    if (marker) {
+      if (!fence) fence = marker[1];
+      else if (marker[1][0] === fence[0] && marker[1].length >= fence.length)
+        fence = undefined;
+    } else if (!fence && /^#{1,6}\s/.test(line) && offset > 0)
+      offsets.push(offset);
+    offset += line.length;
+  }
+  return offsets.map((start, index) =>
+    content.slice(start, offsets[index + 1]),
+  );
+}
+const boundingBoxSchema = z.object({
+  left: z.number().finite(),
+  top: z.number().finite(),
+  right: z.number().finite(),
+  bottom: z.number().finite(),
+});
+const chunkSchema = z
+  .object({
+    content: z.string(),
+    metadata: z
+      .object({
+        pageRange: z.object({ start: z.number(), end: z.number() }).optional(),
+      })
+      .passthrough()
+      .optional(),
+    blocks: z
+      .array(
+        z
+          .object({
+            id: z.string().optional(),
+            type: z.string(),
+            content: z.string().default(""),
+            boundingBox: boundingBoxSchema.nullish().catch(undefined),
+            polygon: z
+              .array(
+                z.object({ x: z.number().finite(), y: z.number().finite() }),
+              )
+              .nullish()
+              .catch(undefined),
+            metadata: z
+              .object({
+                page: z
+                  .object({
+                    number: z.number().int().positive(),
+                    width: z.number().positive().nullish(),
+                    height: z.number().positive().nullish(),
+                  })
+                  .passthrough()
+                  .optional(),
+              })
+              .passthrough()
+              .optional(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
+  .passthrough();
+export function buildIndex(
+  input: unknown,
+  source: "extend" | "text",
+  outputMetadata?: unknown,
+): ParsedDocument {
+  const chunks = z.array(chunkSchema).min(1).max(10000).parse(input);
+  const pageMetadata = z
+    .object({
+      pages: z
+        .array(
+          z.object({
+            number: z.number().int().positive(),
+            rotationApplied: z.number().finite().nullable(),
+          }),
+        )
+        .nullish(),
+    })
+    .safeParse(outputMetadata);
+  const pageRotations = new Map(
+    pageMetadata.success
+      ? pageMetadata.data.pages?.map((p) => [p.number, p.rotationApplied ?? 0])
+      : [],
+  );
+  let seq = 0;
+  const nodes: IndexNode[] = [];
+  const blocks: ParsedBlock[] = [];
+  const seenBlocks = new Map<string, ParsedBlock>();
+  const stack: { level: number; node: IndexNode }[] = [];
+  for (const [i, chunk] of chunks.entries()) {
+    const page = chunk.metadata?.pageRange?.start ?? i + 1;
+    const endPage = chunk.metadata?.pageRange?.end ?? page;
+    const chunkBlocks = chunk.blocks.map((b, j): ParsedBlock => {
+      const id = b.id ?? `block-${i}-${j}`;
+      const existing = seenBlocks.get(id);
+      if (existing) return existing;
+      const polygon = b.polygon;
+      const boundingBox =
+        b.boundingBox ??
+        (polygon && polygon.length >= 3
+          ? {
+              left: Math.min(...polygon.map((p) => p.x)),
+              right: Math.max(...polygon.map((p) => p.x)),
+              top: Math.min(...polygon.map((p) => p.y)),
+              bottom: Math.max(...polygon.map((p) => p.y)),
+            }
+          : undefined);
+      const block: ParsedBlock = {
+        id,
+        type: b.type,
+        content: b.content,
+        page: b.metadata?.page?.number ?? page,
+        ...(b.metadata?.page?.width && b.metadata.page.height
+          ? {
+              pageWidth: b.metadata.page.width,
+              pageHeight: b.metadata.page.height,
+            }
+          : {}),
+        ...(boundingBox ? { boundingBox } : {}),
+        ...(pageRotations.has(b.metadata?.page?.number ?? page)
+          ? {
+              rotationApplied: pageRotations.get(
+                b.metadata?.page?.number ?? page,
+              ),
+            }
+          : {}),
+      };
+      seenBlocks.set(id, block);
+      blocks.push(block);
+      return block;
+    });
+    const parts = sectionParts(chunk.content).filter((part) => part.trim());
+    for (const part of parts.length ? parts : [""]) {
+      const heading = part.match(/^(#{1,6})\s+(.+)/);
+      if (!heading && stack.length) {
+        append(stack.at(-1)!.node, part, page, endPage, chunkBlocks);
+        stack.forEach((s) => {
+          s.node.endPage = Math.max(s.node.endPage, endPage);
+        });
+        continue;
+      }
+      const level = heading?.[1].length ?? 6;
+      const node: IndexNode = {
+        id: `node-${++seq}`,
+        title: heading?.[2].trim() ?? `Page ${page}`,
+        summary: "",
+        page,
+        endPage,
+        content: "",
+        links: [],
+        blocks: [],
+        children: [],
+        passages: [],
+      };
+      append(node, part, page, endPage, chunkBlocks);
+      while (stack.length && stack.at(-1)!.level >= level) stack.pop();
+      if (stack.length) stack.at(-1)!.node.children.push(node);
+      else nodes.push(node);
+      stack.forEach((s) => {
+        s.node.endPage = Math.max(s.node.endPage, endPage);
+      });
+      if (heading) stack.push({ level, node });
+    }
+  }
+  for (const node of flatten(nodes))
+    node.summary = `Pages ${node.page}–${node.endPage}. Sections: ${[node.title, ...flatten(node.children).map((child) => child.title)].join("; ")}`;
+  return {
+    version: 1,
+    source,
+    pages: Math.max(
+      ...chunks.map((c, i) => c.metadata?.pageRange?.end ?? i + 1),
+      ...blocks.map((b) => b.page),
+    ),
+    nodes,
+    blocks,
+    markdown: chunks.map((c) => c.content).join("\n\n"),
+    indexedAt: new Date().toISOString(),
+    summary: `Document outline: ${flatten(nodes)
+      .map((node) => node.title)
+      .join("; ")}`,
+  };
+}
+
+function append(
+  node: IndexNode,
+  content: string,
+  page: number,
+  endPage: number,
+  blocks: ParsedBlock[],
+) {
+  node.content += (node.content ? "\n\n" : "") + content;
+  node.endPage = Math.max(node.endPage, endPage);
+  node.links.push(
+    ...[...content.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g)].map(
+      (match) => ({ label: match[1], url: match[2] }),
+    ),
+  );
+  const matches = blocks.flatMap((block) => {
+    const start = block.content ? content.indexOf(block.content) : -1;
+    return start < 0
+      ? []
+      : [{ block, start, end: start + block.content.length }];
+  });
+  for (const { block } of matches)
+    if (!node.blocks.some((existing) => existing.id === block.id))
+      node.blocks.push(block);
+  for (const passage of splitPassages(content)) {
+    const covered = matches.filter(
+      (match) => match.start < passage.end && match.end > passage.start,
+    );
+    node.passages!.push({
+      id: `${node.id}-passage-${node.passages!.length + 1}`,
+      content: passage.content,
+      page: covered.length
+        ? Math.min(...covered.map((match) => match.block.page))
+        : page,
+      endPage: covered.length
+        ? Math.max(...covered.map((match) => match.block.page))
+        : endPage,
+      blockIds: covered.map((match) => match.block.id),
+    });
+  }
+}
+export function flatten(nodes: IndexNode[]): IndexNode[] {
+  return nodes.flatMap((n) => [n, ...flatten(n.children)]);
+}

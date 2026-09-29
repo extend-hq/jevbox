@@ -1,0 +1,42 @@
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+appOrigin: ""
+existingSecret: jevbox-secrets
+allowSignup: false
+trustProxyCidrs: ""
+postgres:
+  caSecret: ""
+  port: 5432
+  allowedCidrs: []
+spicedb:
+  image: authzed/spicedb:v1.48.0
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+service:
+  port: 80
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  annotations: {}
+  tlsSecretName: ""
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+networkPolicy:
+  enabled: true
+  ingressNamespace: ""
+nodeSelector: {}
+tolerations: []

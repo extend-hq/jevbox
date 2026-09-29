@@ -1,0 +1,6 @@
+bucket = "REPLACE_WITH_NEW_ACCOUNT_STATE_BUCKET"
+key = "jevbox/isolated/terraform.tfstate"
+region = "REPLACE_WITH_TARGET_REGION"
+encrypt = true
+use_lockfile = true
+allowed_account_ids = ["REPLACE_WITH_NEW_ACCOUNT_ID"]

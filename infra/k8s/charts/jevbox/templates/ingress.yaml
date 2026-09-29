@@ -1,0 +1,27 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "jevbox.name" . }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ required "ingress.className is required" .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ required "ingress.host is required" .Values.ingress.host }}
+      secretName: {{ required "ingress.tlsSecretName is required" .Values.ingress.tlsSecretName }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "jevbox.name" . }}
+                port:
+                  name: http
+{{- end }}

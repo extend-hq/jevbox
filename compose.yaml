@@ -1,0 +1,64 @@
+name: jevbox
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: local-development-only
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - ./infra/local/init-postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  spicedb-migrate:
+    image: authzed/spicedb:v1.48.0
+    command: migrate head
+    environment:
+      SPICEDB_DATASTORE_ENGINE: postgres
+      SPICEDB_DATASTORE_CONN_URI: postgres://spicedb:spicedb-local@postgres:5432/spicedb?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+  spicedb:
+    image: authzed/spicedb:v1.48.0
+    command: [serve, --telemetry-endpoint=]
+    environment:
+      SPICEDB_DATASTORE_ENGINE: postgres
+      SPICEDB_DATASTORE_CONN_URI: postgres://spicedb:spicedb-local@postgres:5432/spicedb?sslmode=disable
+      SPICEDB_GRPC_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY:-jevbox-local-spicedb-key}
+      SPICEDB_HTTP_ENABLED: "true"
+      SPICEDB_HTTP_ADDR: ":8443"
+    ports:
+      - "127.0.0.1:58443:8443"
+    depends_on:
+      spicedb-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:4310:4310"
+    environment:
+      APP_ORIGIN: http://localhost:4310
+      ALLOW_SIGNUP: "true"
+      DATABASE_URL: postgres://jevbox:jevbox-local@postgres:5432/jevbox
+      SPICEDB_HTTP_URL: http://spicedb:8443
+      SPICEDB_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY:-jevbox-local-spicedb-key}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      spicedb:
+        condition: service_started
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  postgres:
