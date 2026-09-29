@@ -217,24 +217,27 @@ export function DocumentView({
     };
   }, [documentId, sharedToken]);
   useEffect(() => {
-    if (!initialNode || !doc?.parsed) return;
+    if (!doc?.parsed || (!initialNode && !embedded)) return;
     const target = flatten(doc.parsed.nodes).find((n) => n.id === initialNode);
     const allBlocks = documentBlocks(doc.parsed);
     const block =
       allBlocks.find((block) => focusBlockIds?.includes(block.id)) ??
-      sectionBlocks(target, allBlocks)[0];
+      (initialNode ? sectionBlocks(target, allBlocks)[0] : allBlocks[0]);
     setActiveBlockId(block?.id);
     const area =
       block &&
       blockHighlightArea(block, pdf.current?.getPageRotation(block.page));
     if (area && block) pdf.current?.scrollToPageArea(block.page, area);
     else if (target) pdf.current?.scrollToPage(target.page);
+    else if (!initialNode) pdf.current?.scrollToPage(1);
+    if (embedded) setSourceView("preview");
   }, [
     initialNode,
     doc?.id,
     doc?.status,
     !!doc?.parsed,
     focusBlockIds?.join(","),
+    embedded,
   ]);
   if (!doc && embedded)
     return (
@@ -498,9 +501,8 @@ export function DocumentView({
         : undefined,
   };
   if (embedded) {
-    const sourceBlocks = selectedBlocks.length
-      ? selectedBlocks
-      : sectionBlocks(node, blocks);
+    const sourceBlocks =
+      selected || focusBlockIds?.length ? selectedBlocks : blocks;
     const sourceIds = sourceBlocks.map((block) => block.id);
     const focusPdf = () => {
       const block = sourceBlocks[0];
@@ -512,30 +514,6 @@ export function DocumentView({
     };
     return (
       <section className="source-document" aria-label="Source details">
-        <div className="source-document-heading">
-          <div>
-            <p>
-              {node?.title ?? "Document"} · p. {node?.page ?? 1}
-              {node && node.endPage !== node.page ? `–${node.endPage}` : ""}
-            </p>
-          </div>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <a
-                  href={`/library/documents/${encodeURIComponent(doc.id)}?node=${encodeURIComponent(selected)}&tab=index`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="source-open-full"
-                  aria-label="Open full document"
-                />
-              }
-            >
-              <ArrowUpRight size={16} />
-            </TooltipTrigger>
-            <TooltipPopup>Open full document</TooltipPopup>
-          </Tooltip>
-        </div>
         <Tabs
           value={sourceView}
           onValueChange={(value) => setSourceView(String(value))}

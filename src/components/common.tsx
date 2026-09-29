@@ -1,6 +1,6 @@
 import { JevboxIcon } from "./jevbox-icon";
 import { ScrollArea } from "@/components/coss/scroll-area";
-import { useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { LoadingState } from "./loading-state";
 import {
   Select,
@@ -91,6 +91,35 @@ export function Choice({
     </Select>
   );
 }
+const MarkdownSourceContext = createContext<{
+  sources: Source[];
+  onSourcePreview?: (source: Source) => void;
+}>({ sources: [] });
+
+function MarkdownLink({
+  href,
+  children,
+}: {
+  href?: string;
+  children?: ReactNode;
+}) {
+  const { sources, onSourcePreview } = useContext(MarkdownSourceContext);
+  const match = href?.match(/^#chat-source-(\d+)$/);
+  const number = match ? Number(match[1]) : 0;
+  const source = sources[number - 1];
+  return source ? (
+    <ChatSourceChip
+      source={source}
+      number={number}
+      onPreview={onSourcePreview}
+    />
+  ) : (
+    <a href={href} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  );
+}
+
 const markdownComponents: Components = {
   table: ({ node: _node, children, ...props }) => (
     <ScrollArea className="markdown-table-scroll" scrollFade>
@@ -102,11 +131,7 @@ const markdownComponents: Components = {
       <pre {...props}>{children}</pre>
     </ScrollArea>
   ),
-  a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer">
-      {children}
-    </a>
-  ),
+  a: MarkdownLink,
   img: ({ alt }) => (
     <span className="image-placeholder">
       Image: {alt || "document illustration"}
@@ -130,41 +155,25 @@ export function Markdown({
   streaming?: boolean;
 }) {
   return (
-    <div className="markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={
-          allowHtml
-            ? [rehypeRaw, [rehypeSanitize, documentHtmlSchema]]
-            : [
-                inlineCitations(sources.length),
-                ...(animate ? [revealMarkdown] : []),
-                ...(streaming ? [streamingCursor] : []),
-              ]
-        }
-        components={{
-          ...markdownComponents,
-          a: ({ href, children }) => {
-            const match = href?.match(/^#chat-source-(\d+)$/);
-            const number = match ? Number(match[1]) : 0;
-            const source = sources[number - 1];
-            return source ? (
-              <ChatSourceChip
-                source={source}
-                number={number}
-                onPreview={onSourcePreview}
-              />
-            ) : (
-              <a href={href} target="_blank" rel="noopener noreferrer">
-                {children}
-              </a>
-            );
-          },
-        }}
-      >
-        {children}
-      </ReactMarkdown>
-    </div>
+    <MarkdownSourceContext.Provider value={{ sources, onSourcePreview }}>
+      <div className="markdown">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={
+            allowHtml
+              ? [rehypeRaw, [rehypeSanitize, documentHtmlSchema]]
+              : [
+                  inlineCitations(sources.length),
+                  ...(animate ? [revealMarkdown] : []),
+                  ...(streaming ? [streamingCursor] : []),
+                ]
+          }
+          components={markdownComponents}
+        >
+          {children}
+        </ReactMarkdown>
+      </div>
+    </MarkdownSourceContext.Provider>
   );
 }
 export function plainTextPreview(value: string, title?: string) {

@@ -41,7 +41,7 @@ const SHEET_WIDTH = 2.25;
 const SHEET_HEIGHT = 3;
 const LABEL_HEIGHT = 0.22;
 const FOLDER_LABEL_HEIGHT = 0.46;
-const LINK_SEGMENTS = 10;
+const LINK_SEGMENTS = 32;
 const TREE_REVEAL_DISTANCE = 12;
 const TREE_ROW = 0.32;
 const TREE_CARD_HEIGHT = 0.25;
@@ -425,7 +425,7 @@ export function LibrarySpatialView(props: Props) {
       return;
     }
     setUnavailable(false);
-    const pixelRatio = Math.min(window.devicePixelRatio, 1.5);
+    const pixelRatio = Math.min(window.devicePixelRatio, 2);
     renderer.setPixelRatio(pixelRatio);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = false;
@@ -455,7 +455,12 @@ export function LibrarySpatialView(props: Props) {
       materials.add(value);
       return value;
     }
+    const textureAnisotropy = Math.min(
+      16,
+      renderer.capabilities.getMaxAnisotropy(),
+    );
     function texture<T extends THREE.Texture>(value: T): T {
+      value.anisotropy = textureAnisotropy;
       textures.add(value);
       return value;
     }
@@ -596,6 +601,7 @@ export function LibrarySpatialView(props: Props) {
         map: folderArt.texture,
         transparent: true,
         alphaTest: 0.5,
+        alphaToCoverage: true,
         toneMapped: false,
       }),
     );
@@ -742,7 +748,9 @@ export function LibrarySpatialView(props: Props) {
     function fatLineMaterial(
       options: ConstructorParameters<typeof LineMaterial>[0],
     ) {
-      const value = material(new LineMaterial(options));
+      const value = material(
+        new LineMaterial({ ...options, alphaToCoverage: true }),
+      );
       lineMaterials.add(value);
       return value;
     }
@@ -758,15 +766,23 @@ export function LibrarySpatialView(props: Props) {
     const linkGeometry = geometry(
       new LineSegmentsGeometry().setPositions(linkPositions),
     );
-    const linkLines = new LineSegments2(
-      linkGeometry,
-      fatLineMaterial({
-        color: new THREE.Color(dark ? "#5b6788" : "#a3aec3").getHex(),
-        linewidth: 0.032,
-        worldUnits: true,
-        fog: true,
-      }),
+    const linkVisibility = new Float32Array(
+      Math.max(1, links.length * LINK_SEGMENTS),
+    ).fill(1);
+    const visibilityAttribute = new THREE.InstancedBufferAttribute(
+      linkVisibility,
+      1,
     );
+    linkGeometry.setAttribute("instanceVisibility", visibilityAttribute);
+    const folderLineMaterial = fatLineMaterial({
+      color: new THREE.Color(dark ? "#5b6788" : "#a3aec3").getHex(),
+      linewidth: 0.032,
+      worldUnits: true,
+      fog: true,
+      transparent: true,
+      depthWrite: false,
+    });
+    const linkLines = new LineSegments2(linkGeometry, folderLineMaterial);
     linkLines.frustumCulled = false;
     linkLines.visible = links.length > 0;
     scene.add(linkLines);
@@ -784,7 +800,7 @@ export function LibrarySpatialView(props: Props) {
     // Post-processing: render to a multisampled target that keeps depth, then
     // resolve through the depth-of-field pass.
     const target = new THREE.WebGLRenderTarget(1, 1, {
-      samples: 4,
+      samples: Math.min(8, renderer.capabilities.maxSamples),
       type: THREE.HalfFloatType,
       depthTexture: new THREE.DepthTexture(1, 1),
     });
@@ -802,6 +818,34 @@ export function LibrarySpatialView(props: Props) {
     dofMaterial.uniforms.cameraNear.value = camera.near;
     dofMaterial.uniforms.cameraFar.value = camera.far;
     const quad = new FullScreenQuad(dofMaterial);
+    folderLineMaterial.onBeforeCompile = (shader) => {
+      shader.uniforms.connectorFocus = dofMaterial.uniforms.focus;
+      shader.uniforms.connectorAperture = dofMaterial.uniforms.aperture;
+      shader.uniforms.connectorBand = dofMaterial.uniforms.band;
+      shader.uniforms.connectorNearScale = dofMaterial.uniforms.nearScale;
+      shader.vertexShader =
+        "attribute float instanceVisibility;\nvarying float vConnectorVisibility;\nvarying float vConnectorDepth;\n" +
+        shader.vertexShader.replace(
+          "#include <fog_vertex>",
+          "vConnectorDepth = -mvPosition.z;\nvConnectorVisibility = instanceVisibility;\n#include <fog_vertex>",
+        );
+      shader.fragmentShader =
+        `varying float vConnectorDepth;
+        varying float vConnectorVisibility;
+        uniform float connectorFocus;
+        uniform float connectorAperture;
+        uniform float connectorBand;
+        uniform float connectorNearScale;\n` +
+        shader.fragmentShader.replace(
+          "gl_FragColor = vec4( diffuseColor.rgb, alpha );",
+          `float foregroundBlur = max(
+            1.0 / max(vConnectorDepth, 0.4) -
+            1.0 / max(connectorFocus, 0.4) - connectorBand, 0.0
+          ) * connectorAperture * connectorNearScale;
+          alpha *= vConnectorVisibility * mix(1.0, 0.15, smoothstep(0.0, 0.35, foregroundBlur));
+          gl_FragColor = vec4(diffuseColor.rgb, alpha);`,
+        );
+    };
 
     // Document structure trees, built lazily when the camera comes close.
     type Tree = {
@@ -826,6 +870,7 @@ export function LibrarySpatialView(props: Props) {
         new THREE.MeshBasicMaterial({
           map: texture(map),
           alphaTest: 0.5,
+          alphaToCoverage: true,
           toneMapped: false,
           fog: false,
         }),
@@ -898,6 +943,26 @@ export function LibrarySpatialView(props: Props) {
         railY,
         -0.01,
       ];
+      for (let column = 0; column < columns; column++) {
+        const roots = rows
+          .map((row, index) => ({ row, index }))
+          .filter(
+            ({ row, index }) =>
+              row.parent < 0 &&
+              Math.floor(index / TREE_ROWS_PER_COLUMN) === column,
+          );
+        if (roots.length) {
+          const x = column * TREE_COLUMN + spine;
+          linePoints.push(
+            x,
+            railY,
+            -0.01,
+            x,
+            place(roots.at(-1)!.index).y,
+            -0.01,
+          );
+        }
+      }
       const chips: { x: number; y: number; color: string }[] = [];
       rows.forEach((row, index) => {
         const { x, y } = place(index);
@@ -936,36 +1001,73 @@ export function LibrarySpatialView(props: Props) {
           Math.floor(row.parent / TREE_ROWS_PER_COLUMN) ===
             Math.floor(index / TREE_ROWS_PER_COLUMN);
         const column = Math.floor(index / TREE_ROWS_PER_COLUMN);
-        // Elbow connectors: top-level sections drop from the rail (or the
-        // previous row on the same spine); children drop from their parent.
-        // A parent in an earlier column gets a short stub instead.
-        let fromX: number;
-        let fromY: number;
         if (row.parent < 0) {
-          fromX = column * TREE_COLUMN + spine;
-          fromY =
-            index % TREE_ROWS_PER_COLUMN === 0 ? railY : place(index - 1).y;
+          const fromX = column * TREE_COLUMN + spine;
+          linePoints.push(fromX, y, -0.01, x + 0.02, y, -0.01);
         } else if (sameColumn) {
-          fromX = place(row.parent).x + 0.1;
-          fromY = place(row.parent).y - TREE_CARD_HEIGHT / 2;
+          const parent = place(row.parent);
+          const fromX = parent.x + 0.1;
+          linePoints.push(
+            fromX,
+            parent.y,
+            -0.01,
+            fromX,
+            y,
+            -0.01,
+            fromX,
+            y,
+            -0.01,
+            x + 0.02,
+            y,
+            -0.01,
+          );
         } else {
-          fromX = x - 0.18;
-          fromY = y + TREE_ROW / 2;
+          const parent = place(row.parent);
+          const parentColumn = Math.floor(row.parent / TREE_ROWS_PER_COLUMN);
+          const parentRight =
+            parent.x + TREE_CARD_WIDTH - rows[row.parent].depth * TREE_INDENT;
+          const fromGutter = (parentColumn + 1) * TREE_COLUMN - 0.2;
+          const toGutter = column * TREE_COLUMN - 0.2;
+          const bridgeY = railY + 0.12 * (row.depth + 1);
+          linePoints.push(
+            parentRight - 0.02,
+            parent.y,
+            -0.01,
+            fromGutter,
+            parent.y,
+            -0.01,
+          );
+          if (fromGutter !== toGutter) {
+            linePoints.push(
+              fromGutter,
+              parent.y,
+              -0.01,
+              fromGutter,
+              bridgeY,
+              -0.01,
+              fromGutter,
+              bridgeY,
+              -0.01,
+              toGutter,
+              bridgeY,
+              -0.01,
+            );
+          }
+          linePoints.push(
+            toGutter,
+            fromGutter === toGutter ? parent.y : bridgeY,
+            -0.01,
+            toGutter,
+            y,
+            -0.01,
+            toGutter,
+            y,
+            -0.01,
+            x + 0.02,
+            y,
+            -0.01,
+          );
         }
-        linePoints.push(
-          fromX,
-          fromY,
-          -0.01,
-          fromX,
-          y,
-          -0.01,
-          fromX,
-          y,
-          -0.01,
-          x,
-          y,
-          -0.01,
-        );
       });
       const connectors = new LineSegments2(
         geometry(new LineSegmentsGeometry().setPositions(linePoints)),
@@ -1098,7 +1200,6 @@ export function LibrarySpatialView(props: Props) {
             return;
           }
           map.colorSpace = THREE.SRGBColorSpace;
-          map.anisotropy = 4;
           texture(map);
           const floater = floaters.get(path);
           if (floater?.cover) {
@@ -1305,7 +1406,10 @@ export function LibrarySpatialView(props: Props) {
           (1 - tree.reveal) * Math.min(1, delta * (reducedMotion ? 60 : 6));
         if (1 - tree.reveal < 0.002) tree.reveal = 1;
         tree.group.visible = tree.reveal > 0.01;
-        tree.group.scale.set(Math.max(0.001, tree.reveal), 1, 1);
+        const reveal = Math.max(0.001, tree.reveal);
+        tree.group.scale.set(reveal, 1, 1);
+        const floater = floaters.get(tree.path)!;
+        tree.group.position.x = floater.width / 2 + TREE_GAP * reveal;
       }
 
       const reading = measureReading();
@@ -1365,13 +1469,15 @@ export function LibrarySpatialView(props: Props) {
       // Branches leave the bottom of a folder and drop into the top of each
       // child, easing through the level between them.
       cameraUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+      scene.updateMatrixWorld(true);
       links.forEach(([parent, child], i) => {
-        linkFrom
-          .copy(parent.group.position)
-          .addScaledVector(cameraUp, -(parent.height / 2) * parent.scale);
-        linkTo
-          .copy(child.group.position)
-          .addScaledVector(cameraUp, (child.height / 2) * child.scale);
+        parent.body.localToWorld(linkFrom.set(0, -parent.height / 2, 0));
+        child.body.localToWorld(linkTo.set(0, child.height / 2, 0));
+        linkVisibility.fill(
+          Math.min(1 - parent.yielding, 1 - child.yielding),
+          i * LINK_SEGMENTS,
+          (i + 1) * LINK_SEGMENTS,
+        );
         const bend = Math.max(1, Math.abs(linkFrom.y - linkTo.y) * 0.55);
         bezier.v0.copy(linkFrom);
         bezier.v1.copy(linkFrom).addScaledVector(cameraUp, -bend);
@@ -1390,6 +1496,7 @@ export function LibrarySpatialView(props: Props) {
         linkGeometry.attributes
           .instanceStart as THREE.InterleavedBufferAttribute
       ).data.needsUpdate = true;
+      visibilityAttribute.needsUpdate = true;
 
       // Autofocus: whatever is directly in front of the camera (including
       // the open outline), otherwise the selected document if it's in view,

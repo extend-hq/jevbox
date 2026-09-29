@@ -78,7 +78,7 @@ const { ToastProvider } = await import("../src/components/coss/toast");
 const { ParsedBlocks } = await import("../src/components/parsed-blocks");
 const { useFinderView, useDocumentSidebarPreference } =
   await import("../src/lib/preferences");
-import type { Me } from "../src/lib/api";
+import type { IndexNode, Me } from "../src/lib/api";
 let root: Root;
 let host: HTMLDivElement;
 beforeEach(() => {
@@ -182,6 +182,44 @@ test("chat citations use document previews without changing code or unknown refe
   assert.equal(selected, source);
 });
 
+test("citation thumbnails stay mounted when preview callbacks and source snapshots change", async () => {
+  const source = {
+    documentId: "doc",
+    nodeId: "node",
+    name: "Document.png",
+    title: "Section",
+    page: 1,
+  };
+  let selected: unknown;
+  const render = async (title: string) => {
+    await act(async () =>
+      root.render(
+        <Markdown
+          sources={[{ ...source, title }]}
+          onSourcePreview={(value) => {
+            selected = value;
+          }}
+        >
+          Evidence [1].
+        </Markdown>,
+      ),
+    );
+  };
+  await render("Section");
+  const chip = host.querySelector(".chat-source-chip");
+  const image = chip?.querySelector("img");
+  assert.ok(chip);
+  assert.ok(image);
+  for (const title of ["Overview", "Details", "Passage"]) {
+    await render(title);
+    assert.equal(host.querySelector(".chat-source-chip"), chip);
+    assert.equal(chip.querySelector("img"), image);
+    assert.equal(chip.querySelector("svg"), null);
+  }
+  await click(chip);
+  assert.equal((selected as typeof source).title, "Passage");
+});
+
 test("sources and retrieval paths collapse into bounded fading scroll areas", async () => {
   const source = {
     documentId: "doc",
@@ -222,10 +260,10 @@ test("sources and retrieval paths collapse into bounded fading scroll areas", as
     '.retrieval-tree-panel [data-slot="scroll-area"]',
   );
   assert.equal(scrolls.length, 2);
-  for (const scroll of scrolls) {
-    assert.ok(scroll.classList.contains("max-h-32"));
+  assert.ok(scrolls[0].classList.contains("max-h-32"));
+  assert.ok(scrolls[1].classList.contains("max-h-[min(16rem,38vh)]"));
+  for (const scroll of scrolls)
     assert.equal(scroll.getAttribute("data-scroll-fade"), "true");
-  }
 });
 
 test("loading steps follow observed response stages", async () => {
@@ -1090,7 +1128,187 @@ test("embedded source preview omits full inspector chrome and shows only cited b
     document.querySelector(".parsed-block")?.textContent ?? "",
     /Cited evidence/,
   );
-  assert.ok(document.querySelector('a[aria-label="Open full document"]'));
+  assert.equal(document.querySelector(".source-document-heading"), null);
+});
+
+test("hovering retrieval paths narrows an open preview without opening a closed sidebar", async () => {
+  const previousEventSource = globalThis.EventSource;
+  globalThis.EventSource = class {
+    addEventListener() {}
+    close() {}
+  } as unknown as typeof EventSource;
+  const blocks = Array.from({ length: 4 }, (_, i) => ({
+    id: `block-${i}`,
+    type: "paragraph",
+    content: `Evidence ${i}`,
+    page: i + 1,
+  }));
+  const section = (id: string, index: number, children: IndexNode[] = []) => ({
+    id,
+    title: id,
+    summary: "",
+    content: blocks[index].content,
+    page: index + 1,
+    endPage: Math.max(index + 1, 3),
+    links: [],
+    blocks: [blocks[index]],
+    children,
+  });
+  const trace = [
+    { stage: "document", resourceId: "source", label: "Document" },
+    {
+      stage: "section",
+      resourceId: "source",
+      nodeId: "overview",
+      label: "Overview",
+      page: 1,
+    },
+    {
+      stage: "section",
+      resourceId: "source",
+      nodeId: "details",
+      parentNodeId: "overview",
+      label: "Details",
+      page: 2,
+    },
+    {
+      stage: "section",
+      resourceId: "source",
+      nodeId: "passage",
+      parentNodeId: "details",
+      label: "Passage",
+      page: 3,
+    },
+  ];
+  const resource = {
+    id: "source",
+    name: "Document.bin",
+    kind: "document",
+    mime: "application/octet-stream",
+    status: "ready",
+    pages: 4,
+    parsed: {
+      blocks,
+      nodes: [
+        section("overview", 0, [
+          section("details", 1, [section("passage", 2)]),
+        ]),
+        section("other", 3),
+      ],
+    },
+  };
+  globalThis.fetch = async (input) => {
+    const path = String(input);
+    if (path === "/api/chats")
+      return Response.json([{ id: "chat", title: "Chat" }]);
+    if (path === "/api/chats/chat")
+      return Response.json({
+        id: "chat",
+        title: "Chat",
+        blocked: false,
+        turns: [],
+        messages: [
+          {
+            role: "assistant",
+            content: "Answer",
+            trace,
+            sources: [
+              {
+                documentId: "source",
+                nodeId: "passage",
+                name: "Document.bin",
+                title: "Passage",
+                page: 3,
+                blockIds: ["block-2"],
+              },
+            ],
+          },
+        ],
+      });
+    return Response.json(resource);
+  };
+  const row = (scope: Element, label: string) => {
+    const element = [
+      ...scope.querySelectorAll<HTMLButtonElement>("button.retrieval-node"),
+    ].find((e) => e.querySelector("span")?.textContent === label);
+    assert.ok(element);
+    return element;
+  };
+  const hover = async (element: Element) => {
+    const event = new MouseEvent("mousemove", { bubbles: true });
+    Object.defineProperty(event, "movementX", { value: 1 });
+    await act(async () => element.dispatchEvent(event));
+  };
+  try {
+    await act(async () =>
+      root.render(
+        <ChatView
+          me={{ chatEnabled: true } as Me}
+          chatId="chat"
+          onTitleChange={() => {}}
+          onChatChange={() => {}}
+          onOpen={() => {}}
+          onSettings={() => {}}
+        />,
+      ),
+    );
+    const messageTree = host.querySelector(
+      ".chat-answer-details .retrieval-trace",
+    );
+    assert.ok(messageTree);
+    await click(messageTree.querySelector(".retrieval-trigger"));
+    await hover(row(messageTree, "Passage"));
+    assert.equal(host.querySelector(".chat-source-panel"), null);
+    await click(row(messageTree, "Document"));
+    const sidebar = host.querySelector(".chat-source-panel");
+    assert.ok(sidebar);
+    const sidebarTree = sidebar.querySelector(".retrieval-trace");
+    assert.ok(sidebarTree);
+    assert.equal(
+      sidebarTree
+        .querySelector(".retrieval-trigger")
+        ?.getAttribute("aria-expanded"),
+      "true",
+    );
+    assert.ok(button("Source blocks 4", sidebar));
+    const openDocument = sidebar.querySelector<HTMLAnchorElement>(
+      '.source-preview-heading a[aria-label="Open full document"]',
+    );
+    assert.ok(openDocument);
+    assert.equal(
+      openDocument.getAttribute("href"),
+      "/library/documents/source?tab=index",
+    );
+    assert.equal(openDocument.target, "_blank");
+    assert.equal(sidebar.querySelector(".source-document-heading"), null);
+    for (const [label, count] of [
+      ["Overview", 3],
+      ["Details", 2],
+      ["Passage", 1],
+    ] as const) {
+      await hover(row(sidebarTree, label));
+      assert.ok(button(`Source blocks ${count}`, sidebar));
+      assert.equal(row(sidebarTree, label).getAttribute("data-active"), "true");
+      assert.equal(
+        openDocument.getAttribute("href"),
+        `/library/documents/source?node=${label.toLowerCase()}&tab=index`,
+      );
+    }
+    await act(async () => row(sidebarTree, "Document").focus());
+    assert.ok(button("Source blocks 4", sidebar));
+    await click(sidebarTree.querySelector(".retrieval-trigger"));
+    assert.equal(
+      sidebarTree
+        .querySelector(".retrieval-trigger")
+        ?.getAttribute("aria-expanded"),
+      "false",
+    );
+    await click(button("Close source preview", sidebar));
+    await hover(row(messageTree, "Overview"));
+    assert.equal(host.querySelector(".chat-source-panel"), null);
+  } finally {
+    globalThis.EventSource = previousEventSource;
+  }
 });
 
 test("index tree supports roving focus, expansion, selection, and typeahead", async () => {

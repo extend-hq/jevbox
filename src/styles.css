@@ -4683,7 +4683,7 @@ label.share-access-card {
   padding: 0;
 }
 .retrieval-tree ul {
-  margin-left: 17px;
+  margin-left: 12.5px;
   padding-left: 12px;
   border-left: 1px solid var(--border);
 }
@@ -4698,6 +4698,8 @@ label.share-access-card {
   font-size: 12px;
 }
 .retrieval-node > svg {
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
   color: var(--muted-foreground);
 }
@@ -4737,8 +4739,6 @@ button.retrieval-node:hover,
   font-weight: 600;
 }
 .source-preview-retrieval {
-  height: auto;
-  max-height: 28vh;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
 }
@@ -5015,29 +5015,6 @@ button.retrieval-node:hover,
   height: 100%;
   min-height: 0;
 }
-.source-document-heading {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 16px 10px;
-}
-.source-document-heading > div {
-  min-width: 0;
-  flex: 1;
-}
-.source-document-heading h2 {
-  font-size: 12px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.source-document-heading p {
-  font-size: 11px;
-  color: var(--muted-foreground);
-  margin-top: 4px;
-  overflow-wrap: anywhere;
-}
 .source-open-full {
   display: flex;
   align-items: center;
@@ -5056,7 +5033,7 @@ button.retrieval-node:hover,
   gap: 0;
 }
 .source-document-tabbar {
-  padding: 4px 16px 12px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--border);
 }
 .source-document-tabs > [data-slot="tabs-panel"][hidden] {

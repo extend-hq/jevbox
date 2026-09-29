@@ -8,12 +8,14 @@ export function RetrievalTree({
   activeDocumentId,
   activeNodeId,
   onSelect,
+  onPreview,
   defaultOpen = false,
 }: {
   trace: RetrievalStep[];
   activeDocumentId?: string;
   activeNodeId?: string;
   onSelect?: (documentId: string, nodeId?: string) => void;
+  onPreview?: (documentId: string, nodeId?: string) => void;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -47,6 +49,8 @@ export function RetrievalTree({
               undefined
             }
             onClick={() => onSelect?.(documentId, step.nodeId)}
+            onMouseMove={() => onPreview?.(documentId, step.nodeId)}
+            onFocus={() => onPreview?.(documentId, step.nodeId)}
             disabled={!onSelect}
           >
             <IndexTreeIcon size={13} />
@@ -70,6 +74,8 @@ export function RetrievalTree({
             (activeDocumentId === step.resourceId && !activeNodeId) || undefined
           }
           onClick={() => step.resourceId && onSelect?.(step.resourceId)}
+          onMouseMove={() => step.resourceId && onPreview?.(step.resourceId)}
+          onFocus={() => step.resourceId && onPreview?.(step.resourceId)}
           disabled={!onSelect || !step.resourceId}
         >
           <FileText size={14} />
@@ -102,7 +108,7 @@ export function RetrievalTree({
       </Collapsible.Trigger>
       <Collapsible.Panel className="retrieval-tree-panel">
         <ScrollArea
-          className="h-auto max-h-32"
+          className="h-auto max-h-[min(16rem,38vh)]"
           orientation="vertical"
           scrollFade
         >

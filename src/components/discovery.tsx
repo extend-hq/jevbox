@@ -446,6 +446,40 @@ export function ChatView({
     trace: NonNullable<Message["trace"]>;
   } | null>(null);
   const [previewTab, setPreviewTab] = useState("parsed");
+  const previewRetrievalPath = (
+    trace: NonNullable<Message["trace"]>,
+    documentId: string,
+    nodeId?: string,
+    onlyIfOpen = false,
+  ) => {
+    if (onlyIfOpen && !preview) return;
+    if (
+      preview?.trace === trace &&
+      preview.source.documentId === documentId &&
+      preview.source.nodeId === (nodeId ?? "") &&
+      !preview.source.blockIds?.length
+    )
+      return;
+    const document = trace.find(
+      (step) => step.stage === "document" && step.resourceId === documentId,
+    );
+    const section = nodeId
+      ? trace.find(
+          (step) => step.resourceId === documentId && step.nodeId === nodeId,
+        )
+      : undefined;
+    setPreview({
+      source: {
+        documentId,
+        nodeId: nodeId ?? "",
+        name: document?.label ?? "",
+        title: section?.label ?? "",
+        page: section?.page ?? 1,
+      },
+      trace,
+    });
+    setPreviewTab("index");
+  };
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -938,41 +972,25 @@ export function ChatView({
                                       {message.trace?.length ? (
                                         <RetrievalTree
                                           trace={message.trace}
-                                          onSelect={(documentId, nodeId) => {
-                                            const source =
-                                              message.sources?.find(
-                                                (source) =>
-                                                  source.documentId ===
-                                                    documentId &&
-                                                  (!nodeId ||
-                                                    source.nodeId === nodeId),
-                                              );
-                                            if (source) {
-                                              setPreview({
-                                                source,
-                                                trace: message.trace ?? [],
-                                              });
-                                              setPreviewTab("parsed");
-                                            } else {
-                                              const step = message.trace?.find(
-                                                (step) =>
-                                                  step.resourceId ===
-                                                    documentId &&
-                                                  step.nodeId === nodeId,
-                                              );
-                                              setPreview({
-                                                source: {
-                                                  documentId,
-                                                  nodeId: nodeId ?? "",
-                                                  name: "",
-                                                  title: step?.label ?? "",
-                                                  page: step?.page ?? 1,
-                                                },
-                                                trace: message.trace ?? [],
-                                              });
-                                              setPreviewTab("index");
-                                            }
-                                          }}
+                                          activeDocumentId={
+                                            preview?.source.documentId
+                                          }
+                                          activeNodeId={preview?.source.nodeId}
+                                          onSelect={(documentId, nodeId) =>
+                                            previewRetrievalPath(
+                                              message.trace ?? [],
+                                              documentId,
+                                              nodeId,
+                                            )
+                                          }
+                                          onPreview={(documentId, nodeId) =>
+                                            previewRetrievalPath(
+                                              message.trace ?? [],
+                                              documentId,
+                                              nodeId,
+                                              true,
+                                            )
+                                          }
                                         />
                                       ) : null}
                                     </div>
@@ -1217,47 +1235,46 @@ export function ChatView({
                     "Document"}
                 </span>
               </div>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Close source preview"
-                onClick={() => setPreview(null)}
-              >
-                <X size={16} />
-              </Button>
+              <div className="flex shrink-0 items-center gap-1">
+                <CursorTooltip label="Open full document">
+                  <a
+                    href={paths.document(
+                      preview.source.documentId,
+                      preview.source.nodeId || undefined,
+                      "index",
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="source-open-full"
+                    aria-label="Open full document"
+                  >
+                    <ArrowUpRight size={16} />
+                  </a>
+                </CursorTooltip>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Close source preview"
+                  onClick={() => setPreview(null)}
+                >
+                  <X size={16} />
+                </Button>
+              </div>
             </div>
-            <ScrollArea
-              className="source-preview-retrieval"
-              scrollFade
-              orientation="vertical"
-            >
+            <div className="source-preview-retrieval">
               <RetrievalTree
                 trace={preview.trace}
                 activeDocumentId={preview.source.documentId}
                 activeNodeId={preview.source.nodeId}
-                onSelect={(documentId, nodeId) => {
-                  const source = messages
-                    .flatMap((m) => m.sources ?? [])
-                    .find(
-                      (s) =>
-                        s.documentId === documentId &&
-                        (!nodeId || s.nodeId === nodeId),
-                    );
-                  if (source) setPreview({ ...preview, source });
-                  else
-                    setPreview({
-                      ...preview,
-                      source: {
-                        documentId,
-                        nodeId: nodeId ?? "",
-                        name: "",
-                        title: "",
-                        page: 1,
-                      },
-                    });
-                }}
+                defaultOpen
+                onSelect={(documentId, nodeId) =>
+                  previewRetrievalPath(preview.trace, documentId, nodeId)
+                }
+                onPreview={(documentId, nodeId) =>
+                  previewRetrievalPath(preview.trace, documentId, nodeId, true)
+                }
               />
-            </ScrollArea>
+            </div>
             <div className="source-preview-document">
               <DocumentView
                 key={preview.source.documentId}
