@@ -1,6 +1,6 @@
 # Interface design
 
-The application is a document tool. Content is the focus; navigation and controls should remain quiet, compact, and predictable. Keep the existing Extend color palette, Base UI behavior, coss primitives, and specialist document viewers.
+The application is a document tool. Content is the focus; navigation and controls should remain quiet, compact, and predictable. Keep the existing color palette, Base UI behavior, coss primitives, and specialist document viewers.
 
 ## References
 

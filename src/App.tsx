@@ -406,7 +406,8 @@ export default function App() {
   if (navigation.route.shareToken)
     return <SharedResourceView route={navigation.route} />;
   if (loading) return <Loading fullScreen />;
-  if (!me) return <Auth onLogin={() => void loadMe()} />;
+  if (!me || location.pathname === "/reset-password")
+    return <Auth onLogin={() => void loadMe()} />;
   const currentDocument = resources.find((r) => r.id === documentId);
   const ancestors: Resource[] = [];
   let parentId = currentDocument?.parent_id ?? directory;
@@ -663,6 +664,19 @@ export default function App() {
                   </>
                 )}
                 <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() =>
+                    void action.run(async () => {
+                      await api("/auth/revoke-other-sessions", {
+                        method: "POST",
+                        body: JSON.stringify({}),
+                      });
+                    })
+                  }
+                >
+                  <LogOut size={15} />
+                  Sign out other devices
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() =>
                     void action.run(async () => {

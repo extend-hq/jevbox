@@ -1,3 +1,4 @@
+import { authMailbox } from "./auth-mailbox";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -205,6 +206,7 @@ let database: Awaited<ReturnType<typeof testDatabase>>;
 let server: ReturnType<typeof runtime.app.listen>;
 let directory: string, base: string;
 const origin = "http://localhost:4310";
+const mailbox = authMailbox(origin);
 let choose: (
   choices: { id: string; text: string }[],
   state?: any,
@@ -272,14 +274,15 @@ async function req(path: string, cookie = "", method = "GET", body?: unknown) {
 }
 let users = 0;
 async function account() {
+  const email = `organizer-${++users}@local.test`;
   const response = await req("/auth/register", "", "POST", {
     name: "Organizer",
-    email: `organizer-${++users}@local.test`,
+    email,
     password: "a-secure-password-123!",
     organization: "Workspace",
   });
   assert.equal(response.status, 201);
-  const cookie = response.cookie;
+  const cookie = await mailbox.signIn(base, email);
   assert.equal(
     (
       await req("/settings", cookie, "PUT", {
@@ -346,6 +349,7 @@ before(async () => {
     origin,
     fetcher,
     rateLimits: false,
+    sendAuthEmail: mailbox.sendAuthEmail,
   });
   server = runtime.app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -438,6 +442,12 @@ test("a chosen upload folder constrains filing and inaccessible folder labels ne
     invite: new URL(invitation.data.url).searchParams.get("invite"),
   });
   assert.equal(member.status, 201);
+  member.cookie = await mailbox.signIn(
+    base,
+    email,
+    "a-secure-password-123!",
+    new URL(invitation.data.url).searchParams.get("invite")!,
+  );
   await folder(member.cookie, "Hidden category");
   const scope = await folder(cookie, "Chosen category");
   await folder(cookie, "Outside scope");

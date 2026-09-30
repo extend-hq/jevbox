@@ -58,10 +58,15 @@ export async function createStore(
     max: 1,
     connectionTimeoutMillis: 5000,
   });
-  for (const pool of [db, snapshotDb])
+  const authDb = new Pool({
+    connectionString: databaseUrl,
+    max: 4,
+    connectionTimeoutMillis: 5000,
+  });
+  for (const pool of [db, snapshotDb, authDb])
     pool.on("error", () => console.error("An idle database connection closed"));
   const close = async () => {
-    await Promise.all([db.end(), snapshotDb.end()]);
+    await Promise.all([db.end(), snapshotDb.end(), authDb.end()]);
   };
   const context = new AsyncLocalStorage<PoolClient>();
   const authorization = createAuthorization(spiceUrl, spiceKey);
@@ -243,6 +248,10 @@ export async function createStore(
   }
   async function cleanupPermissions() {
     await transaction(async () => {
+      await run(
+        "DELETE FROM auth_throttle WHERE window_started < ?",
+        Date.now() - 86400000,
+      );
       const stale = await all<{ version: string }>(
         "SELECT version FROM authz_snapshots WHERE created < now() - interval '10 minutes' AND version NOT IN (SELECT authz_version FROM orgs WHERE authz_version IS NOT NULL) LIMIT 20",
       );
@@ -313,6 +322,7 @@ export async function createStore(
   }
   return {
     db,
+    authDb,
     all,
     one,
     run,

@@ -53,6 +53,31 @@ spec:
               value: {{ .Values.allowSignup | quote }}
             - name: TRUST_PROXY_CIDRS
               value: {{ .Values.trustProxyCidrs | quote }}
+            - name: BETTER_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: BETTER_AUTH_SECRET
+            - name: SMTP_HOST
+              value: {{ required "authEmail.host is required" .Values.authEmail.host | quote }}
+            - name: SMTP_PORT
+              value: {{ .Values.authEmail.port | quote }}
+            - name: SMTP_SECURE
+              value: {{ .Values.authEmail.secure | quote }}
+            - name: AUTH_EMAIL_FROM
+              value: {{ required "authEmail.from is required" .Values.authEmail.from | quote }}
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: SMTP_USER
+                  optional: true
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: SMTP_PASSWORD
+                  optional: true
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

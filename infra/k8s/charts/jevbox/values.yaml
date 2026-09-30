@@ -7,6 +7,12 @@ appOrigin: ""
 existingSecret: jevbox-secrets
 allowSignup: false
 trustProxyCidrs: ""
+authEmail:
+  host: ""
+  port: 587
+  secure: false
+  from: ""
+  allowedCidrs: []
 postgres:
   caSecret: ""
   port: 5432

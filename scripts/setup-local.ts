@@ -14,6 +14,14 @@ if (!/^ENCRYPTION_KEY=\S+/m.test(env)) {
   env = env.replace(/^ENCRYPTION_KEY=.*$/m, "");
   env += `\nENCRYPTION_KEY=${key.toString("hex")}\n`;
 }
+if (!/^BETTER_AUTH_SECRET=\S+/m.test(env)) {
+  const secret = existsSync(".data/auth.secret")
+    ? readFileSync(".data/auth.secret", "utf8").trim()
+    : randomBytes(32).toString("hex");
+  if (secret.length < 32) throw new Error("Invalid local auth secret");
+  env = env.replace(/^BETTER_AUTH_SECRET=.*$/m, "");
+  env += `\nBETTER_AUTH_SECRET=${secret}\n`;
+}
 writeFileSync(".env", env.trim() + "\n", { mode: 0o600 });
 chmodSync(".env", 0o600);
 console.log(

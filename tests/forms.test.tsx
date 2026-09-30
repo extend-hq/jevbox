@@ -182,7 +182,7 @@ test("login validates inline, focuses the first invalid field, and submits after
   await submit();
   assert.equal(signedIn, true);
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].path, "/api/auth/login");
+  assert.equal(requests[0].path, "/api/auth/sign-in/email");
   assert.equal(requests[0].body.password, "short");
 });
 

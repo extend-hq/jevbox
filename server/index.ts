@@ -6,7 +6,6 @@ const origin = process.env.APP_ORIGIN ?? `http://localhost:${port}`;
 const runtime = await createApp({
   directory: resolve(process.env.DATA_DIR ?? ".data"),
   origin,
-  secure: origin.startsWith("https://"),
 });
 if (process.env.NODE_ENV === "production") {
   runtime.app.use(express.static(resolve("dist"), { index: false }));

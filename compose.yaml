@@ -39,6 +39,12 @@ services:
       spicedb-migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+  mailpit:
+    image: axllent/mailpit:v1.29.5
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+    restart: unless-stopped
   app:
     build: .
     ports:
@@ -46,6 +52,11 @@ services:
     environment:
       APP_ORIGIN: http://localhost:4310
       ALLOW_SIGNUP: "true"
+      AUTH_LOCAL_DEVELOPMENT: "true"
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      AUTH_EMAIL_FROM: Jevbox <auth@localhost.test>
       DATABASE_URL: postgres://jevbox:jevbox-local@postgres:5432/jevbox
       SPICEDB_HTTP_URL: http://spicedb:8443
       SPICEDB_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY:-jevbox-local-spicedb-key}
@@ -54,6 +65,8 @@ services:
       postgres:
         condition: service_healthy
       spicedb:
+        condition: service_started
+      mailpit:
         condition: service_started
     restart: unless-stopped
     security_opt:

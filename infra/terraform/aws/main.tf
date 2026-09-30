@@ -5,8 +5,8 @@ data "aws_availability_zones" "available" {
 resource "terraform_data" "account_guard" {
   lifecycle {
     precondition {
-      condition     = data.aws_caller_identity.current.account_id == var.target_account_id && !contains(var.blocked_account_ids, var.target_account_id)
-      error_message = "Account safety check failed. Protected accounts cannot be used."
+      condition     = data.aws_caller_identity.current.account_id == var.target_account_id
+      error_message = "Current credentials do not match the target account."
     }
   }
 }

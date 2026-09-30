@@ -48,6 +48,18 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+        - protocol: TCP
+          port: {{ .Values.authEmail.port }}
+    {{- if .Values.authEmail.allowedCidrs }}
+    - to:
+        {{- range .Values.authEmail.allowedCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.authEmail.port }}
+    {{- end }}
 {{- end }}
 
 {{- if .Values.networkPolicy.enabled }}

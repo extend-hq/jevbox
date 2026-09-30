@@ -10,17 +10,13 @@ import express, {
   type Response,
   type NextFunction,
 } from "express";
-import cookieParser from "cookie-parser";
+import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
+import { createAuthentication, registrationContext } from "./auth";
+import { hashPassword } from "./auth-passwords";
+import type { SendAuthEmail } from "./auth-email";
 import multer from "multer";
 import { rateLimit, ipKeyGenerator } from "express-rate-limit";
-import {
-  randomBytes,
-  randomUUID,
-  createHash,
-  scrypt as rawScrypt,
-  timingSafeEqual,
-} from "node:crypto";
-import { promisify } from "node:util";
+import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { z } from "zod";
 import {
   createStore,
@@ -37,7 +33,6 @@ import {
   type Fetch,
   type Settings,
 } from "./providers";
-const scrypt = promisify(rawScrypt);
 const digest = (s: string) => createHash("sha256").update(s).digest("hex");
 const now = () => new Date().toISOString();
 const email = z
@@ -57,7 +52,6 @@ const name = z
   );
 const password = z.string().min(12).max(128);
 const id = z.string().uuid();
-const cookieName = "jevbox_session";
 type AuthedRequest = Request & {
   actor: Actor;
 };
@@ -73,10 +67,18 @@ export async function createApp(options: {
   databaseUrl?: string;
   origin: string;
   fetcher?: Fetch;
-  secure?: boolean;
   rateLimits?: boolean;
+  sendAuthEmail?: SendAuthEmail;
 }) {
   const store = await createStore(options.directory, options.databaseUrl);
+  let authentication: ReturnType<typeof createAuthentication>;
+  try {
+    authentication = createAuthentication(store, options);
+  } catch (error) {
+    await store.close();
+    throw error;
+  }
+  const { auth, consume } = authentication;
   const providers = createProviders(store, options.fetcher);
   const organization = createOrganization(store, options.fetcher);
   const app = express();
@@ -96,6 +98,7 @@ export async function createApp(options: {
     }
   });
   app.use((req, res, next) => {
+    req.headers["x-jevbox-client-ip"] = req.ip ?? "127.0.0.1";
     res.set({
       "Cache-Control": "no-store, private",
       "X-Content-Type-Options": "nosniff",
@@ -110,7 +113,6 @@ export async function createApp(options: {
       return res.status(403).json({ error: "Request origin rejected" });
     next();
   });
-  app.use(express.json({ limit: "1mb" }), cookieParser());
   if (options.rateLimits !== false)
     app.use(
       "/api",
@@ -120,17 +122,6 @@ export async function createApp(options: {
         keyGenerator: (req) =>
           `${ipKeyGenerator(req.ip ?? "127.0.0.1")}:${["GET", "HEAD"].includes(req.method) ? "read" : "write"}`,
         message: { error: "Too many requests. Wait a moment and try again." },
-        standardHeaders: true,
-        legacyHeaders: false,
-      }),
-    );
-  if (options.rateLimits !== false)
-    app.use(
-      "/api/auth",
-      rateLimit({
-        windowMs: 15 * 60000,
-        limit: 40,
-        message: { error: "Too many sign-in attempts. Try again later." },
         standardHeaders: true,
         legacyHeaders: false,
       }),
@@ -149,58 +140,34 @@ export async function createApp(options: {
       now(),
     );
   async function authenticate(req: Request): Promise<Actor> {
-    return authenticateToken(digest(req.cookies[cookieName] ?? ""));
+    const authenticated = (req as Partial<AuthedRequest>).actor;
+    if (authenticated) return authenticateToken(authenticated.token);
+    const current = await auth.api.getSession({
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!current || !current.user.emailVerified)
+      throw new HttpError(401, "Please sign in");
+    return authenticateToken(current.session.id);
   }
   async function authenticateToken(token: string): Promise<Actor> {
-    const session = await store.one<{
+    const current = await store.one<{
       user_id: string;
       org_id: string;
       role: string;
     }>(
-      "SELECT s.*,m.role FROM sessions s JOIN members m ON m.org_id=s.org_id AND m.user_id=s.user_id WHERE token=? AND expires>?",
+      "SELECT s.user_id,s.org_id,m.role FROM auth_sessions s JOIN users u ON u.id=s.user_id JOIN members m ON m.org_id=s.org_id AND m.user_id=s.user_id WHERE s.id=? AND s.expires_at>now() AND u.email_verified=true",
       token,
-      Date.now(),
     );
-    if (!session) throw new HttpError(401, "Please sign in");
+    if (!current) throw new HttpError(401, "Please sign in");
     const a = {
-      userId: session.user_id,
-      orgId: session.org_id,
-      role: session.role,
+      userId: current.user_id,
+      orgId: current.org_id,
+      role: current.role,
       token,
     };
     if (!(await store.permission(a, "organization", a.orgId, "active_member")))
       throw new HttpError(401, "Please sign in");
     return a;
-  }
-  async function session(res: Response, userId: string, orgId: string) {
-    const token = randomBytes(32).toString("hex");
-    await store.run(
-      "INSERT INTO sessions VALUES(?,?,?,?)",
-      digest(token),
-      userId,
-      orgId,
-      Date.now() + 7 * 86400000,
-    );
-    res.cookie(cookieName, token, {
-      httpOnly: true,
-      secure: options.secure ?? false,
-      sameSite: "strict",
-      path: "/",
-      maxAge: 7 * 86400000,
-    });
-  }
-  async function hashPassword(value: string) {
-    const salt = randomBytes(16).toString("hex");
-    return (
-      salt + ":" + ((await scrypt(value, salt, 64)) as Buffer).toString("hex")
-    );
-  }
-  async function verifyPassword(value: string, hash: string) {
-    const [salt, expected] = hash.split(":");
-    return timingSafeEqual(
-      (await scrypt(value, salt, 64)) as Buffer,
-      Buffer.from(expected, "hex"),
-    );
   }
   function mutation(
     handler: (
@@ -219,114 +186,117 @@ export async function createApp(options: {
   }
   app.post(
     "/api/auth/register",
-    mutation(async (req, res) => {
+    express.json({ limit: "16kb" }),
+    async (req, res) => {
       const input = z
         .object({
           email,
           password,
           name,
           organization: name.optional(),
-          invite: z.string().optional(),
-          bootstrapToken: z.string().optional(),
+          invite: z.string().min(32).max(256).optional(),
+          bootstrapToken: z.string().max(256).optional(),
         })
         .parse(req.body);
+      if (options.rateLimits !== false) {
+        const limit = await consume(`register:${req.ip}`, {
+          window: 900,
+          max: 20,
+        });
+        if (!limit.allowed)
+          throw new HttpError(429, "Too many attempts. Try again later.");
+      }
       const passwordHash = await hashPassword(input.password);
-      const userId = randomUUID();
-      let orgId: string = randomUUID();
-      await store.transaction(async () => {
-        if (
-          process.env.NODE_ENV === "production" &&
-          process.env.ALLOW_SIGNUP !== "true" &&
-          !input.invite
-        ) {
-          const tokenMatches =
-            process.env.BOOTSTRAP_TOKEN &&
-            input.bootstrapToken &&
-            digest(process.env.BOOTSTRAP_TOKEN) ===
-              digest(input.bootstrapToken);
+      let createdId: string | undefined;
+      try {
+        await store.transaction(async () => {
+          const invite = input.invite
+            ? await store.one<{ org_id: string; email: string }>(
+                "SELECT * FROM invites WHERE token=? AND expires>?",
+                digest(input.invite),
+                Date.now(),
+              )
+            : undefined;
+          if (input.invite && (!invite || invite.email !== input.email))
+            throw new HttpError(400, "Invitation is invalid or expired");
           if (
-            !tokenMatches ||
-            (await store.one("SELECT id FROM users LIMIT 1"))
-          )
-            throw new HttpError(
-              403,
-              "An invitation is required. First-time setup requires the deployment bootstrap token.",
+            !invite &&
+            process.env.NODE_ENV === "production" &&
+            process.env.ALLOW_SIGNUP !== "true"
+          ) {
+            const approved =
+              process.env.BOOTSTRAP_TOKEN &&
+              input.bootstrapToken &&
+              digest(process.env.BOOTSTRAP_TOKEN) ===
+                digest(input.bootstrapToken);
+            if (!approved || (await store.one("SELECT id FROM users LIMIT 1")))
+              throw new HttpError(
+                403,
+                "An invitation is required. First-time setup requires the deployment bootstrap token.",
+              );
+          }
+          const existing = await store.one(
+            "SELECT id FROM users WHERE email=?",
+            input.email,
+          );
+          const response = await registrationContext.run({ passwordHash }, () =>
+            auth.api.signUpEmail({
+              body: {
+                email: input.email,
+                name: input.name,
+                password: input.password,
+              },
+              headers: fromNodeHeaders(req.headers),
+            }),
+          );
+          if (existing) return;
+          createdId = response.user.id;
+          const orgId = invite?.org_id ?? randomUUID();
+          if (!invite)
+            await store.run(
+              "INSERT INTO orgs(id,name) VALUES(?,?)",
+              orgId,
+              input.organization ?? `${input.name}'s organization`,
             );
-        }
-        if (await store.one("SELECT id FROM users WHERE email=?", input.email))
-          throw new HttpError(409, "Unable to create account. Try signing in.");
-        const invite = input.invite
-          ? await store.one<{
-              org_id: string;
-              email: string;
-            }>(
-              "SELECT * FROM invites WHERE token=? AND expires>?",
-              digest(input.invite),
-              Date.now(),
-            )
-          : undefined;
-        if (input.invite && (!invite || invite.email !== input.email))
-          throw new HttpError(400, "Invitation is invalid or expired");
-        await store.run(
-          "INSERT INTO users VALUES(?,?,?,?)",
-          userId,
-          input.email,
-          input.name,
-          passwordHash,
-        );
-        if (invite) {
-          orgId = invite.org_id;
           await store.run(
-            "DELETE FROM invites WHERE token=?",
-            digest(input.invite!),
-          );
-        } else
-          await store.run(
-            "INSERT INTO orgs(id,name) VALUES(?,?)",
+            "INSERT INTO members VALUES(?,?,?)",
             orgId,
-            input.organization ?? `${input.name}'s organization`,
+            createdId,
+            invite ? "member" : "admin",
           );
-        await store.run(
-          "INSERT INTO members VALUES(?,?,?)",
-          orgId,
-          userId,
-          invite ? "member" : "admin",
-        );
-        await session(res, userId, orgId);
+        });
+      } catch (error) {
+        if (createdId)
+          await store.db.query(
+            "DELETE FROM users WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM members WHERE user_id=$1)",
+            [createdId],
+          );
+        throw error;
+      }
+      const callback = new URLSearchParams({
+        verified: "1",
+        ...(input.invite ? { invite: input.invite } : {}),
       });
-      return {
-        status: 201,
-        body: { ok: true },
-      };
-    }, true),
+      await auth.api.sendVerificationEmail({
+        body: { email: input.email, callbackURL: `/?${callback}` },
+        headers: fromNodeHeaders(req.headers),
+      });
+      res.status(201).json({ ok: true, verificationRequired: true });
+    },
   );
-  app.post(
-    "/api/auth/login",
-    mutation(async (req, res) => {
-      const input = z
-        .object({ email, password: z.string().max(128) })
-        .parse(req.body);
-      const user = await store.one<{
-        id: string;
-        password: string;
-      }>("SELECT id,password FROM users WHERE email=?", input.email);
-      const valid = await verifyPassword(
-        input.password,
-        user?.password ?? `00000000000000000000000000000000:${"00".repeat(64)}`,
-      );
-      if (!user || !valid)
-        throw new HttpError(401, "Email or password is incorrect");
-      const membership = await store.one<{
-        org_id: string;
-      }>("SELECT org_id FROM members WHERE user_id=? ORDER BY org_id", user.id);
-      if (!membership) throw new HttpError(403, "No organization membership");
-      await session(res, user.id, membership.org_id);
-      return {
-        status: 200,
-        body: { ok: true },
-      };
-    }, true),
-  );
+  const authHandler = toNodeHandler(auth);
+  app.all("/api/auth/{*path}", (req, res) => {
+    const aliases: Record<string, string> = {
+      "/api/auth/login": "/api/auth/sign-in/email",
+      "/api/auth/logout": "/api/auth/sign-out",
+    };
+    if (aliases[req.path]) {
+      req.url = aliases[req.path];
+      req.originalUrl = req.url;
+    }
+    return authHandler(req, res);
+  });
+  app.use(express.json({ limit: "1mb" }));
   app.use("/api/shared", createLinkSharingRouter(store));
   app.use("/api", async (req, _res, next) => {
     try {
@@ -373,17 +343,6 @@ export async function createApp(options: {
     });
   });
   app.post(
-    "/api/auth/logout",
-    mutation(async (req, res) => {
-      await store.run("DELETE FROM sessions WHERE token=?", actor(req).token);
-      res.clearCookie(cookieName, { path: "/" });
-      return {
-        status: 200,
-        body: { ok: true },
-      };
-    }),
-  );
-  app.post(
     "/api/organization/switch",
     mutation(async (req, res) => {
       const orgId = id.parse(req.body.orgId);
@@ -397,7 +356,7 @@ export async function createApp(options: {
       )
         throw new HttpError(404, "Organization not found");
       await store.run(
-        "UPDATE sessions SET org_id=? WHERE token=?",
+        "UPDATE auth_sessions SET org_id=? WHERE id=?",
         orgId,
         a.token,
       );
@@ -433,7 +392,7 @@ export async function createApp(options: {
         );
         await store.run("DELETE FROM invites WHERE token=?", digest(token));
         await store.run(
-          "UPDATE sessions SET org_id=? WHERE token=?",
+          "UPDATE auth_sessions SET org_id=? WHERE id=?",
           invite.org_id,
           a.token,
         );
@@ -536,7 +495,7 @@ export async function createApp(options: {
           userId,
         );
         await store.run(
-          "DELETE FROM sessions WHERE org_id=? AND user_id=?",
+          "DELETE FROM auth_sessions WHERE org_id=? AND user_id=?",
           a.orgId,
           userId,
         );
@@ -627,7 +586,7 @@ export async function createApp(options: {
       const providerSetup = z.object({
         providerKey: z.string().max(10000).optional(),
         providerEnabled: z.boolean().optional(),
-        providerConfig: z.record(z.unknown()).optional(),
+        providerConfig: z.record(z.string(), z.unknown()).optional(),
         provider: z
           .string()
           .refine((p) => providerCatalog.some((c) => c.id === p)),
@@ -1357,6 +1316,7 @@ export async function createApp(options: {
   return {
     app,
     store,
+    auth,
     tick,
     providers,
     tickChats: chats.tick,

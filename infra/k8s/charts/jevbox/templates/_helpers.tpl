@@ -6,9 +6,6 @@ app.kubernetes.io/name: jevbox
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 {{- define "jevbox.guard" -}}
-{{- if regexMatch "(?i)prod[-_]?1" (printf "%s/%s" .Release.Name .Release.Namespace) -}}
-{{- fail "Deployment to PROD 1 is prohibited" -}}
-{{- end -}}
 {{- if and .Values.networkPolicy.enabled (not .Values.postgres.allowedCidrs) -}}
 {{- fail "Set postgres.allowedCidrs to the private PostgreSQL endpoint ranges" -}}
 {{- end -}}

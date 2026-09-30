@@ -1,3 +1,4 @@
+import { authMailbox } from "./auth-mailbox";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -14,6 +15,7 @@ import {
 } from "./model-tools";
 
 const origin = "http://localhost:4310";
+const mailbox = authMailbox(origin);
 let runtime: Awaited<ReturnType<typeof createApp>>;
 let database: Awaited<ReturnType<typeof testDatabase>>;
 let server: ReturnType<typeof runtime.app.listen>;
@@ -159,6 +161,7 @@ before(async () => {
     origin,
     fetcher,
     rateLimits: false,
+    sendAuthEmail: mailbox.sendAuthEmail,
   });
   server = runtime.app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -191,6 +194,8 @@ before(async () => {
       "",
     )
   ).cookie;
+  cookie = await mailbox.signIn(base, "chat@local.test");
+  other = await mailbox.signIn(base, "other-chat@local.test");
   await req("/settings", "PUT", {
     provider: "openai",
     model: "model-one",
@@ -394,6 +399,7 @@ test("queued messages survive runtime replacement and an interrupted answer requ
     origin,
     fetcher,
     rateLimits: false,
+    sendAuthEmail: mailbox.sendAuthEmail,
   });
   server = runtime.app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));

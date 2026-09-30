@@ -5,6 +5,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly code?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -39,9 +40,13 @@ export async function api<T = any>(
     );
   }
   if (!response.ok) {
-    if (response.status === 401 && path !== "/auth/login")
+    if (response.status === 401 && !path.startsWith("/auth/"))
       window.dispatchEvent(new Event("session-expired"));
-    throw new ApiError(data.error || "Request failed", response.status);
+    throw new ApiError(
+      data.error || data.message || "Request failed",
+      response.status,
+      data.code,
+    );
   }
   const message = mutationSuccessMessage(
     path,

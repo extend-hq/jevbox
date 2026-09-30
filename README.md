@@ -43,7 +43,7 @@ PostgreSQL stores accounts, sessions, document bytes, parsed output, and chats. 
 
 ## Capabilities
 
-- Email/password authentication with scrypt hashes and opaque, hashed, HttpOnly sessions.
+- Better Auth email/password authentication with mailbox verification, password recovery, and signed HttpOnly session cookies.
 - Separate organizations, invitation links, admin/member role management, member removal, organization switching, and admin-only settings.
 - Nested categories and uploads up to 30 MB, durable indexing jobs, retries, and persistent document content.
 - Select documents and choose **Organize** to classify them immediately in batches, with a loading toast that changes to success or explains failures. Existing paths are preferred; new branches are proposed and validated when needed.
@@ -66,7 +66,7 @@ AI Gateway offers its model catalog; OpenAI-compatible endpoints support additio
 
 ## Deploy
 
-[Deployment guide](docs/deployment.md) includes Docker, cloud-neutral Helm, and an isolated AWS/EKS Terraform path. No AWS credentials, existing production state, or account IDs are embedded. Deployment requires an explicit target account, region, protected-account list, namespace, image, domain, and secret.
+[Deployment guide](docs/deployment.md) includes Docker, cloud-neutral Helm, and AWS/EKS Terraform. Deployment requires an explicit target account, region, namespace, image, domain, and secret.
 
 The Helm chart runs one app replica and a private SpiceDB container. Supply two dedicated PostgreSQL databases and credentials through a Kubernetes Secret. The app has no persistent filesystem requirement. Permission updates publish complete versioned relationship snapshots before committing metadata; unavailable SpiceDB fails closed. The current snapshot rebuild, in-process job scheduling, and rate limiting keep this a single-app-replica baseline, not a highly available deployment.
 
@@ -85,3 +85,5 @@ pnpm fixture
 This runs on port 4311, creates an isolated PostgreSQL schema, and prints its local test login. It uses synthetic provider responses and does not contact external providers. Do not expose this verification server publicly.
 
 UI sources are vendored so this repository builds without sibling checkouts. See [third-party notices](docs/third-party.md).
+
+Email/password sign-in uses Better Auth and requires email verification. Local verification and password-reset emails appear in [Mailpit](http://localhost:8025) after `pnpm services:up`. Run `pnpm setup:local` to generate the stable local auth secret. Deployed environments require SMTP settings and `BETTER_AUTH_SECRET`; see the deployment guide. Existing accounts keep their IDs and passwords, but must verify their email and sign in again after migration.

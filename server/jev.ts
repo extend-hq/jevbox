@@ -17,7 +17,9 @@ export const retrievalLimits = {
 } as const;
 
 const probability = z.number().finite().min(0).max(1);
-const choiceSchema = z.object({ probabilities: z.record(probability) });
+const choiceSchema = z.object({
+  probabilities: z.record(z.string(), probability),
+});
 const scoreSchema = z.object({
   type: z.literal("score"),
   score: z.number().finite().min(0).max(3),
@@ -44,7 +46,7 @@ export function createJev(
       },
     );
     const parsed = z
-      .object({ answers: z.record(z.unknown()) })
+      .object({ answers: z.record(z.string(), z.unknown()) })
       .safeParse(response);
     if (!parsed.success)
       throw new HttpError(502, "JEV returned an invalid response. Try again.");

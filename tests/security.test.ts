@@ -1,3 +1,4 @@
+import { authMailbox } from "./auth-mailbox";
 import {
   createAuthorization,
   type Relationship,
@@ -27,6 +28,7 @@ let server: ReturnType<Awaited<ReturnType<typeof createApp>>["app"]["listen"]>;
 let directory: string;
 let database: Awaited<ReturnType<typeof testDatabase>>;
 const origin = "http://localhost:4310";
+const mailbox = authMailbox(origin);
 const outbound: {
   url: string;
   body: any;
@@ -141,7 +143,7 @@ async function signup(email: string, invite?: string) {
     ...(invite ? { invite } : {}),
   });
   assert.equal(response.status, 201);
-  return response.cookie;
+  return mailbox.signIn(base, email, "a-secure-password-123!", invite);
 }
 async function upload(
   cookie: string,
@@ -173,6 +175,7 @@ before(async () => {
     origin,
     fetcher: fakeFetch,
     rateLimits: false,
+    sendAuthEmail: mailbox.sendAuthEmail,
   });
   server = runtime.app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -697,6 +700,7 @@ test("production bootstrap requires a token and closes after the first account",
     directory: isolatedDir,
     origin,
     rateLimits: false,
+    sendAuthEmail: mailbox.sendAuthEmail,
   });
   const local = isolated.app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => local.once("listening", resolve));

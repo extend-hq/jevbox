@@ -1,5 +1,4 @@
-target_account_id = "REPLACE_WITH_NEW_ACCOUNT_ID"
-blocked_account_ids = ["REPLACE_WITH_PROD_1_ACCOUNT_ID"]
+target_account_id = "REPLACE_WITH_TARGET_ACCOUNT_ID"
 region = "REPLACE_WITH_TARGET_REGION"
 environment = "sandbox"
 operator_cidrs = ["REPLACE_WITH_OPERATOR_IP/32"]

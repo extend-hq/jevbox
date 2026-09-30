@@ -1,10 +1,11 @@
+import { hashPassword } from "../server/auth-passwords";
 import { testDatabase } from "../tests/database";
 import { createApp } from "../server/app";
 import { createServer } from "vite";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID, scryptSync } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { strToU8, zipSync } from "fflate";
 import { buildIndex } from "../server/indexing";
@@ -108,11 +109,18 @@ for (const [uid, email, displayName] of [
   [colleague, "colleague@jevbox.test", "Teammate"],
 ])
   await runtime.store.run(
-    "INSERT INTO users VALUES(?,?,?,?)",
+    "INSERT INTO users(id,email,name,email_verified) VALUES(?,?,?,true)",
     uid,
     email,
     displayName,
-    `salt:${scryptSync(password, "salt", 64).toString("hex")}`,
+  );
+for (const uid of [user, colleague])
+  await runtime.store.run(
+    "INSERT INTO auth_accounts(id,account_id,provider_id,user_id,password) VALUES(?,?,'credential',?,?)",
+    randomUUID(),
+    uid,
+    uid,
+    await hashPassword(password),
   );
 await runtime.store.run(
   "INSERT INTO orgs(id,name,settings) VALUES(?,?,?)",
