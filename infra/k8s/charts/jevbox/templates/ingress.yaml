@@ -9,10 +9,12 @@ metadata:
   {{- end }}
 spec:
   ingressClassName: {{ required "ingress.className is required" .Values.ingress.className }}
+  {{- if .Values.ingress.tlsSecretName }}
   tls:
     - hosts:
         - {{ required "ingress.host is required" .Values.ingress.host }}
       secretName: {{ required "ingress.tlsSecretName is required" .Values.ingress.tlsSecretName }}
+  {{- end }}
   rules:
     - host: {{ .Values.ingress.host }}
       http:

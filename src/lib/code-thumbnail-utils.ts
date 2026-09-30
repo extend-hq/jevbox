@@ -1,7 +1,7 @@
 import {
   readCodePreview,
   type CodePreviewLanguage,
-} from "./code-thumbnail-content";
+} from "../../shared/code-thumbnail-content";
 
 type Highlight = {
   tokens: { content: string; color?: string }[][];

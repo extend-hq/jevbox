@@ -34,7 +34,7 @@ for (const signal of ["SIGTERM", "SIGINT"])
     const timeout = setTimeout(() => process.exit(1), 40_000);
     timeout.unref();
     void (async () => {
-      await runtime.closeChats();
+      runtime.closeStreams();
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );

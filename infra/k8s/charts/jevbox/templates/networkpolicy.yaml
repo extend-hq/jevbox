@@ -10,9 +10,15 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
+        {{- if .Values.networkPolicy.ingressNamespace }}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ required "networkPolicy.ingressNamespace is required" .Values.networkPolicy.ingressNamespace }}
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}
+        {{- end }}
+        {{- range .Values.networkPolicy.ingressCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
       ports:
         - protocol: TCP
           port: 4310

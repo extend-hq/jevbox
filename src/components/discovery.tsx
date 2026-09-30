@@ -12,6 +12,18 @@ import {
 } from "./chat-prompt-editor";
 import { promptLimit } from "@/lib/chat-editor";
 import {
+  chatMessageId,
+  emptyChatHistory,
+  mergeChatSnapshot,
+  mergeChatOutline,
+  mergeChatRange,
+  type ChatOutline,
+  prependChatPage,
+  type ChatSnapshot,
+} from "@/lib/chat-history";
+import { chatDebug } from "@/lib/chat-debug";
+import { ChatTranscript, ChatJumpToLatest } from "./chat-transcript";
+import {
   Message as ChatMessage,
   MessageAvatar,
   MessageContent,
@@ -35,7 +47,6 @@ import {
   MessageScrollerViewport,
   MessageScrollerContent,
   MessageScrollerItem,
-  MessageScrollerButton,
 } from "./ui/message-scroller";
 import { ResourceThumbnail } from "./resource-thumbnail";
 import { RetrievalTree } from "./retrieval-tree";
@@ -70,6 +81,7 @@ import {
   type ChatComposerToolsHandle,
 } from "./chat-composer-tools";
 import { CursorTooltip } from "./cursor-tooltip";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -421,7 +433,14 @@ export function ChatView({
     ) ?? me.chatModels?.[0];
   const attachmentPending = attachments.some((a) => a.status !== "ready");
   const [chats, setChats] = useState<any[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [history, setHistory] = useState(() => emptyChatHistory(chatId));
+  const messageViewport = useRef<HTMLDivElement>(null);
+  const scrollToEnd = useRef<(() => void) | null>(null);
+  const messages = history.chatId === chatId ? history.messages : [];
+  const loadingHistory =
+    !!chatId && (history.chatId !== chatId || history.loading);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const olderRequest = useRef<AbortController | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [input, setInput] = useState("");
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -432,12 +451,16 @@ export function ChatView({
   const sending = useRef(false);
   const submission = useRef<{ key: string; id: string } | null>(null);
   const [connection, setConnection] = useState<"live" | "reconnecting">("live");
-  const activeTurn = turns.find((t) =>
-    ["retrieving", "generating", "cancelling"].includes(t.status),
-  );
-  const visibleQueue = turns.filter(
-    (t) => !["retrieving", "generating", "cancelling"].includes(t.status),
-  );
+  const activeTurn = loadingHistory
+    ? undefined
+    : turns.find((t) =>
+        ["retrieving", "generating", "cancelling"].includes(t.status),
+      );
+  const visibleQueue = loadingHistory
+    ? []
+    : turns.filter(
+        (t) => !["retrieving", "generating", "cancelling"].includes(t.status),
+      );
   const pending =
     activeTurn && !activeTurn.regenerating ? activeTurn.content : "";
   const action = useAction();
@@ -492,15 +515,9 @@ export function ChatView({
   const activeChat = useRef(chatId);
   activeChat.current = chatId;
   const createdChat = useRef<string | null>(null);
-  const applySnapshot = (chat: {
-    id: string;
-    title: string;
-    messages: Message[];
-    turns?: ChatTurn[];
-    blocked: boolean;
-  }) => {
+  const applySnapshot = (chat: ChatSnapshot) => {
     if (!mounted.current || activeChat.current !== chat.id) return;
-    setMessages(chat.messages);
+    setHistory((current) => mergeChatSnapshot(current, chat));
     setTurns(chat.turns ?? []);
     setBlocked(chat.blocked);
     setChats((current) =>
@@ -518,6 +535,121 @@ export function ChatView({
   const refreshChat = async (id = activeChat.current) => {
     if (id) applySnapshot(await api(`/chats/${id}`));
   };
+  const loadOlder = async () => {
+    if (
+      !chatId ||
+      loadingHistory ||
+      history.nextCursor === null ||
+      olderRequest.current
+    )
+      return;
+    const id = chatId;
+    const controller = new AbortController();
+    olderRequest.current = controller;
+    setLoadingOlder(true);
+    try {
+      const page = await api<ChatSnapshot>(
+        `/chats/${id}?before=${history.nextCursor}`,
+        { signal: controller.signal },
+      );
+      if (
+        controller.signal.aborted ||
+        activeChat.current !== id ||
+        !mounted.current
+      )
+        return;
+      if (page.blocked) applySnapshot(page);
+      else setHistory((current) => prependChatPage(current, page));
+    } catch (error) {
+      if (
+        !controller.signal.aborted &&
+        mounted.current &&
+        activeChat.current === id
+      )
+        action.setError((error as Error).message);
+    } finally {
+      if (olderRequest.current === controller) {
+        olderRequest.current = null;
+        if (mounted.current) setLoadingOlder(false);
+      }
+    }
+  };
+  const loadRange = async (start: number, end: number) => {
+    if (!chatId || loadingHistory || olderRequest.current) return;
+    const id = chatId;
+    const controller = new AbortController();
+    olderRequest.current = controller;
+    setLoadingOlder(true);
+    const started = performance.now();
+    try {
+      const page = await api<ChatSnapshot>(
+        `/chats/${id}/history?start=${start}&end=${end}`,
+        { signal: controller.signal },
+      );
+      if (
+        controller.signal.aborted ||
+        activeChat.current !== id ||
+        !mounted.current
+      )
+        return;
+      if (page.blocked) applySnapshot(page);
+      else
+        setHistory((current) =>
+          mergeChatRange(current, page, (start + end) / 2),
+        );
+      chatDebug("fetch", {
+        start,
+        end,
+        durationMs: performance.now() - started,
+        rows: page.messages.length,
+      });
+    } catch (error) {
+      if (
+        !controller.signal.aborted &&
+        mounted.current &&
+        activeChat.current === id
+      )
+        action.setError((error as Error).message);
+    } finally {
+      if (olderRequest.current === controller) {
+        olderRequest.current = null;
+        if (mounted.current) setLoadingOlder(false);
+      }
+    }
+  };
+  useEffect(() => {
+    if (
+      !chatId ||
+      loadingHistory ||
+      blocked ||
+      history.messageCount < 100 ||
+      history.roles !== undefined
+    )
+      return;
+    const controller = new AbortController();
+    void api<ChatOutline>(`/chats/${chatId}/outline`, {
+      signal: controller.signal,
+    })
+      .then((outline) => {
+        if (controller.signal.aborted || activeChat.current !== chatId) return;
+        if (outline.blocked)
+          applySnapshot({
+            ...outline,
+            title: "Sources no longer available",
+            messages: [],
+          });
+        else setHistory((current) => mergeChatOutline(current, outline));
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [
+    chatId,
+    loadingHistory,
+    blocked,
+    history.messageCount,
+    history.revision,
+    history.roles,
+  ]);
   const updateTurn = async (
     id: string,
     change: { content?: string; action?: "retry" | "up" | "down" },
@@ -535,6 +667,7 @@ export function ChatView({
   const submit = async () => {
     if (
       sending.current ||
+      loadingHistory ||
       !input.trim() ||
       uploading ||
       attachmentPending ||
@@ -610,7 +743,7 @@ export function ChatView({
   useEffect(() => {
     let active = true;
     if (createdChat.current !== chatId || !chatId) {
-      setMessages([]);
+      setHistory(emptyChatHistory(chatId));
       setAttachments([]);
       setInput("");
       setBlocked(false);
@@ -618,17 +751,23 @@ export function ChatView({
     }
     createdChat.current = null;
     setTurns([]);
+    olderRequest.current?.abort();
+    olderRequest.current = null;
+    setLoadingOlder(false);
+    const controller = new AbortController();
     setConnection("live");
     let stream: EventSource | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
     const load = async () => {
       if (!chatId) return;
       try {
-        const chat = await api(`/chats/${chatId}`);
+        const chat = await api<ChatSnapshot>(`/chats/${chatId}`, {
+          signal: controller.signal,
+        });
         if (active) applySnapshot(chat);
       } catch (error) {
         if (active) {
-          setMessages([]);
+          setHistory({ ...emptyChatHistory(chatId), loading: false });
           setTurns([]);
           action.setError((error as Error).message);
         }
@@ -649,7 +788,7 @@ export function ChatView({
       stream.addEventListener("unavailable", (event) => {
         if (!active) return;
         const data = JSON.parse((event as MessageEvent).data);
-        setMessages([]);
+        setHistory({ ...emptyChatHistory(chatId), loading: false });
         setTurns([]);
         setBlocked(true);
         action.setError(data.error);
@@ -663,6 +802,8 @@ export function ChatView({
     });
     return () => {
       active = false;
+      controller.abort();
+      olderRequest.current?.abort();
       stream?.close();
       clearInterval(timer);
     };
@@ -707,7 +848,7 @@ export function ChatView({
                 aria-label="New conversation"
                 onClick={() => {
                   onChatChange(null);
-                  setMessages([]);
+                  setHistory(emptyChatHistory(null));
                   setAttachments([]);
                   setBlocked(false);
                   action.setError("");
@@ -736,7 +877,7 @@ export function ChatView({
                       await api(`/chats/${c.id}`, { method: "DELETE" });
                       if (activeChat.current === c.id && mounted.current) {
                         onChatChange(null, true);
-                        setMessages([]);
+                        setHistory(emptyChatHistory(null));
                       }
                       await refresh();
                     })
@@ -768,7 +909,7 @@ export function ChatView({
         minSize={compact ? 0 : 280}
       >
         <section
-          className={`chat-main ${!messages.length && !pending && !visibleQueue.length ? "new-chat" : ""}`}
+          className={`chat-main ${!chatId && !messages.length && !pending && !visibleQueue.length ? "new-chat" : ""}`}
         >
           <div className="chat-toolbar">
             <span>
@@ -783,14 +924,23 @@ export function ChatView({
             </span>
           </div>
           <MessageScrollerProvider
-            key={chatId ?? "new"}
-            autoScroll
-            defaultScrollPosition="last-anchor"
+            key={`${chatId ?? "new"}-${loadingHistory ? "loading" : "ready"}`}
+            autoScroll={history.messageCount < 30}
+            defaultScrollPosition={loadingHistory ? "start" : "end"}
           >
             <MessageScroller className="chat-scroll-area">
-              <MessageScrollerViewport>
-                <MessageScrollerContent className="chat-scroll">
-                  {!messages.length && !pending && !visibleQueue.length ? (
+              <MessageScrollerViewport
+                ref={messageViewport}
+                preserveScrollOnPrepend={false}
+              >
+                <MessageScrollerContent
+                  className={`chat-scroll ${!loadingHistory && chatId ? "chat-transcript-content" : ""}`}
+                  aria-busy={loadingHistory || !!activeTurn}
+                >
+                  {loadingHistory ? null : !chatId &&
+                    !messages.length &&
+                    !pending &&
+                    !visibleQueue.length ? (
                     <MessageScrollerItem
                       messageId="empty"
                       className="chat-empty"
@@ -824,256 +974,294 @@ export function ChatView({
                       )}
                     </MessageScrollerItem>
                   ) : (
-                    [
-                      ...(activeTurn?.regenerating
-                        ? messages.slice(0, -1)
-                        : messages),
-                      ...(pending
-                        ? [
-                            {
-                              role: "user",
-                              content: pending,
-                              turnId: activeTurn?.id,
-                              attachments: activeTurn?.attachments,
-                            } as Message,
-                          ]
-                        : []),
-                      ...(activeTurn
-                        ? [
-                            {
-                              role: "assistant",
-                              content: activeTurn.partialText,
-                              turnId: activeTurn.id,
-                              selectedModel:
-                                activeTurn.selectedModel ?? undefined,
-                            } as Message,
-                          ]
-                        : []),
-                    ].map((message, i) => (
-                      <ChatMessagePresentation
-                        key={`${message.role === "user" ? i : (message.turnId ?? i)}-${message.role}`}
-                        content={message.content}
-                        streaming={
-                          i >=
-                          (activeTurn?.regenerating
-                            ? messages.length - 1
-                            : messages.length)
-                        }
-                      >
-                        {(text, ready, animate) => (
-                          <MessageScrollerItem
-                            messageId={`${message.role === "user" ? i : (message.turnId ?? i)}-${message.role}`}
-                            scrollAnchor={message.role === "user"}
-                          >
-                            <ChatMessage
-                              align={message.role === "user" ? "end" : "start"}
-                              className="chat-message"
+                    <ChatTranscript
+                      key={chatId ?? "new"}
+                      viewportRef={messageViewport}
+                      scrollToEndRef={scrollToEnd}
+                      roles={history.roles}
+                      messageCount={history.messageCount}
+                      onLoadRange={loadRange}
+                      renderVersion={`${action.busy}-${!!turns.length}-${chosenModel?.provider}-${chosenModel?.model}-${preview?.source.documentId}-${preview?.source.nodeId}-${activeTurn?.status}`}
+                      hasOlder={history.nextCursor !== null}
+                      loadingOlder={loadingOlder}
+                      onLoadOlder={loadOlder}
+                      messages={[
+                        ...(activeTurn?.regenerating
+                          ? messages.slice(0, -1)
+                          : messages),
+                        ...(pending
+                          ? [
+                              {
+                                role: "user",
+                                content: pending,
+                                turnId: activeTurn?.id,
+                                position: history.messageCount,
+                                attachments: activeTurn?.attachments,
+                              } as Message,
+                            ]
+                          : []),
+                        ...(activeTurn
+                          ? [
+                              {
+                                role: "assistant",
+                                position: activeTurn.regenerating
+                                  ? history.messageCount - 1
+                                  : history.messageCount + 1,
+                                content: activeTurn.partialText,
+                                turnId: activeTurn.id,
+                                selectedModel:
+                                  activeTurn.selectedModel ?? undefined,
+                              } as Message,
+                            ]
+                          : []),
+                      ]}
+                    >
+                      {(message, i) => (
+                        <ChatMessagePresentation
+                          key={chatMessageId(message, i)}
+                          content={message.content}
+                          streaming={
+                            i >=
+                            (activeTurn?.regenerating
+                              ? messages.length - 1
+                              : messages.length)
+                          }
+                        >
+                          {(text, ready, animate) => (
+                            <MessageScrollerItem
+                              messageId={chatMessageId(message, i)}
+                              scrollAnchor={message.role === "user"}
                             >
-                              {message.role === "assistant" && (
-                                <MessageAvatar className="self-start">
-                                  <JevboxIcon size={18} />
-                                </MessageAvatar>
-                              )}
-                              <MessageContent>
-                                <Bubble
-                                  variant={
-                                    message.role === "assistant"
-                                      ? "ghost"
-                                      : "muted"
-                                  }
-                                  align={
-                                    message.role === "user" ? "end" : "start"
-                                  }
-                                >
-                                  <BubbleContent
-                                    className={
-                                      message.role === "user"
-                                        ? "user-bubble-content"
-                                        : undefined
+                              <ChatMessage
+                                align={
+                                  message.role === "user" ? "end" : "start"
+                                }
+                                className="chat-message"
+                              >
+                                {message.role === "assistant" && (
+                                  <MessageAvatar className="self-start">
+                                    <JevboxIcon size={18} />
+                                  </MessageAvatar>
+                                )}
+                                <MessageContent>
+                                  <Bubble
+                                    variant={
+                                      message.role === "assistant"
+                                        ? "ghost"
+                                        : "muted"
+                                    }
+                                    align={
+                                      message.role === "user" ? "end" : "start"
                                     }
                                   >
-                                    {message.role === "assistant" &&
-                                      activeTurn &&
-                                      activeTurn.id === message.turnId && (
-                                        <ChatThinking
-                                          key={activeTurn.id}
-                                          status={activeTurn.status}
-                                        />
-                                      )}
-                                    <Markdown
-                                      sources={
-                                        message.role === "assistant"
-                                          ? message.sources
+                                    <BubbleContent
+                                      className={
+                                        message.role === "user"
+                                          ? "user-bubble-content"
                                           : undefined
                                       }
-                                      onSourcePreview={(source) => {
-                                        setPreview({
-                                          source,
-                                          trace: message.trace ?? [],
-                                          focusRequest:
-                                            ++sourceFocusRequest.current,
-                                        });
-                                        setPreviewTab("parsed");
-                                      }}
-                                      streaming={
-                                        message.role === "assistant" &&
-                                        !ready &&
-                                        Boolean(text)
-                                      }
-                                      animate={
-                                        animate && message.role === "assistant"
-                                      }
                                     >
-                                      {text}
-                                    </Markdown>
-                                  </BubbleContent>
-                                </Bubble>
-                                {message.attachments?.length ? (
-                                  <AttachmentGroup>
-                                    {message.attachments.map((attachment) => (
-                                      <Attachment key={attachment.id} size="sm">
-                                        <AttachmentMedia>
-                                          <FileText size={16} />
-                                        </AttachmentMedia>
-                                        <AttachmentContent>
-                                          <AttachmentTitle>
-                                            {attachment.name}
-                                          </AttachmentTitle>
-                                        </AttachmentContent>
-                                        <AttachmentTrigger
-                                          aria-label={`Open ${attachment.name}`}
-                                          onClick={() => onOpen(attachment.id)}
-                                        />
-                                      </Attachment>
-                                    ))}
-                                  </AttachmentGroup>
-                                ) : null}
-                                {message.role === "assistant" && (
-                                  <div
-                                    className="chat-answer-details"
+                                      {message.role === "assistant" &&
+                                        activeTurn &&
+                                        activeTurn.id === message.turnId && (
+                                          <ChatThinking
+                                            key={activeTurn.id}
+                                            status={activeTurn.status}
+                                          />
+                                        )}
+                                      <Markdown
+                                        sources={
+                                          message.role === "assistant"
+                                            ? message.sources
+                                            : undefined
+                                        }
+                                        onSourcePreview={(source) => {
+                                          setPreview({
+                                            source,
+                                            trace: message.trace ?? [],
+                                            focusRequest:
+                                              ++sourceFocusRequest.current,
+                                          });
+                                          setPreviewTab("parsed");
+                                        }}
+                                        streaming={
+                                          message.role === "assistant" &&
+                                          !ready &&
+                                          Boolean(text)
+                                        }
+                                        animate={
+                                          animate &&
+                                          message.role === "assistant"
+                                        }
+                                      >
+                                        {text}
+                                      </Markdown>
+                                    </BubbleContent>
+                                  </Bubble>
+                                  {message.attachments?.length ? (
+                                    <AttachmentGroup>
+                                      {message.attachments.map((attachment) => (
+                                        <Attachment
+                                          key={attachment.id}
+                                          size="sm"
+                                        >
+                                          <AttachmentMedia>
+                                            <FileText size={16} />
+                                          </AttachmentMedia>
+                                          <AttachmentContent>
+                                            <AttachmentTitle>
+                                              {attachment.name}
+                                            </AttachmentTitle>
+                                          </AttachmentContent>
+                                          <AttachmentTrigger
+                                            aria-label={`Open ${attachment.name}`}
+                                            onClick={() =>
+                                              onOpen(attachment.id)
+                                            }
+                                          />
+                                        </Attachment>
+                                      ))}
+                                    </AttachmentGroup>
+                                  ) : null}
+                                  {message.role === "assistant" && (
+                                    <div
+                                      className="chat-answer-details"
+                                      data-pending={!ready || undefined}
+                                      aria-hidden={!ready || undefined}
+                                      inert={!ready}
+                                    >
+                                      <div className="chat-answer-detail-row">
+                                        {message.sources?.length ? (
+                                          <>
+                                            <Sources
+                                              sources={message.sources}
+                                              onOpen={onOpen}
+                                              onPreview={(source) => {
+                                                setPreview({
+                                                  source,
+                                                  trace: message.trace ?? [],
+                                                  focusRequest:
+                                                    ++sourceFocusRequest.current,
+                                                });
+                                                setPreviewTab("parsed");
+                                              }}
+                                            />
+                                          </>
+                                        ) : null}
+                                      </div>
+                                      <div className="chat-answer-detail-row">
+                                        {message.trace?.length ? (
+                                          <RetrievalTree
+                                            trace={message.trace}
+                                            activeDocumentId={
+                                              preview?.source.documentId
+                                            }
+                                            activeNodeId={
+                                              preview?.source.nodeId
+                                            }
+                                            onSelect={(documentId, nodeId) =>
+                                              previewRetrievalPath(
+                                                message.trace ?? [],
+                                                documentId,
+                                                nodeId,
+                                              )
+                                            }
+                                            onPreview={(documentId, nodeId) =>
+                                              previewRetrievalPath(
+                                                message.trace ?? [],
+                                                documentId,
+                                                nodeId,
+                                                true,
+                                              )
+                                            }
+                                          />
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  )}
+                                  <MessageFooter
+                                    className="chat-message-actions"
                                     data-pending={!ready || undefined}
                                     aria-hidden={!ready || undefined}
                                     inert={!ready}
                                   >
-                                    <div className="chat-answer-detail-row">
-                                      {message.sources?.length ? (
-                                        <>
-                                          <Sources
-                                            sources={message.sources}
-                                            onOpen={onOpen}
-                                            onPreview={(source) => {
-                                              setPreview({
-                                                source,
-                                                trace: message.trace ?? [],
-                                                focusRequest:
-                                                  ++sourceFocusRequest.current,
-                                              });
-                                              setPreviewTab("parsed");
-                                            }}
-                                          />
-                                        </>
-                                      ) : null}
-                                    </div>
-                                    <div className="chat-answer-detail-row">
-                                      {message.trace?.length ? (
-                                        <RetrievalTree
-                                          trace={message.trace}
-                                          activeDocumentId={
-                                            preview?.source.documentId
-                                          }
-                                          activeNodeId={preview?.source.nodeId}
-                                          onSelect={(documentId, nodeId) =>
-                                            previewRetrievalPath(
-                                              message.trace ?? [],
-                                              documentId,
-                                              nodeId,
-                                            )
-                                          }
-                                          onPreview={(documentId, nodeId) =>
-                                            previewRetrievalPath(
-                                              message.trace ?? [],
-                                              documentId,
-                                              nodeId,
-                                              true,
-                                            )
-                                          }
-                                        />
-                                      ) : null}
-                                    </div>
-                                  </div>
-                                )}
-                                <MessageFooter
-                                  className="chat-message-actions"
-                                  data-pending={!ready || undefined}
-                                  aria-hidden={!ready || undefined}
-                                  inert={!ready}
-                                >
-                                  <CopyMessage content={message.content} />
-                                  <CursorTooltip label="Branch into a new chat">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon-xs"
-                                      aria-label="Branch into a new chat"
-                                      disabled={action.busy}
-                                      onClick={() =>
-                                        void action.run(async () => {
-                                          const branch = await api<{
-                                            id: string;
-                                          }>(`/chats/${chatId}/branch`, {
-                                            method: "POST",
-                                            body: JSON.stringify({
-                                              messageIndex: i,
-                                            }),
-                                          });
-                                          onChatChange(branch.id);
-                                          await refresh();
-                                        })
-                                      }
-                                    >
-                                      <BranchOut size={14} />
-                                    </Button>
-                                  </CursorTooltip>
-                                  {message.role === "assistant" &&
-                                    i === messages.length - 1 &&
-                                    !turns.length && (
-                                      <ChatRegenerateMenu
-                                        models={me.chatModels ?? []}
-                                        currentModel={
-                                          message.selectedModel ?? chosenModel
-                                        }
-                                        disabled={
-                                          action.busy || !me.chatEnabled
-                                        }
-                                        onRegenerate={(model) =>
-                                          void action.run(async () => {
-                                            await api(
-                                              `/chats/${chatId}/regenerate`,
-                                              {
+                                    <CopyMessage content={message.content} />
+                                    <Tooltip>
+                                      <TooltipTrigger asChild delay={450}>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon-xs"
+                                          aria-label="Branch into a new chat"
+                                          disabled={action.busy}
+                                          onClick={() =>
+                                            void action.run(async () => {
+                                              const branch = await api<{
+                                                id: string;
+                                              }>(`/chats/${chatId}/branch`, {
                                                 method: "POST",
                                                 body: JSON.stringify({
-                                                  id: crypto.randomUUID(),
-                                                  selectedModel: model,
+                                                  messageIndex:
+                                                    message.position ?? i,
                                                 }),
-                                              },
-                                            );
-                                            await refreshChat();
-                                          })
-                                        }
-                                      />
-                                    )}
-                                  {message.role === "assistant" &&
-                                    message.selectedModel && (
-                                      <span className="chat-answer-model">
-                                        {message.selectedModel.model}
-                                      </span>
-                                    )}
-                                </MessageFooter>
-                              </MessageContent>
-                            </ChatMessage>
-                          </MessageScrollerItem>
-                        )}
-                      </ChatMessagePresentation>
-                    ))
+                                              });
+                                              onChatChange(branch.id);
+                                              await refresh();
+                                            })
+                                          }
+                                        >
+                                          <BranchOut size={14} />
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipPopup
+                                        side="top"
+                                        align="center"
+                                        className="pointer-events-none max-w-72"
+                                      >
+                                        Branch into a new chat
+                                      </TooltipPopup>
+                                    </Tooltip>
+                                    {message.role === "assistant" &&
+                                      i === messages.length - 1 &&
+                                      !turns.length && (
+                                        <ChatRegenerateMenu
+                                          models={me.chatModels ?? []}
+                                          currentModel={
+                                            message.selectedModel ?? chosenModel
+                                          }
+                                          disabled={
+                                            action.busy || !me.chatEnabled
+                                          }
+                                          onRegenerate={(model) =>
+                                            void action.run(async () => {
+                                              await api(
+                                                `/chats/${chatId}/regenerate`,
+                                                {
+                                                  method: "POST",
+                                                  body: JSON.stringify({
+                                                    id: crypto.randomUUID(),
+                                                    selectedModel: model,
+                                                  }),
+                                                },
+                                              );
+                                              await refreshChat();
+                                            })
+                                          }
+                                        />
+                                      )}
+                                    {message.role === "assistant" &&
+                                      message.selectedModel && (
+                                        <span className="chat-answer-model">
+                                          {message.selectedModel.model}
+                                        </span>
+                                      )}
+                                  </MessageFooter>
+                                </MessageContent>
+                              </ChatMessage>
+                            </MessageScrollerItem>
+                          )}
+                        </ChatMessagePresentation>
+                      )}
+                    </ChatTranscript>
                   )}
                   {blocked && (
                     <MessageScrollerItem messageId="blocked" className="notice">
@@ -1084,7 +1272,11 @@ export function ChatView({
                   )}
                 </MessageScrollerContent>
               </MessageScrollerViewport>
-              <MessageScrollerButton aria-label="Jump to latest" />
+              <ChatJumpToLatest
+                key={`${chatId}-${loadingHistory}`}
+                viewportRef={messageViewport}
+                scrollToEndRef={scrollToEnd}
+              />
             </MessageScroller>
           </MessageScrollerProvider>
           <div className="chat-compose">
@@ -1127,7 +1319,7 @@ export function ChatView({
                 }
                 value={input}
                 onChange={setInput}
-                disabled={blocked || !me.chatEnabled}
+                disabled={loadingHistory || blocked || !me.chatEnabled}
                 placeholder={
                   me.chatEnabled
                     ? activeTurn
@@ -1154,7 +1346,7 @@ export function ChatView({
                   }
                   onModelChange={setSelectedModel}
                   onSettings={onSettings}
-                  disabled={blocked}
+                  disabled={loadingHistory || blocked}
                   onBusyChange={setUploading}
                 />
                 {activeTurn && (
@@ -1180,6 +1372,7 @@ export function ChatView({
                   loading={submitting}
                   disabled={
                     !input.trim() ||
+                    loadingHistory ||
                     input.length > promptLimit ||
                     uploading ||
                     attachmentPending ||

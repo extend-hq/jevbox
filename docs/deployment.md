@@ -4,6 +4,8 @@ All configuration is contained in this repository. Nothing deploys automatically
 
 ## Portable container
 
+The runtime image includes only Chromium's headless shell and its Linux libraries, installed during the image build. Thumbnail workers serve their bundled renderer on an ephemeral loopback port; they need no public renderer endpoint or display server. Local development requires `pnpm exec playwright install --only-shell chromium` once. The default restricted containers use Playwright's default sandbox setting; set `THUMBNAIL_CHROMIUM_SANDBOX=true` only where the runtime supports Chromium's sandbox. Rendering contexts block external network access and never receive session tokens or provider credentials. Keep worker memory limits separate from the API; native image and text previews do not launch Chromium.
+
 Build an immutable image tag and push to a registry you control:
 
 ```sh
@@ -38,9 +40,9 @@ Generate secrets with `openssl rand -hex 32`. Store them in your cloud secret ma
 
 Run two processes from the same image: `node --import tsx server/index.ts` for the public web service and `node --import tsx server/worker.ts` for the background service. Production web processes enqueue jobs without running consumers. Both processes need the same `DATABASE_URL`, `SPICEDB_*`, `ENCRYPTION_KEY`, `APP_ORIGIN`, and SMTP configuration. The worker needs no public port; disable the image's HTTP health check when running it with Docker (`--no-healthcheck`). Compose does this automatically.
 
-On Render, use a Docker Web Service and a Docker Background Worker with the worker command above, sharing the application database and encryption key. Keep SpiceDB private. Start one of each, then scale the worker independently. Give workers at least 45 seconds to terminate: pg-boss drains for 30 seconds, then aborts unfinished attempts. The process has a 40-second shutdown cap.
+pg-boss drains for 30 seconds, then aborts unfinished attempts. The process has a 40-second shutdown cap. Give containers at least 45 seconds to shut down. See [Render's graceful shutdown settings](https://render.com/docs/deploys#graceful-shutdown).
 
-The queue installation owns its `pgboss` schema and uses the pinned library's migrations. The database role must be able to create that schema and its tables, functions, and indexes. Use a direct or session-pooled connection for LISTEN/NOTIFY; transaction-pooled connections fall back to polling. Per-process pool ceilings are 12 application, 4 auth, 1 permission snapshot, and 5 pg-boss connections, with a dedicated notification session. Budget database connections across both web and worker replicas; auth connections are opened lazily and unused by background-only processes.
+The queue installation owns its `pgboss` schema and uses the pinned library's migrations. The database role must be able to create that schema and its tables, functions, and indexes. Use a direct or session-pooled connection for LISTEN/NOTIFY; transaction-pooled connections fall back to polling. Per-process pool ceilings are 6 application, 4 auth, 1 permission snapshot, and 3 pg-boss connections, with a dedicated notification session. Budget database connections across both web and worker replicas; auth connections are opened lazily and unused by background-only processes.
 
 ## Any Kubernetes cluster
 
@@ -50,7 +52,7 @@ Set `authEmail.host`, `authEmail.port`, `authEmail.secure`, and `authEmail.from`
 
 Set `trustProxyCidrs` to the actual ingress proxy source ranges and ensure the controller replaces incoming forwarding headers. Never use `0.0.0.0/0` or `::/0`. Without this configuration, clients behind the same proxy share rate limits. Keep direct app access restricted by NetworkPolicy.
 
-1. Copy `infra/k8s/values/portable.yaml` to an untracked values file. Set image repository/tag, HTTPS origin, ingress host/class/TLS secret, and the controller's namespace. Set `postgres.allowedCidrs` to the private PostgreSQL endpoint subnet ranges and `postgres.port` if different from 5432. The chart rejects missing database network ranges when NetworkPolicy is enabled. Ingress annotations are controller-specific; adjust upload size and request timeout for your controller.
+1. Copy `infra/k8s/values/portable.yaml` to an untracked values file. Set image repository/tag, HTTPS origin, ingress host/class/TLS secret, and the controller's namespace. The portable settings use Traefik; configure its request/idle timeouts to at least 300 seconds and allow 32 MiB uploads. Use a maintained ingress controller. Set `postgres.allowedCidrs` to the private PostgreSQL endpoint subnet ranges and `postgres.port` if different from 5432. The chart rejects missing database and ingress network ranges when NetworkPolicy is enabled. Set `networkPolicy.ingressCidrs` instead of the namespace selector when a load balancer connects directly to pod IPs.
 2. Create the namespace and an existing secret named `jevbox-secrets` containing `ENCRYPTION_KEY`, `BETTER_AUTH_SECRET`, `BOOTSTRAP_TOKEN`, `DATABASE_URL`, `SPICEDB_DATABASE_URL`, and `SPICEDB_PRESHARED_KEY`, plus `SMTP_USER` and `SMTP_PASSWORD` when the relay requires authentication. The two database URLs must use different databases/roles. Require verified TLS (`sslmode=verify-full`) and configure the PostgreSQL server certificate chain for your platform. For a private or cloud database CA, create a separate Secret containing `ca.crt`, set `postgres.caSecret` to its name, and append `sslrootcert=/etc/postgres-ca/ca.crt` to both database URLs. The chart mounts this certificate for the app, SpiceDB, and its migration container. Never reuse the Compose development passwords. Use your secret manager integration or a mode-0600 temporary env file with `kubectl create secret generic ... --from-env-file=...`; do not paste secrets into shell history. Create/import the TLS secret separately.
 3. Preview and lint before applying:
 
@@ -66,6 +68,8 @@ helm template sandbox infra/k8s/charts/jevbox \
 helm upgrade --install sandbox infra/k8s/charts/jevbox \
   --namespace jevbox-sandbox -f YOUR_VALUES.yaml --wait --timeout 10m
 kubectl --namespace jevbox-sandbox rollout status deployment/sandbox-jevbox
+kubectl --namespace jevbox-sandbox rollout status deployment/sandbox-jevbox-worker
+kubectl --namespace jevbox-sandbox logs deployment/sandbox-jevbox-worker --tail=50
 ```
 
 5. Open the HTTPS origin, create the first organization using **Deployment setup token**, verify the account through its email link, sign in, and configure connections, then invite other members. Verify upload → index → search → cited chat with your provider credentials. Test a restricted document from a second account before onboarding users.
@@ -78,7 +82,7 @@ For an existing installation, create a fresh PostgreSQL-backed deployment. This 
 
 ## AWS
 
-The Terraform package provisions a VPC, private worker subnets, NAT, EKS, one managed node, EBS CSI, and an immutable ECR repository. Managed PostgreSQL is a separate prerequisite; this Terraform package does not create it. This creates ongoing AWS costs when applied.
+The Terraform package provisions a VPC, private node and database subnets, NAT, EKS, one managed node, EBS CSI, an immutable ECR repository, a database security group, and an IAM role for the AWS Load Balancer Controller. VPC CNI NetworkPolicy enforcement is enabled in standard mode, allowing system add-ons to bootstrap before their policies are configured. Managed PostgreSQL remains a separate prerequisite; this package does not create an RDS instance. This creates ongoing AWS costs when applied.
 
 Before initialization, choose the target AWS account and region. The provider uses `allowed_account_ids`, and Terraform checks that the current credentials match `target_account_id`. The backend has its own account allowlist.
 
@@ -98,10 +102,96 @@ terraform -chdir=infra/terraform/aws plan -out=deployment.tfplan
 ```
 
 5. Review account, region, resources, and costs, then deploy with `terraform apply deployment.tfplan` from that directory.
-6. Configure a named kubeconfig context for the returned cluster using the explicit profile/region. Check the context before deploying.
-7. Install an ingress controller/TLS solution compatible with your platform. The portable values assume an NGINX-class controller; you may use another controller with corresponding annotations. Provision private PostgreSQL in the target account/region with dedicated application and SpiceDB databases; configure network access only from the cluster. Build/push the image to the returned ECR repository, then use the portable Helm steps with your values plus `infra/k8s/values/aws.yaml`, with your database CIDRs supplied last.
+6. Configure a named kubeconfig context for the returned cluster using the explicit profile/region and `operator_role_arn`. The creator has no automatic cluster admin access, so assume the configured operator role when running Kubernetes commands:
+
+```sh
+aws eks update-kubeconfig --profile "$AWS_PROFILE" --region "$AWS_REGION" \
+  --name YOUR_CLUSTER --role-arn YOUR_OPERATOR_ROLE_ARN --alias jevbox-sandbox
+kubectl config current-context
+kubectl get nodes
+kubectl --namespace kube-system get daemonset aws-node
+```
+
+7. Install the AWS Load Balancer Controller using the provisioned IAM role. Pass region and VPC explicitly because node metadata requires IMDSv2 with hop limit 1. The vendored IAM policy is from controller v2.14.1; keep the controller and policy versions in sync when upgrading. Review [AWS's installation procedure](https://docs.aws.amazon.com/eks/latest/userguide/lbc-helm.html).
+
+```sh
+helm repo add eks https://aws.github.io/eks-charts
+helm repo update eks
+helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  --namespace kube-system --version 1.14.1 \
+  --set clusterName=YOUR_CLUSTER --set region=YOUR_REGION --set vpcId=YOUR_VPC_ID \
+  --set serviceAccount.create=true \
+  --set 'serviceAccount.annotations.eks\.amazonaws\.com/role-arn=YOUR_CONTROLLER_ROLE_ARN' \
+  --wait --timeout 10m
+```
+
+8. Provision private RDS PostgreSQL 17 in the returned `database_subnet_group`, attaching `database_security_group_id`. Set public accessibility to false, enable storage encryption and automated backups, and create separate application and SpiceDB databases with dedicated owner/login roles. Do not run the application as the RDS master user. An existing database must permit the node security group and supply its own private subnet CIDRs. Download the [AWS RDS CA bundle](https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem), mount it using `postgres.caSecret`, and require `sslmode=verify-full&sslrootcert=/etc/postgres-ca/ca.crt` on both URLs.
+9. Request and validate an ACM certificate for the application's hostname in the same AWS region as the load balancer. Configure an SMTP relay with a verified sender and credentials. For SES, obtain production sending access or verify every recipient while in its sandbox; use port 587 or 465.
+10. Build an image matching the x86-64 nodes and push an immutable tag. Building on an ARM laptop without the platform flag produces an image these nodes cannot run:
+
+```sh
+aws ecr get-login-password --profile "$AWS_PROFILE" --region "$AWS_REGION" | \
+  docker login --username AWS --password-stdin YOUR_ECR_REGISTRY
+docker buildx build --platform linux/amd64 --push \
+  -t YOUR_ECR_REPOSITORY:YOUR_COMMIT_SHA .
+```
+
+11. Create the namespace, database CA secret, and application secret as described above. Create an ignored AWS Helm values file with the repository/tag, origin, SMTP settings, and these values:
+
+```yaml
+appOrigin: https://YOUR_HOSTNAME
+ingress:
+  host: YOUR_HOSTNAME
+  annotations:
+    alb.ingress.kubernetes.io/certificate-arn: YOUR_ACM_CERTIFICATE_ARN
+postgres:
+  caSecret: jevbox-postgres-ca
+  allowedCidrs: [YOUR_DATABASE_SUBNET_CIDR_1, YOUR_DATABASE_SUBNET_CIDR_2]
+networkPolicy:
+  ingressCidrs: [YOUR_PUBLIC_SUBNET_CIDR_1, YOUR_PUBLIC_SUBNET_CIDR_2]
+trustProxyCidrs: YOUR_PUBLIC_SUBNET_CIDR_1,YOUR_PUBLIC_SUBNET_CIDR_2
+authEmail:
+  host: YOUR_SMTP_HOST
+  from: YOUR_VERIFIED_SENDER
+```
+
+Read the database ranges from `database_subnet_cidrs` and the ALB source ranges from `ingress_subnet_cidrs`. NetworkPolicy must allow these public-subnet private addresses, not the controller's namespace. The ALB appends the real client address to the forwarding chain; trust only its subnet ranges. The AWS values configure HTTP to HTTPS redirection, IP targets, readiness checks, and 300-second stream timeouts. The Service port matches the container port for VPC CNI policy compatibility. ACM terminates TLS at the ALB; no Kubernetes TLS secret is required.
+
+```sh
+helm lint infra/k8s/charts/jevbox \
+  -f infra/k8s/values/aws.yaml -f YOUR_VALUES.yaml
+helm template sandbox infra/k8s/charts/jevbox --namespace jevbox-sandbox \
+  -f infra/k8s/values/aws.yaml -f YOUR_VALUES.yaml
+helm upgrade --install sandbox infra/k8s/charts/jevbox --namespace jevbox-sandbox \
+  -f infra/k8s/values/aws.yaml -f YOUR_VALUES.yaml --wait --timeout 10m
+kubectl --namespace jevbox-sandbox get deployments,services,ingress,networkpolicies
+```
+
+12. Point DNS at the returned ALB hostname. Verify HTTPS redirect and `/health/ready`, worker readiness logs, verification email and password reset, then upload/index/search/chat and permission revocation. Test from two accounts. Confirm that unauthorized pods cannot reach SpiceDB or the application and that PostgreSQL is inaccessible publicly. A single node, NAT gateway, web replica, and SpiceDB replica make this a demo foundation; they do not provide availability-zone failover. A worker rollout may briefly overlap consumers; pg-boss coordinates their claims.
 
 An existing cluster on AWS, GCP, Azure, or another provider can use Helm directly and skip Terraform entirely.
+
+## Render
+
+Create a **New Blueprint** in Render, connect this repository, and select `render.yaml`. The Blueprint creates three paid Docker services in Virginia: a public web service, a background worker, and private SpiceDB. It also creates two paid PostgreSQL 17 instances with separate roles and public database access disabled. Review the displayed cost before creating resources. Change all five regions together before the first deployment if necessary. Disable Blueprint Auto Sync in the dashboard to keep subsequent infrastructure updates manual. No persistent application disk is required.
+
+The initial Blueprint flow prompts for `ENCRYPTION_KEY` (generate with `openssl rand -hex 32`), `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, and `AUTH_EMAIL_FROM`. Use an SMTP provider that supports STARTTLS on port 587 and verify the sender before deploying. The worker references the web service's encryption key, origin, and SMTP settings. Better Auth, bootstrap, and shared SpiceDB secrets are generated automatically; keep them stable and save the encryption key separately.
+
+`APP_ORIGIN` automatically references the web service's `RENDER_EXTERNAL_URL`, including any generated hostname suffix. The startup wrapper constructs SpiceDB's HTTP URL from its private `hostport` reference. SpiceDB runs its database migrations before serving, with small connection pools. The database references use direct private connections, preserving pg-boss's LISTEN/NOTIFY connection. SpiceDB uses an unencrypted database connection inside Render's private network; both databases reject public connections. See [Render's connection guidance](https://render.com/docs/postgresql-creating-connecting).
+
+Deploy SpiceDB first, then the web service and worker, checking their logs and the web health check. Services might restart while the authorization database initializes on the first deployment. Open the generated HTTPS URL, copy `BOOTSTRAP_TOKEN` from the web service's environment in the dashboard, create the initial account with **Deployment setup token**, verify the email link, and sign in. Signup is disabled after bootstrap; invite additional users through the application. Configure provider credentials and verify upload/index/search/chat and restricted access with a second account.
+
+Automatic deploys and preview environments are disabled. Deploy the web and worker from the same commit when updating; deploy SpiceDB first if its version changes. All processes have a 45-second shutdown window. Keep one web instance because API rate limits are currently local to that process. To use a custom domain, add it in Render and replace the web service's `APP_ORIGIN` self-reference in the Blueprint with a `value` containing the exact HTTPS origin, then sync so the worker's reference updates. Set `renderSubdomainPolicy: disabled` on the web service to restrict access to the custom domain. Configure `TRUST_PROXY_CIDRS` only with verified proxy source ranges; leaving it unset is safe but clients share IP rate limits behind the proxy.
+
+Validate configuration before syncing:
+
+```sh
+python3 -m venv /tmp/jevbox-deployment-validation
+/tmp/jevbox-deployment-validation/bin/pip install -r infra/deployment-requirements.txt
+/tmp/jevbox-deployment-validation/bin/python scripts/verify-deployment.py
+```
+
+CI also validates portable and AWS Helm manifests, builds both Docker images, and checks Terraform with mocked providers. This does not create cloud resources. Render's dashboard validation and an actual deploy remain the final checks for account-specific limits and networking. See the [Blueprint reference](https://render.com/docs/blueprint-spec).
 
 ## Backup and recovery
 

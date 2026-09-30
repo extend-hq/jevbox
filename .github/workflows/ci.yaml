@@ -19,11 +19,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm setup:local
       - run: pnpm services:up
+      - run: pnpm exec playwright install --with-deps --only-shell chromium
       - run: pnpm test
       - run: pnpm build
         env:
           NODE_OPTIONS: --max-old-space-size=4096
       - run: docker build -t jevbox:ci .
+      - run: >-
+          docker run --rm --read-only
+          --tmpfs /tmp:rw,size=268435456,uid=1000,gid=1000
+          --entrypoint node jevbox:ci --import tsx --input-type=module -e
+          'await import("./server/app.ts"); const {chromium}=await import("playwright");
+          const browser=await chromium.launch({headless:true}); await browser.close();'
       - if: always()
         run: docker compose down -v
   deployment:
@@ -31,11 +38,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4.3.1
+        with:
+          version: v4.0.1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.11.1
       - run: helm lint infra/k8s/charts/jevbox -f infra/k8s/values/portable.yaml
-      - run: helm template sandbox infra/k8s/charts/jevbox --namespace jevbox-sandbox -f infra/k8s/values/portable.yaml
+      - run: helm template sandbox infra/k8s/charts/jevbox --namespace jevbox-sandbox -f infra/k8s/values/portable.yaml > /tmp/portable.yaml
+      - run: >-
+          helm template sandbox infra/k8s/charts/jevbox --namespace jevbox-sandbox
+          -f infra/k8s/values/portable.yaml -f infra/k8s/values/aws.yaml
+          --set 'postgres.allowedCidrs[0]=10.84.11.0/24'
+          --set 'networkPolicy.ingressCidrs[0]=10.84.101.0/24'
+          --set 'ingress.annotations.alb\.ingress\.kubernetes\.io/certificate-arn=arn:aws:acm:us-east-1:123456789012:certificate/00000000-0000-4000-8000-000000000000'
+          > /tmp/aws.yaml
+      - run: pip install -r infra/deployment-requirements.txt
+      - run: python scripts/verify-deployment.py /tmp/portable.yaml /tmp/aws.yaml
+      - run: docker build -f infra/render/spicedb.Dockerfile -t jevbox-spicedb:ci .
       - run: terraform -chdir=infra/terraform/aws fmt -check
       - run: terraform -chdir=infra/terraform/aws init -backend=false
       - run: terraform -chdir=infra/terraform/aws validate
+      - run: terraform -chdir=infra/terraform/aws test -no-color

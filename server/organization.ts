@@ -1,6 +1,7 @@
 import { queues, type BackgroundJob } from "./jobs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { ProviderResponseError } from "./provider-http";
 import { createJev, retrievalLimits } from "./jev";
 import { availableChatModels, generateAnswer } from "./ai";
 import { getSettings } from "./providers";
@@ -151,15 +152,13 @@ export async function planFiling(options: {
       try {
         parsed = JSON.parse(proposed);
       } catch {
-        throw new HttpError(
-          502,
+        throw new ProviderResponseError(
           "The folder model returned invalid JSON. Retry filing.",
         );
       }
       const proposal = branchSchema.safeParse(parsed);
       if (!proposal.success)
-        throw new HttpError(
-          502,
+        throw new ProviderResponseError(
           "The folder model returned an invalid branch. Retry filing.",
         );
       const branch = proposal.data.folders;
@@ -167,8 +166,7 @@ export async function planFiling(options: {
         new Set(branch.map((folder) => normalized(folder.name))).size !==
         branch.length
       )
-        throw new HttpError(
-          502,
+        throw new ProviderResponseError(
           "The folder model repeated a folder name. Retry filing.",
         );
       const verification = await options.decide([
@@ -217,7 +215,9 @@ export async function planFiling(options: {
     }
     const selected = candidates.find((candidate) => candidate.id === winner);
     if (!selected)
-      throw new HttpError(502, "JEV selected an invalid folder. Retry filing.");
+      throw new ProviderResponseError(
+        "JEV selected an invalid folder. Retry filing.",
+      );
     if (selected.children) {
       candidates = selected.children;
       group = true;
@@ -458,7 +458,10 @@ export function createOrganization(
       );
     if (requested && plan.parentId === null && !plan.branch.length) {
       await check();
-      throw new HttpError(409, "No confident folder match was found. The document was left in its original location.");
+      throw new HttpError(
+        409,
+        "No confident folder match was found. The document was left in its original location.",
+      );
     }
     if (isReview) {
       if (

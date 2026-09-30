@@ -67,11 +67,14 @@ export async function createStore(
   for (const pool of [db, snapshotDb, authDb])
     pool.on("error", () => console.error("An idle database connection closed"));
   let jobs: Jobs | undefined;
-  const close = async () => {
-    await jobs?.close();
-    await Promise.all([db.end(), snapshotDb.end(), authDb.end()]);
-  };
+  let closing: Promise<void> | undefined;
+  const close = () =>
+    (closing ??= (async () => {
+      await jobs?.close();
+      await Promise.all([db.end(), snapshotDb.end(), authDb.end()]);
+    })());
   const context = new AsyncLocalStorage<PoolClient>();
+  const commitChecks = new AsyncLocalStorage<(() => Promise<void>)[]>();
   const authorization = createAuthorization(spiceUrl, spiceKey);
   function parameterize(sql: string) {
     let index = 0;
@@ -186,27 +189,39 @@ export async function createStore(
       .getStore()!
       .query("DELETE FROM authz_dirty WHERE org_id=$1", [orgId]);
   }
+  let writer = Promise.resolve();
   async function transaction<T>(fn: () => T | Promise<T>): Promise<T> {
     if (context.getStore()) return fn();
-    const client = await db.connect();
+    const previous = writer;
+    let unlock!: () => void;
+    writer = new Promise<void>((resolve) => {
+      unlock = resolve;
+    });
+    await previous;
+    let client: PoolClient | undefined;
     try {
+      client = await db.connect();
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(194816, 1)");
-      const result = await context.run(client, async () => {
-        const value = await fn();
-        for (const row of await all<{ org_id: string }>(
-          "SELECT org_id FROM authz_dirty ORDER BY org_id",
-        ))
-          await publishPermissions(row.org_id);
-        return value;
-      });
+      const result = await commitChecks.run([], () =>
+        context.run(client!, async () => {
+          const value = await fn();
+          for (const row of await all<{ org_id: string }>(
+            "SELECT org_id FROM authz_dirty ORDER BY org_id",
+          ))
+            await publishPermissions(row.org_id);
+          for (const check of commitChecks.getStore()!) await check();
+          return value;
+        }),
+      );
       await client.query("COMMIT");
       return result;
     } catch (error) {
-      await client.query("ROLLBACK");
+      await client?.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      client?.release();
+      unlock();
     }
   }
   async function run(sql: string, ...args: any[]) {
@@ -333,6 +348,11 @@ export async function createStore(
           (context.getStore() ?? db).query(sql, values),
       },
       transaction,
+      beforeCommit(check) {
+        const checks = commitChecks.getStore();
+        if (!checks) throw new Error("A commit check requires a transaction");
+        checks.push(check);
+      },
       encrypt,
     });
   } catch (error) {
@@ -380,6 +400,12 @@ export type Resource = {
   index_job_id: string | null;
   parsed: string | null;
   created: string;
+  thumbnail_status: string;
+  thumbnail_job_id: string | null;
+  thumbnail_key: string | null;
+  thumbnail_width: number | null;
+  thumbnail_height: number | null;
+  thumbnail_pages: number | null;
 };
 
 export async function resourceAccess(

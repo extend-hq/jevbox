@@ -246,7 +246,7 @@ export function createExternalAccess(
           url: `${origin}${documentPath(source.documentId, source.nodeId)}`,
         });
     }
-    await revalidate();
+    await actor(await revalidate(), a.orgId);
     return { results };
   }
   async function read(
@@ -314,7 +314,9 @@ export function createExternalAccess(
       req.originalUrl.split("?")[0].replace(/\/$/, "") === "/mcp"
         ? "mcp"
         : "api/v1";
-    return `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/${resource}", error="${error.status === 403 ? "insufficient_scope" : "invalid_token"}"`;
+    const scope =
+      error.status === 403 ? `, scope="${apiScopes.join(" ")}"` : "";
+    return `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/${resource}", error="${error.status === 403 ? "insufficient_scope" : "invalid_token"}"${scope}`;
   }
   const router = Router();
   router.use(async (req, res, next) => {

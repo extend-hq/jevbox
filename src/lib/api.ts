@@ -1,5 +1,6 @@
 import type { ParsedBlock } from "../../shared/parsed-blocks";
 import type { RetrievalStep } from "../../shared/retrieval";
+import type { Thumbnail } from "../../shared/thumbnails";
 import { mutationSuccessMessage, notifySuccess } from "./notifications";
 export class ApiError extends Error {
   constructor(
@@ -73,6 +74,8 @@ export type Resource = {
   canWrite: boolean;
   canShare: boolean;
   parsed?: Parsed;
+  thumbnail?: Thumbnail | null;
+  thumbnail_status?: string;
 };
 export type IndexNode = {
   id: string;
@@ -136,6 +139,7 @@ export type Source = {
   blockIds?: string[];
 };
 export type Message = {
+  position?: number;
   selectedModel?: { provider: string; model: string };
   turnId?: string;
   role: string;

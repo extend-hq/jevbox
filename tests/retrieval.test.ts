@@ -42,6 +42,12 @@ function document(
     index_job_id: null,
     parsed: JSON.stringify(buildIndex([{ content }], "text")),
     created: "2026-09-29",
+    thumbnail_status: "pending",
+    thumbnail_job_id: null,
+    thumbnail_key: null,
+    thumbnail_width: null,
+    thumbnail_height: null,
+    thumbnail_pages: null,
   };
 }
 function storeFor(

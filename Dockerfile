@@ -7,7 +7,8 @@ COPY . .
 RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm build && pnpm prune --prod
 
 FROM node:24-bookworm-slim AS runtime
-ENV NODE_ENV=production PORT=4310 HOST=0.0.0.0 DATA_DIR=/data
+ENV NODE_ENV=production PORT=4310 HOST=0.0.0.0 DATA_DIR=/data XDG_CACHE_HOME=/tmp/.cache
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 WORKDIR /app
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
@@ -15,6 +16,8 @@ COPY --from=build --chown=node:node /app/server ./server
 COPY --from=build --chown=node:node /app/shared ./shared
 COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --from=build --chown=node:node /app/licenses ./licenses
+COPY --from=build --chown=node:node /app/infra/render/start-app.sh ./infra/render/start-app.sh
+RUN node node_modules/playwright/cli.js install --with-deps --only-shell chromium && chmod -R a+rX /opt/playwright && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 4310

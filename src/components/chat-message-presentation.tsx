@@ -27,6 +27,7 @@ export function ChatMessagePresentation({
     let frame = 0;
     let previous: number | null = null;
     let credit = 0;
+    let committed = 0;
     const tick = (now: number) => {
       const remaining = target.current.length - shown.current.length;
       const elapsed =
@@ -34,8 +35,9 @@ export function ChatMessagePresentation({
       credit += elapsed * Math.max(0.12, remaining / 120);
       previous = now;
       const count = Math.floor(credit);
-      credit -= count;
-      if (count > 0) {
+      if (count > 0 && now - committed >= 50) {
+        committed = now;
+        credit -= count;
         let end = Math.min(target.current.length, shown.current.length + count);
         if (
           end < target.current.length &&

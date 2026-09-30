@@ -1,7 +1,9 @@
 import { HttpError } from "./errors";
 export class ProviderResponseError extends HttpError {
   readonly retryable = false;
-  constructor(message: string) { super(502, message); }
+  constructor(message: string) {
+    super(502, message);
+  }
 }
 
 export async function jsonRequest(
@@ -26,6 +28,8 @@ export async function jsonRequest(
   try {
     return await response.json();
   } catch {
-    throw new ProviderResponseError("The provider returned an invalid response. Try again.");
+    throw new ProviderResponseError(
+      "The provider returned an invalid response. Try again.",
+    );
   }
 }

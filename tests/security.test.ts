@@ -413,6 +413,15 @@ test("revoking a source hides chat history and prevents reuse as prompt context"
   assert.equal(history.data.blocked, true);
   assert.deepEqual(history.data.messages, []);
   assert.equal(JSON.stringify(history.data).includes("ORCHID"), false);
+  for (const path of [
+    `/chats/${chatId}/outline`,
+    `/chats/${chatId}/history?start=0&end=100`,
+  ]) {
+    const hidden = await req(path, member);
+    assert.equal(hidden.data.blocked, true);
+    assert.equal(hidden.data.messageCount, 0);
+    assert.equal(JSON.stringify(hidden.data).includes("ORCHID"), false);
+  }
   outbound.length = 0;
   assert.equal(
     (
@@ -1175,7 +1184,10 @@ test("parallel permission mutations do not exhaust the connection pool", async (
       req("/folders", cookie, "POST", { name: `Category ${i}` }),
     ),
   );
-  assert.ok(results.every((result) => result.status === 201));
+  assert.ok(
+    results.every((result) => result.status === 201),
+    JSON.stringify(results.map((result) => result.status)),
+  );
   const listing = await req("/resources", cookie);
   assert.equal(listing.status, 200);
   assert.equal(listing.data.length, 16);

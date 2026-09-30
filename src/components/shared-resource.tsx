@@ -3,8 +3,9 @@ import { api, type Resource } from "@/lib/api";
 import { navigateTo, paths, type AppRoute } from "@/lib/navigation";
 import { DocumentView } from "./document";
 import { RouteLink } from "./route-link";
-import { FileText, Folder, ChevronRight } from "./icons";
+import { Folder, ChevronRight } from "./icons";
 import { Loading } from "./common";
+import { ResourceThumbnail } from "./resource-thumbnail";
 
 type SharedResource = Resource & { rootId: string; children: Resource[] };
 
@@ -98,7 +99,14 @@ export function SharedResourceView({ route }: { route: AppRoute }) {
                 {child.kind === "folder" ? (
                   <Folder size={22} />
                 ) : (
-                  <FileText size={22} />
+                  <ResourceThumbnail
+                    name={child.name}
+                    mime={child.mime}
+                    src={`/api/shared/${token}/resources/${child.id}/content`}
+                    className="size-6 shrink-0"
+                    square
+                    inline
+                  />
                 )}
                 <span>{child.name}</span>
                 <ChevronRight size={14} />

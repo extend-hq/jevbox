@@ -27,7 +27,7 @@ spicedb:
       cpu: "1"
       memory: 1Gi
 service:
-  port: 80
+  port: 4310
 ingress:
   enabled: false
   className: ""
@@ -44,6 +44,7 @@ resources:
 networkPolicy:
   enabled: true
   ingressNamespace: ""
+  ingressCidrs: []
 nodeSelector: {}
 tolerations: []
 worker:

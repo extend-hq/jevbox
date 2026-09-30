@@ -52,6 +52,7 @@ export function createApiKeys(store: Store) {
         .strict()
         .parse(body);
       return store.transaction(async () => {
+        await store.one("SELECT id FROM users WHERE id=? FOR UPDATE", userId);
         const count = await store.one<{ count: string }>(
           "SELECT count(*) FROM api_keys WHERE user_id=? AND revoked_at IS NULL AND expires_at>now()",
           userId,

@@ -6,7 +6,7 @@ import {
   CODE_PREVIEW_BYTES,
   CODE_PREVIEW_LINES,
   CODE_PREVIEW_COLUMNS,
-} from "../src/lib/code-thumbnail-content";
+} from "../shared/code-thumbnail-content";
 
 test("code previews format JSON and preserve YAML while bounding highlight work", () => {
   assert.equal(

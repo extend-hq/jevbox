@@ -1,5 +1,6 @@
 import { createOrganization } from "./organization";
 import { createIndexHandler } from "./indexing-jobs";
+import { createThumbnailJobs, enqueueMissingThumbnails } from "./thumbnails";
 import { createProviders } from "./providers";
 import { createChatRuntime } from "./chat";
 import { authenticateToken } from "./sessions";
@@ -30,6 +31,7 @@ export function createWorkers(
   },
 ) {
   const providers = createProviders(store, options.fetcher);
+  const thumbnails = createThumbnailJobs(store);
   const organization = createOrganization(store, options.fetcher);
   const chats =
     options.chats ??
@@ -54,6 +56,12 @@ export function createWorkers(
     sourceId = job.id,
     sourceName = job.name,
   ) {
+    if (sourceName === queues.thumbnail)
+      await store.run(
+        "UPDATE resources SET thumbnail_status='failed' WHERE id=? AND thumbnail_job_id=? AND thumbnail_status IN ('queued','processing')",
+        job.data.resourceId,
+        sourceId,
+      );
     if (sourceName === queues.index)
       await store.run(
         "UPDATE resources SET status='failed',error=? WHERE id=? AND index_job_id=? AND status IN ('queued','processing')",
@@ -83,7 +91,41 @@ export function createWorkers(
         sourceId,
       );
   }
+  async function reconcile() {
+    const schema = store.jobs.schema;
+    const message = "The background job is no longer available. Please retry.";
+    await store.run(
+      `UPDATE resources SET thumbnail_status='failed' WHERE kind='document' AND thumbnail_status IN ('queued','processing') AND NOT EXISTS (SELECT 1 FROM "${schema}".job j WHERE j.name=? AND j.id=resources.thumbnail_job_id AND j.state IN ('created','retry','active'))`,
+      queues.thumbnail,
+    );
+    await store.run(
+      `UPDATE resources SET status='failed',error=? WHERE id IN (SELECT r.id FROM resources r WHERE r.status IN ('queued','processing') AND NOT EXISTS (SELECT 1 FROM "${schema}".job j WHERE j.name=? AND j.id=r.index_job_id AND j.state IN ('created','retry','active')) LIMIT 100)`,
+      message,
+      queues.index,
+    );
+    await store.run(
+      `UPDATE document_filing SET state='failed',error=?,attempt_id=NULL WHERE resource_id IN (SELECT f.resource_id FROM document_filing f JOIN resources r ON r.id=f.resource_id WHERE f.state IN ('pending','working') AND r.status='ready' AND NOT EXISTS (SELECT 1 FROM "${schema}".job j WHERE j.name=? AND j.id=f.job_id AND j.state IN ('created','retry','active')) LIMIT 100)`,
+      message,
+      queues.filing,
+    );
+    await store.run(
+      `UPDATE organization_reviews SET state='failed',error=?,attempt_id=NULL WHERE id IN (SELECT r.id FROM organization_reviews r WHERE r.state IN ('pending','working') AND NOT EXISTS (SELECT 1 FROM "${schema}".job j WHERE j.name=? AND j.id=r.job_id AND j.state IN ('created','retry','active')) LIMIT 100)`,
+      message,
+      queues.review,
+    );
+    await store.run(
+      `UPDATE chat_turns SET status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE 'failed' END,error=?,error_status=503,attempt_id=NULL WHERE id IN (SELECT t.id FROM chat_turns t WHERE t.status IN ('retrieving','generating','cancelling') AND NOT EXISTS (SELECT 1 FROM "${schema}".job j WHERE j.name=? AND j.id=t.job_id AND j.state IN ('created','retry','active')) LIMIT 100)`,
+      message,
+      queues.chat,
+    );
+    await store.run(
+      `UPDATE chat_turns SET status='failed',error=?,error_status=503 WHERE id IN (SELECT t.id FROM chat_turns t WHERE t.status='queued' AND NOT EXISTS (SELECT 1 FROM chat_turns earlier WHERE earlier.chat_id=t.chat_id AND earlier.position<t.position AND earlier.status IN ('failed','cancelled','retrieving','generating','cancelling')) AND NOT EXISTS (SELECT 1 FROM "${schema}".job j WHERE j.name=? AND j.singleton_key=t.chat_id AND j.state IN ('created','retry','active')) LIMIT 100)`,
+      message,
+      queues.chat,
+    );
+  }
   const handlers: Record<QueueName, (job: BackgroundJob) => Promise<void>> = {
+    [queues.thumbnail]: (job) => thumbnails.process(job),
     [queues.index]: createIndexHandler(store, providers),
     [queues.filing]: organization.process,
     [queues.review]: organization.review,
@@ -93,8 +135,10 @@ export function createWorkers(
         !job.data.encryptedEmail ||
         !job.data.expiresAt ||
         job.data.expiresAt <= Date.now()
-      )
+      ) {
+        await store.jobs.remove(job);
         return;
+      }
       const message = JSON.parse(
         store.decrypt(job.data.encryptedEmail),
       ) as AuthEmail;
@@ -105,16 +149,24 @@ export function createWorkers(
       if (
         !recipient ||
         (message.kind === "verification" && recipient.email_verified)
-      )
+      ) {
+        await store.jobs.remove(job);
         return;
+      }
       job.signal.throwIfAborted();
       await sender({ ...message, id: job.id });
-      await store.jobs.complete(job, async () => {});
-      await store.jobs.boss.deleteJob(queues.email, job);
+      await store.jobs.remove(job);
     },
     [queues.cleanup]: async (job) =>
-      store.jobs.complete(job, () => store.cleanupPermissions()),
+      store.jobs.complete(job, async () => {
+        await store.cleanupPermissions();
+        await reconcile();
+      }),
     [queues.failed]: async (job) => {
+      if (job.sourceName === queues.email) {
+        await store.jobs.remove(job);
+        return;
+      }
       await store.jobs.complete(job, async () => {
         await failure(
           job,
@@ -123,8 +175,6 @@ export function createWorkers(
           job.sourceName ?? undefined,
         );
       });
-      if (job.sourceName === queues.email)
-        await store.jobs.boss.deleteJob(queues.failed, job);
     },
   };
   async function handle(job: BackgroundJob): Promise<JobResult[]> {
@@ -148,6 +198,7 @@ export function createWorkers(
     }
   }
   const concurrency: Record<QueueName, number> = {
+    [queues.thumbnail]: 1,
     [queues.index]: 2,
     [queues.filing]: 3,
     [queues.review]: 1,
@@ -160,9 +211,14 @@ export function createWorkers(
   return {
     handle,
     async start(names: QueueName[] = Object.values(queues)) {
+      if (names.includes(queues.thumbnail)) await enqueueMissingThumbnails(store);
       for (const name of names) {
         if (started.has(name)) continue;
-        await store.jobs.boss.work<JobData, JobResult[], WorkOptions & { includeMetadata: true; perJobResults: true }>(
+        await store.jobs.boss.work<
+          JobData,
+          JobResult[],
+          WorkOptions & { includeMetadata: true; perJobResults: true }
+        >(
           name,
           {
             batchSize: 1,
@@ -170,7 +226,8 @@ export function createWorkers(
             perJobResults: true,
             localConcurrency: concurrency[name],
             pollingIntervalSeconds: 1,
-            notifyPollingIntervalSeconds: name === queues.index ? 3 : name === queues.failed ? 1 : 10,
+            notifyPollingIntervalSeconds:
+              name === queues.index ? 3 : name === queues.failed ? 1 : 10,
             heartbeatRefreshSeconds: 5,
           },
           async ([job]) => {
@@ -192,6 +249,7 @@ export function createWorkers(
     async close() {
       await store.jobs.close();
       await chats.close();
+      await thumbnails.close();
     },
   };
 }

@@ -8,6 +8,8 @@ import { randomUUID, scryptSync } from "node:crypto";
 import { Pool } from "pg";
 import { createApp } from "../server/app";
 import { createAuthentication } from "../server/auth";
+import { createWorkers } from "../server/workers";
+import { queues } from "../server/jobs";
 import { testDatabase } from "./database";
 import { authMailbox } from "./auth-mailbox";
 
@@ -354,23 +356,23 @@ test("account throttling survives auth recreation and changing client IPs", asyn
   }
 });
 test("recovery responses do not wait for SMTP delivery", async () => {
+  await runtime.workers.stop([queues.email]);
   let delivered = false;
   let release!: () => void;
   const delivery = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const { auth } = createAuthentication(runtime.store, {
-    directory,
+  const consumer = createWorkers(runtime.store, {
     origin,
-    rateLimits: false,
     sendAuthEmail: async () => {
       await delivery;
       delivered = true;
     },
   });
+  await consumer.start([queues.email]);
   try {
     const result = await Promise.race([
-      auth.api.requestPasswordReset({
+      runtime.auth.api.requestPasswordReset({
         body: { email: "auth@local.test", redirectTo: "/reset-password" },
       }),
       new Promise<never>((_, reject) =>
@@ -379,9 +381,17 @@ test("recovery responses do not wait for SMTP delivery", async () => {
     ]);
     assert.equal(result.status, true);
     assert.equal(delivered, false);
+    const pending = await runtime.store.jobs.boss.findJobs(queues.email);
+    assert.ok(
+      pending.some((job) => job.state === "active" || job.state === "created"),
+    );
   } finally {
     release();
+    await waitForJobs(runtime, [queues.email]);
+    await consumer.stop([queues.email]);
+    await runtime.workers.start([queues.email]);
   }
+  assert.equal(delivered, true);
 });
 test("migration preserves user IDs and passwords, requires verification, and invalidates old sessions", async () => {
   const isolated = await testDatabase();
@@ -418,7 +428,7 @@ test("migration preserves user IDs and passwords, requires verification, and inv
   let migrated: typeof runtime | undefined;
   try {
     migrated = await createApp({
-    workers: ["auth-email", "chat-answer"],
+      workers: ["auth-email", "chat-answer"],
       directory: localDirectory,
       databaseUrl: isolated.url,
       origin,

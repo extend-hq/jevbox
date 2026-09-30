@@ -1,2 +1,18 @@
 postgres:
   allowedCidrs: []
+ingress:
+  enabled: true
+  className: alb
+  tlsSecretName: ""
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/healthcheck-path: /health/ready
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=300,routing.http.xff_header_processing.mode=append
+    alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=45
+networkPolicy:
+  ingressNamespace: ""
+  ingressCidrs: []

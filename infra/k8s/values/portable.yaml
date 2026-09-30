@@ -7,12 +7,12 @@ postgres:
   allowedCidrs: [10.20.30.0/24]
 ingress:
   enabled: true
-  className: nginx
+  className: traefik
   host: knowledge.example.org
   tlsSecretName: jevbox-tls
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: 32m
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  annotations: {}
 networkPolicy:
-  ingressNamespace: ingress-nginx
+  ingressNamespace: traefik
+authEmail:
+  host: smtp.example.org
+  from: auth@example.org

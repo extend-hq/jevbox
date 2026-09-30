@@ -49,7 +49,9 @@ export function createJev(
       .object({ answers: z.record(z.string(), z.unknown()) })
       .safeParse(response);
     if (!parsed.success)
-      throw new ProviderResponseError("JEV returned an invalid response. Try again.");
+      throw new ProviderResponseError(
+        "JEV returned an invalid response. Try again.",
+      );
     return parsed.data.answers;
   }
 

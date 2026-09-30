@@ -75,12 +75,19 @@ export function createProviders(store: Store, fetcher: Fetch = fetch) {
         body: Uint8Array;
       }>("SELECT body FROM blobs WHERE resource_id=?", document.id)
     )?.body;
-    if (!body) throw new Error("Document content is unavailable");
+    if (!body) throw new PermanentJobError("Document content is unavailable");
     if (
       document.mime.startsWith("text/") ||
       document.mime === "application/json"
     ) {
-      const text = new TextDecoder("utf-8", { fatal: true }).decode(body);
+      let text: string;
+      try {
+        text = new TextDecoder("utf-8", { fatal: true }).decode(body);
+      } catch {
+        throw new PermanentJobError(
+          "The document does not contain valid UTF-8 text.",
+        );
+      }
       return buildIndex(
         text.split("\f").map((content, i) => ({
           content,

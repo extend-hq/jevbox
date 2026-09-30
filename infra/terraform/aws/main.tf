@@ -15,19 +15,21 @@ locals {
   azs  = slice(data.aws_availability_zones.available.names, 0, 2)
 }
 module "vpc" {
-  source               = "terraform-aws-modules/vpc/aws"
-  version              = "6.0.1"
-  name                 = local.name
-  cidr                 = var.vpc_cidr
-  azs                  = local.azs
-  private_subnets      = [cidrsubnet(var.vpc_cidr, 8, 1), cidrsubnet(var.vpc_cidr, 8, 2)]
-  public_subnets       = [cidrsubnet(var.vpc_cidr, 8, 101), cidrsubnet(var.vpc_cidr, 8, 102)]
-  enable_nat_gateway   = true
-  single_nat_gateway   = true
-  enable_dns_hostnames = true
-  public_subnet_tags   = { "kubernetes.io/role/elb" = "1" }
-  private_subnet_tags  = { "kubernetes.io/role/internal-elb" = "1" }
-  depends_on           = [terraform_data.account_guard]
+  source                       = "terraform-aws-modules/vpc/aws"
+  version                      = "6.0.1"
+  name                         = local.name
+  cidr                         = var.vpc_cidr
+  azs                          = local.azs
+  private_subnets              = [cidrsubnet(var.vpc_cidr, 8, 1), cidrsubnet(var.vpc_cidr, 8, 2)]
+  public_subnets               = [cidrsubnet(var.vpc_cidr, 8, 101), cidrsubnet(var.vpc_cidr, 8, 102)]
+  database_subnets             = [cidrsubnet(var.vpc_cidr, 8, 11), cidrsubnet(var.vpc_cidr, 8, 12)]
+  create_database_subnet_group = true
+  enable_nat_gateway           = true
+  single_nat_gateway           = true
+  enable_dns_hostnames         = true
+  public_subnet_tags           = { "kubernetes.io/role/elb" = "1" }
+  private_subnet_tags          = { "kubernetes.io/role/internal-elb" = "1" }
+  depends_on                   = [terraform_data.account_guard]
 }
 module "eks" {
   source                                   = "terraform-aws-modules/eks/aws"
@@ -53,9 +55,15 @@ module "eks" {
     }
   }
   addons = {
-    coredns            = {}
-    kube-proxy         = {}
-    vpc-cni            = { before_compute = true }
+    coredns    = {}
+    kube-proxy = {}
+    vpc-cni = {
+      before_compute = true
+      configuration_values = jsonencode({
+        enableNetworkPolicy = "true"
+        env                 = { NETWORK_POLICY_ENFORCING_MODE = "standard" }
+      })
+    }
     aws-ebs-csi-driver = { service_account_role_arn = aws_iam_role.ebs.arn }
   }
   eks_managed_node_groups = {
@@ -67,7 +75,6 @@ module "eks" {
       metadata_options = { http_tokens = "required", http_put_response_hop_limit = 1 }
     }
   }
-  depends_on = [terraform_data.account_guard]
 }
 resource "aws_iam_role" "ebs" {
   name = "${local.name}-ebs"

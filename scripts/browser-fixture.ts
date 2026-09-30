@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { strToU8, zipSync } from "fflate";
 import { buildIndex } from "../server/indexing";
+import { enqueueThumbnail } from "../server/thumbnails";
 import { searchToolResponse, choiceResponse } from "../tests/model-tools";
 const port = Number(process.env.FIXTURE_PORT ?? 4312);
 const origin = `http://localhost:${port}`;
@@ -312,6 +313,7 @@ for (const [name, mime, content] of files) {
     new Date().toISOString(),
   );
   await runtime.store.run("INSERT INTO blobs VALUES(?,?)", rid, bytes);
+  await enqueueThumbnail(runtime.store, rid);
 }
 const vite = await createServer({
   cacheDir: `node_modules/.vite/fixture-${port}`,

@@ -80,9 +80,9 @@ export function createChatRuntime(
   >();
   let closed = false;
   const streams = new Set<() => void>();
-  async function chatFor(a: Actor, chatId: string) {
+  async function chatFor(a: Actor, chatId: string, includeHistory = true) {
     const chat = await store.one<Chat>(
-      "SELECT * FROM chats WHERE id=? AND org_id=? AND user_id=?",
+      `SELECT ${includeHistory ? "*" : "id,org_id,user_id,title,dependencies,updated"} FROM chats WHERE id=? AND org_id=? AND user_id=?`,
       chatId,
       a.orgId,
       a.userId,
@@ -104,16 +104,59 @@ export function createChatRuntime(
         "Source access changed. Start a new conversation.",
       );
   }
-  async function snapshot(a: Actor, chatId: string) {
-    const chat = await chatFor(a, chatId);
+  async function snapshot(
+    a: Actor,
+    chatId: string,
+    window: {
+      before?: number;
+      start?: number;
+      end?: number;
+      outline?: boolean;
+    } = {},
+  ) {
+    const chat = await chatFor(a, chatId, false);
     const turns = await store.all<Turn>(
       "SELECT * FROM chat_turns WHERE chat_id=? AND status=ANY(?::text[]) ORDER BY position",
       chatId,
       pendingStatuses,
     );
+    const rows = await store.all<{
+      title: string;
+      updated: string;
+      roles: string | null;
+      dependencies: string;
+      message_count: number;
+      position: number | null;
+      payload: Message | null;
+    }>(
+      `SELECT c.title,c.updated,c.dependencies,COALESCE(latest.position+1,0) AS message_count,m.*
+       FROM chats c
+       LEFT JOIN LATERAL (
+         SELECT position FROM chat_messages WHERE chat_id=c.id ORDER BY position DESC LIMIT 1
+       ) latest ON true
+       LEFT JOIN LATERAL (
+         ${
+           window.outline
+             ? "SELECT NULL::integer AS position,NULL::jsonb AS payload,COALESCE(string_agg(role,'' ORDER BY position),'') AS roles FROM chat_messages WHERE chat_id=c.id"
+             : `SELECT position,payload,NULL::text AS roles FROM chat_messages WHERE chat_id=c.id ${window.start !== undefined ? "AND position>=? AND position<?" : window.before !== undefined ? "AND position<?" : ""} ORDER BY position DESC LIMIT ${window.start !== undefined ? 160 : 51}`
+         }
+       ) m ON true
+       WHERE c.id=? AND c.org_id=? AND c.user_id=?
+       ORDER BY m.position DESC`,
+      ...(window.start !== undefined
+        ? [window.start, window.end]
+        : window.before !== undefined
+          ? [window.before]
+          : []),
+      chatId,
+      a.orgId,
+      a.userId,
+    );
+    const saved = rows[0];
+    if (!saved) throw new HttpError(404, "Conversation not found");
     const deps = [
       ...new Set([
-        ...JSON.parse(chat.dependencies),
+        ...JSON.parse(saved.dependencies),
         ...turns.flatMap((t) => [...t.dependencies, ...t.document_ids]),
       ]),
     ];
@@ -124,11 +167,31 @@ export function createChatRuntime(
         messages: [] as Message[],
         turns: [] as ChatTurn[],
         blocked: true,
+        nextCursor: null,
+        messageCount: 0,
+        revision: saved.updated,
+        ...(window.outline ? { roles: "" } : {}),
       };
+    const messages = rows.filter(
+      (row): row is typeof row & { position: number; payload: Message } =>
+        row.position !== null && row.payload !== null,
+    );
+    const page = messages
+      .slice(0, window.start !== undefined ? 160 : 50)
+      .reverse();
     return {
       id: chat.id,
-      title: chat.title,
-      messages: JSON.parse(chat.messages) as Message[],
+      title: saved.title,
+      messages: page.map(({ position, payload }) => ({ ...payload, position })),
+      nextCursor:
+        window.start !== undefined
+          ? page[0]?.position || null
+          : messages.length > 50
+            ? page[0].position
+            : null,
+      messageCount: saved.message_count,
+      revision: saved.updated,
+      ...(window.outline ? { roles: saved.roles ?? "" } : {}),
       blocked: false,
       turns: turns.map((t): ChatTurn => ({
         id: t.id,
@@ -262,12 +325,12 @@ export function createChatRuntime(
     let deps = [...turn.document_ids];
     const check = async () => {
       controller.signal.throwIfAborted();
-      const lease = await store.one<Turn>(
+      const attempt = await store.one<Turn>(
         "SELECT * FROM chat_turns WHERE id=? AND attempt_id=?",
         turn.id,
         turn.attempt_id,
       );
-      if (!lease || !["retrieving", "generating"].includes(lease.status)) {
+      if (!attempt || !["retrieving", "generating"].includes(attempt.status)) {
         controller.abort();
         controller.signal.throwIfAborted();
       }
@@ -276,19 +339,19 @@ export function createChatRuntime(
       await assertReadable(a, [...JSON.parse(chat.dependencies), ...deps]);
       return { a, chat };
     };
-    let heartbeatBusy = false;
-    const heartbeat = setInterval(() => {
-      if (heartbeatBusy) return;
-      heartbeatBusy = true;
+    let checkingAccess = false;
+    const accessCheck = setInterval(() => {
+      if (checkingAccess) return;
+      checkingAccess = true;
       void (async () => {
         await check();
       })()
         .catch((error) => controller.abort(error))
         .finally(() => {
-          heartbeatBusy = false;
+          checkingAccess = false;
         });
     }, 1000);
-    heartbeat.unref();
+    accessCheck.unref();
     try {
       const { a, chat } = await check();
       await validateInput(a, {
@@ -474,7 +537,7 @@ export function createChatRuntime(
         turn.attempt_id,
       );
     } finally {
-      clearInterval(heartbeat);
+      clearInterval(accessCheck);
     }
   }
   async function wake(chatId: string) {
@@ -521,7 +584,7 @@ export function createChatRuntime(
   router.get("/", async (req, res) => {
     const a = await authenticate(req);
     const chats = await store.all<Chat>(
-      "SELECT * FROM chats WHERE org_id=? AND user_id=? ORDER BY updated DESC",
+      "SELECT id,title,updated,dependencies FROM chats WHERE org_id=? AND user_id=? ORDER BY updated DESC",
       a.orgId,
       a.userId,
     );
@@ -556,9 +619,45 @@ export function createChatRuntime(
   });
   router.get("/:id", async (req, res) =>
     res.json(
-      await snapshot(await authenticate(req), uuid.parse(req.params.id)),
+      await snapshot(await authenticate(req), uuid.parse(req.params.id), {
+        before:
+          req.query.before === undefined
+            ? undefined
+            : z.coerce
+                .number()
+                .int()
+                .min(0)
+                .max(2147483647)
+                .parse(req.query.before),
+      }),
     ),
   );
+  router.get("/:id/outline", async (req, res) => {
+    const data = await snapshot(
+      await authenticate(req),
+      uuid.parse(req.params.id),
+      { outline: true },
+    );
+    res.json({
+      id: data.id,
+      roles: data.roles,
+      messageCount: data.messageCount,
+      revision: data.revision,
+      blocked: data.blocked,
+    });
+  });
+  router.get("/:id/history", async (req, res) => {
+    const range = z
+      .object({
+        start: z.coerce.number().int().min(0).max(2147483647),
+        end: z.coerce.number().int().min(1).max(2147483647),
+      })
+      .refine(({ start, end }) => end > start && end - start <= 160)
+      .parse(req.query);
+    res.json(
+      await snapshot(await authenticate(req), uuid.parse(req.params.id), range),
+    );
+  });
   router.delete("/:id", async (req, res) => {
     await store.transaction(async () => {
       const chat = await chatFor(
@@ -845,7 +944,8 @@ export function createChatRuntime(
       false,
     );
 
-    for (;;) {
+    const deadline = Date.now() + 5 * 60_000;
+    while (!res.destroyed && Date.now() < deadline) {
       const turn = await store.one<Turn>(
         "SELECT * FROM chat_turns WHERE id=?",
         turnId,
@@ -870,13 +970,17 @@ export function createChatRuntime(
           turn.error ?? "The answer was stopped.",
         );
       }
-      await delay(25);
+      await delay(250);
     }
+    if (!res.destroyed) res.status(202).json({ id: turnId });
   });
   return {
     router,
     process,
     snapshot,
+    closeStreams() {
+      for (const close of streams) close();
+    },
     async close() {
       closed = true;
       for (const close of streams) close();

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Router } from "express";
 import { HttpError, type Resource, type Store } from "./db";
+import { describeThumbnail } from "./thumbnails";
 
 export function createLinkSharingRouter(store: Store) {
   const router = Router();
@@ -33,7 +34,7 @@ export function createLinkSharingRouter(store: Store) {
     return { resource, rootId: link.resource_id, allowed };
   }
 
-  function describe(resource: Resource, rootId: string, includeParsed = false) {
+  function describe(resource: Resource, rootId: string, includeParsed = false, token?: string) {
     const parsed = resource.parsed ? JSON.parse(resource.parsed) : null;
     return {
       id: resource.id,
@@ -49,6 +50,7 @@ export function createLinkSharingRouter(store: Store) {
       canWrite: false,
       canShare: false,
       pages: parsed?.pages ?? 0,
+      thumbnail: token ? describeThumbnail(resource, `/api/shared/${token}/resources/${resource.id}`) : null,
       ...(includeParsed ? { parsed } : {}),
     };
   }
@@ -66,11 +68,23 @@ export function createLinkSharingRouter(store: Store) {
         resource.id,
         resource.org_id,
       )) {
-        if (await allowed(child.id)) children.push(describe(child, rootId));
+        if (await allowed(child.id)) children.push(describe(child, rootId, false, token));
       }
     }
     await resolve(token, resourceId);
-    res.json({ ...describe(resource, rootId, true), rootId, children });
+    res.json({ ...describe(resource, rootId, true, token), rootId, children });
+  });
+
+  router.get("/:token/resources/:resourceId/thumbnail", async (req, res) => {
+    const token = String(req.params.token), resourceId = String(req.params.resourceId);
+    const { resource } = await resolve(token, resourceId);
+    if (resource.kind !== "document") throw missing();
+    const thumbnail = await store.one<{ body: Buffer; mime: string }>("SELECT body,mime FROM thumbnails WHERE resource_id=?", resource.id);
+    await resolve(token, resourceId);
+    if (!thumbnail || resource.thumbnail_status !== "ready") return res.status(204).end();
+    res.set({ "Content-Type": thumbnail.mime, "Content-Security-Policy": "default-src 'none'; sandbox", "Cache-Control": "private, no-cache", ETag: `"${resource.thumbnail_key}"` });
+    if (req.get("If-None-Match")?.split(",").some((tag) => tag.trim().replace(/^W\//, "") === `"${resource.thumbnail_key}"` || tag.trim() === "*")) return res.status(304).end();
+    res.send(thumbnail.body);
   });
 
   router.get("/:token/resources/:resourceId/content", async (req, res) => {

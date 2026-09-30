@@ -1,19 +1,8 @@
-import { extension, textExtensions } from "../../shared/file-types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { thumbnailUrl } from "../../shared/thumbnails";
 import { FileText } from "./icons";
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useState,
-  useRef,
-} from "react";
 import { FileThumbnail } from "./extend/file-thumbnail";
-const XlsxThumbnails = lazy(() =>
-  import("./xlsx-thumbnail-generator").then((module) => ({
-    default: module.XlsxThumbnailUrlGenerator,
-  })),
-);
+
 export function ResourceThumbnail({
   name,
   mime,
@@ -35,6 +24,12 @@ export function ResourceThumbnail({
   const [visible, setVisible] = useState(
     previewOnly || typeof IntersectionObserver === "undefined",
   );
+  const [preview, setPreview] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [ratio, setRatio] = useState(0.78);
+  const attempts = useRef(0);
+  const retry = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
     if (visible || !host.current) return;
     const observer = new IntersectionObserver(
@@ -49,88 +44,64 @@ export function ResourceThumbnail({
     observer.observe(host.current);
     return () => observer.disconnect();
   }, [visible]);
-  const [preview, setPreview] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [ratio, setRatio] = useState(0.78);
-  const captureSheets = useCallback((urls: string[]) => {
-    setPreview(urls[0] ?? null);
-    setRatio(1.6);
-  }, []);
   useEffect(() => {
-    if (!visible) return;
-    let active = true;
-    setPreview(null);
+    clearTimeout(retry.current);
+    attempts.current = 0;
+    setLoaded(false);
     setFailed(false);
-    setLoading(false);
-    if (
-      mime.startsWith("image/") ||
-      /\.(png|jpe?g|webp|gif|avif|svg)$/i.test(name)
-    )
-      setPreview(src);
-    else if (
-      /\.(pdf|docx|pptx|json|ya?ml)$/i.test(name) ||
-      mime === "application/pdf" ||
-      textExtensions.includes(extension(name))
-    ) {
-      setLoading(true);
-      void import("@/lib/document-thumbnail-utils")
-        .then(({ renderDocumentThumbnail }) =>
-          renderDocumentThumbnail(src, name, 0, 160),
-        )
-        .then((thumbnail) => {
-          if (active) {
-            setPreview(thumbnail?.url ?? null);
-            setRatio(thumbnail?.aspectRatio ?? 0.78);
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          if (active) setLoading(false);
-        });
-    }
-    return () => {
-      active = false;
-    };
-  }, [src, mime, name, visible]);
+    setPreview(visible ? thumbnailUrl(src) : null);
+    return () => clearTimeout(retry.current);
+  }, [src, visible]);
+  const load = useCallback((image: HTMLImageElement) => {
+    setLoaded(true);
+    setFailed(false);
+    setRatio(image.naturalWidth / image.naturalHeight || 0.78);
+  }, []);
+  const fail = useCallback(() => {
+    setFailed(true);
+    if (++attempts.current > 15) return;
+    clearTimeout(retry.current);
+    retry.current = setTimeout(() => {
+      setFailed(false);
+      setPreview(
+        `${thumbnailUrl(src)}?attempt=${Math.floor(Date.now() / 4000)}`,
+      );
+    }, 4000);
+  }, [src]);
   return (
     <span
       data-resource-thumbnail=""
       ref={host}
-      className={previewOnly && (!preview || failed) ? "hidden" : className}
+      className={previewOnly && (!loaded || failed) ? "hidden" : className}
     >
-      {visible && /\.xlsx$/i.test(name) && !preview && (
-        <Suspense>
-          <XlsxThumbnails url={src} fileName={name} onUrls={captureSheets} />
-        </Suspense>
-      )}
       {inline ? (
         preview && !failed ? (
           <img
             src={preview}
             alt=""
+            decoding="async"
             className="block size-full object-cover"
-            onError={() => setFailed(true)}
+            onLoad={(event) => load(event.currentTarget)}
+            onError={fail}
           />
         ) : (
           <FileText className="block size-full text-muted-foreground" />
         )
       ) : (
-        (!previewOnly || (preview && !failed)) && (
-          <FileThumbnail
-            file={{ name, type: mime }}
-            className="w-full"
-            previewAspectRatio={square ? 1 : ratio}
-            previewImageUrl={preview}
-            previewContent={
-              !preview && !loading ? (
-                <FileText className="size-4 text-muted-foreground" />
-              ) : undefined
-            }
-            isLoading={loading}
-            onPreviewError={() => setFailed(true)}
-          />
-        )
+        <FileThumbnail
+          file={{ name, type: mime }}
+          className="w-full"
+          previewAspectRatio={square ? 1 : ratio}
+          previewImageUrl={failed ? null : preview}
+          onPreviewLoad={load}
+          onPreviewError={fail}
+          imageLoading="eager"
+          previewContent={
+            !preview || failed ? (
+              <FileText className="size-4 text-muted-foreground" />
+            ) : undefined
+          }
+        />
       )}
     </span>
   );

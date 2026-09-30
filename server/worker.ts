@@ -3,10 +3,11 @@ import { createStore } from "./db";
 import { createWorkers } from "./workers";
 
 const store = await createStore(resolve(process.env.DATA_DIR ?? ".data"));
-const workers = createWorkers(store, {
-  origin: process.env.APP_ORIGIN ?? "http://localhost:4310",
-});
+let workers: ReturnType<typeof createWorkers>;
 try {
+  workers = createWorkers(store, {
+    origin: process.env.APP_ORIGIN ?? "http://localhost:4310",
+  });
   await workers.start();
   console.log("Background workers are ready");
 } catch (error) {

@@ -6,7 +6,7 @@ import theme from "@shikijs/themes/github-light";
 import {
   prepareCodePreview,
   type CodePreviewLanguage,
-} from "./code-thumbnail-content";
+} from "../../shared/code-thumbnail-content";
 
 const highlighter = createHighlighterCore({
   themes: [theme],

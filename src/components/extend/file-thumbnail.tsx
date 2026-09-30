@@ -14,6 +14,8 @@ export type FileThumbnailProps = {
   isLoading?: boolean;
   hasError?: boolean;
   onPreviewError?: () => void;
+  onPreviewLoad?: (image: HTMLImageElement) => void;
+  imageLoading?: "eager" | "lazy";
 };
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -39,6 +41,8 @@ export function FileThumbnail({
   isLoading = false,
   hasError = false,
   onPreviewError,
+  onPreviewLoad,
+  imageLoading = "lazy",
 }: FileThumbnailProps) {
   const imageRef = React.useRef<HTMLImageElement | null>(null);
   const revealFrameRef = React.useRef<number | null>(null);
@@ -77,6 +81,7 @@ export function FileThumbnail({
       const didLoad = image.naturalWidth > 0 && image.naturalHeight > 0;
       setFailedPreviewImageUrl(didLoad ? null : imageUrl);
       if (didLoad) {
+        onPreviewLoad?.(image);
         revealedPreviewImageUrls.add(imageUrl);
         cancelImageReveal();
         revealFrameRef.current = window.requestAnimationFrame(() => {
@@ -87,7 +92,7 @@ export function FileThumbnail({
         });
       }
     },
-    [cancelImageReveal],
+    [cancelImageReveal, onPreviewLoad],
   );
   React.useEffect(() => {
     cancelImageReveal();
@@ -124,7 +129,7 @@ export function FileThumbnail({
             src={previewImageUrl}
             alt=""
             draggable={false}
-            loading="lazy"
+            loading={imageLoading}
             decoding="async"
             className={cx(
               "absolute inset-0 block size-full object-cover transition-[opacity,filter] duration-[160ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",

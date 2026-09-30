@@ -12,17 +12,25 @@ The singleton policy serializes active jobs for each document or conversation ac
 
 ## Retries and external effects
 
-Transient failures retry with jittered exponential backoff, a five-second initial delay, and a five-minute cap. Permanent validation, access, and provider configuration failures go directly to the dead-letter queue. A dead-letter consumer reconciles domain failures after a crash or exhausted retries. Queue errors and persisted job outputs omit provider bodies, credentials, and email links.
+Transient failures retry with jittered exponential backoff, a five-second initial delay, and a five-minute cap. Permanent validation, access, and provider configuration failures go directly to the dead-letter queue. A dead-letter consumer reconciles domain failures after a crash or exhausted retries. Scheduled cleanup marks unfinished domain records as failed if their jobs were removed or expired while queued; it does not silently restart paid work. Queue errors and persisted job outputs omit provider bodies, credentials, and email links.
 
 Remote parsing checkpoints the confirmed run ID. Pending runs enqueue a deferred poll and release their worker slot, with a thirty-minute overall polling bound. A marker commits before starting a remote parse. If the process loses confirmation after submission, recovery fails closed and asks for an explicit retry instead of automatically submitting another paid run. A confirmed pending run resumes on retry. Provider uploads or requests can still have uncertain external outcomes; PostgreSQL transactions do not make remote effects exactly once.
 
-SMTP delivery retries until the one-hour link deadline. Verified accounts do not receive queued verification mail. Successful email jobs are deleted, and failure copies are purged by the dead-letter consumer; encrypted originals expire after one hour. A stable Message-ID is reused on retries, but SMTP can deliver a duplicate after an ambiguous acceptance. Never claim exactly-once email delivery.
+SMTP delivery has six retries with a one-hour link deadline. Verified accounts do not receive queued verification mail. Successful and obsolete email jobs are deleted, and failure copies are purged by the dead-letter consumer; encrypted originals expire after one hour. A stable Message-ID is reused on retries, but SMTP can deliver a duplicate after an ambiguous acceptance. Never claim exactly-once email delivery.
 
 ## Capacity and operations
 
-Per worker process: indexing 2, filing 3, reviews 1, chat 3, email 2, cleanup 1, and dead-letter reconciliation 1. These are local limits; adding replicas increases total provider traffic. Singleton keys provide entity serialization, not an organization-wide spend limit.
+Per worker process: indexing 2, thumbnails 1, filing 3, reviews 1, chat 3, email 2, cleanup 1, and dead-letter reconciliation 1. These are local limits; adding replicas increases total provider traffic. Singleton keys provide entity serialization, not an organization-wide spend limit.
+
+Thumbnail jobs are admitted in the upload transaction and run independently of indexing. Starting a thumbnail consumer queues existing documents whose thumbnail state is pending. Covers for PDF, DOCX, PPTX, and XLSX render in Chromium's headless shell; images, bounded text previews, and ZIP directory previews use sharp. The worker stores WebP bytes and dimensions in PostgreSQL, with a maximum dimension of 256 pixels and a 128 KiB output limit. Native images are auto-oriented and use only the first frame. Failed generation retains the original document and does not change its indexing state.
+
+One browser is reused within each worker process. Each document gets a fresh browser context, external network and WebSocket requests are blocked, and rendering has a sixty-second timeout. The browser closes after sixty seconds without document rendering. Publication verifies the current job claim and the owner's permission again. Thumbnail endpoints require current document access before returning either image bytes or a conditional 304 response; private caches must revalidate.
+
+Application transactions already serialize under the permission-publication advisory lock. Each process queues those transactions before checking out a connection, so waiting mutations do not occupy every pool slot and starve reads. Pool limits remain small; provider calls do not hold database connections.
 
 LISTEN/NOTIFY wakes consumers after commit; polling remains a recovery mechanism and dispatches deferred jobs. After settlement, consumers wake their queue to drain existing backlogs without waiting for the idle interval. Permission cleanup is scheduled once per minute through pg-boss. pg-boss coordinates supervision and prunes stored jobs; completed document jobs are retained for one day. Its index and vacuum monitoring remain enabled.
+
+Queue monitors run every fifteen seconds and workers refresh thirty-second heartbeats every five seconds. Crash recovery waits for the heartbeat or execution deadline, the next monitor pass, and the configured retry delay; it is not instantaneous. Monitoring and pruning remain coordinated across processes.
 
 Use `pnpm worker` for a production worker. `pnpm dev` embeds consumers. All instances must share the same encryption key and database. Shut down consumers before database pools; allow thirty seconds to drain and a forty-second process cap. The API continues to use a single replica because its general request limits are still in memory.
 

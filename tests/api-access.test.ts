@@ -354,7 +354,7 @@ test("search keeps unauthorized content out of routing and fetches returned pass
     404,
   );
 });
-test("revocation and membership removal during retrieval prevent returning evidence", async () => {
+test("revocation during retrieval and membership removal prevent returning evidence", async () => {
   const created = await key();
   let ran = false;
   onScore = async () => {
@@ -477,19 +477,38 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
     state: "request-state",
   });
   const authorize = await fetch(base + "/api/auth/oauth2/authorize?" + params, {
-    headers: { Cookie: cookie, Accept: "text/html" },
+    headers: { Accept: "text/html" },
     redirect: "manual",
   });
   assert.ok(
     [200, 302].includes(authorize.status),
     await authorize.clone().text(),
   );
-  const consentURL = new URL(
+  const loginURL = new URL(
     authorize.status === 302
       ? authorize.headers.get("location")!
       : (await authorize.json()).url,
     origin,
   );
+  assert.equal(loginURL.pathname, "/oauth/sign-in");
+  const signIn = await session(
+    "/auth/sign-in/email",
+    "POST",
+    {
+      email: "api@local.test",
+      password: "a-secure-password-123!",
+      oauth_query: loginURL.search.slice(1),
+    },
+    "",
+  );
+  assert.equal(signIn.status, 200, await signIn.clone().text());
+  const signedIn = await signIn.json();
+  assert.equal(signedIn.redirect, true);
+  const consentURL = new URL(signedIn.url, origin);
+  cookie = signIn.headers
+    .getSetCookie()
+    .map((value) => value.split(";")[0])
+    .join("; ");
   assert.equal(consentURL.pathname, "/oauth/consent");
   const preview = await session("/oauth/consent-request", "POST", {
     oauthQuery: consentURL.search.slice(1),
@@ -592,5 +611,63 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
       )
     ).status,
     400,
+  );
+  const reconnect = await fetch(
+    base +
+      "/api/auth/oauth2/authorize?" +
+      new URLSearchParams({
+        ...Object.fromEntries(params),
+        scope: "documents:read",
+      }),
+    {
+      headers: { Cookie: cookie, Accept: "text/html" },
+      redirect: "manual",
+    },
+  );
+  const reconnectURL = new URL(
+    reconnect.status === 302
+      ? reconnect.headers.get("location")!
+      : (await reconnect.json()).url,
+    origin,
+  );
+  const consent = await session("/auth/oauth2/consent", "POST", {
+    accept: true,
+    oauth_query: reconnectURL.search.slice(1),
+  });
+  assert.equal(consent.status, 200, await consent.clone().text());
+  const reconnectCode = new URL((await consent.json()).url).searchParams.get(
+    "code",
+  )!;
+  const reconnectToken = await exchange(
+    new URLSearchParams({
+      client_id: registration.client_id,
+      grant_type: "authorization_code",
+      code: reconnectCode,
+      redirect_uri: "http://127.0.0.1:9900/callback",
+      code_verifier: verifier,
+      resource: origin + "/mcp",
+    }),
+  );
+  assert.equal(reconnectToken.status, 200, await reconnectToken.clone().text());
+  const fresh = await reconnectToken.json();
+  const connected = await request("/mcp", fresh.access_token, "POST", {
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/list",
+  });
+  assert.equal(connected.status, 200, await connected.clone().text());
+  assert.deepEqual(
+    (await connected.json()).result.tools.map((tool: any) => tool.name).sort(),
+    ["fetch", "list_organizations"],
+  );
+  assert.equal(
+    (
+      await request("/mcp", refreshed.access_token, "POST", {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/list",
+      })
+    ).status,
+    401,
   );
 });

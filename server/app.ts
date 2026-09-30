@@ -6,6 +6,7 @@ import { createKeyManagement } from "./api-key-management";
 import { apiScopes } from "../shared/api-access";
 import { oauthProviderAuthServerMetadata } from "@better-auth/oauth-provider";
 import { enqueueIndex } from "./indexing-jobs";
+import { describeThumbnail, enqueueThumbnail } from "./thumbnails";
 import { createWorkers } from "./workers";
 import { queues, type QueueName } from "./jobs";
 import { authenticateToken as sessionActor } from "./sessions";
@@ -847,7 +848,7 @@ export async function createApp(options: {
     }),
   );
   async function publicResource(r: Resource, a: Actor) {
-    const { parsed, parse_run, org_id, ...rest } = r;
+    const { parsed, parse_run, org_id, thumbnail_job_id, thumbnail_key, thumbnail_width, thumbnail_height, thumbnail_pages, ...rest } = r;
     const filing =
       r.kind === "document"
         ? await store.one<{
@@ -861,6 +862,7 @@ export async function createApp(options: {
         : undefined;
     return {
       ...rest,
+      thumbnail: describeThumbnail(r),
       filing,
       canWrite: await resourceAccess(store, a, r.id, "write"),
       canShare: await resourceAccess(store, a, r.id, "share"),
@@ -946,6 +948,7 @@ export async function createApp(options: {
           now(),
         );
         await store.run("INSERT INTO blobs VALUES(?,?)", rid, file.buffer);
+        await enqueueThumbnail(store, rid);
         if (supportsIndex(filename))
           await store.run(
             "INSERT INTO document_filing(resource_id,scope_id) VALUES(?,?)",
@@ -968,6 +971,20 @@ export async function createApp(options: {
       ...(await publicResource(r, a)),
       parsed: r.parsed ? JSON.parse(r.parsed) : null,
     });
+  });
+  app.get("/api/documents/:id/thumbnail", async (req, res) => {
+    const a = actor(req);
+    const resource = await requireResource(store, a, id.parse(req.params.id));
+    if (resource.kind !== "document") throw new HttpError(404, "Thumbnail unavailable");
+    const thumbnail = await store.one<{ body: Buffer; mime: string }>("SELECT body,mime FROM thumbnails WHERE resource_id=?", resource.id);
+    if (!thumbnail || resource.thumbnail_status !== "ready") {
+      res.set("Retry-After", "4");
+      return res.status(204).end();
+    }
+    await requireResource(store, a, resource.id);
+    res.set({ "Content-Type": thumbnail.mime, "Content-Disposition": "inline", "Content-Security-Policy": "default-src 'none'; sandbox", "Cache-Control": "private, no-cache", ETag: `"${resource.thumbnail_key}"` });
+    if (req.get("If-None-Match")?.split(",").some((tag) => tag.trim().replace(/^W\//, "") === `"${resource.thumbnail_key}"` || tag.trim() === "*")) return res.status(304).end();
+    res.send(thumbnail.body);
   });
   app.get("/api/documents/:id/content", async (req, res) => {
     const r = await requireResource(store, actor(req), id.parse(req.params.id));
@@ -1386,6 +1403,7 @@ export async function createApp(options: {
     providers,
     workers,
     closeChats: chats.close,
+    closeStreams: chats.closeStreams,
     async close() {
       await workers.close();
       await store.close();

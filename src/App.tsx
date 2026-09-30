@@ -1,8 +1,6 @@
 import { toastManager } from "./components/coss/toast";
 import { notifyUploads } from "./lib/notifications";
 import { FinderDropZone } from "./components/finder-drop-zone";
-import { XlsxThumbnailUrlGenerator } from "./components/xlsx-thumbnail-generator";
-import { renderDocumentThumbnail } from "./lib/document-thumbnail-utils";
 import {
   AlertDialog,
   AlertDialogPopup,
@@ -100,7 +98,6 @@ import {
 } from "@/components/extend/file-system";
 import {
   extension,
-  imageExtensions,
   textExtensions,
 } from "../shared/file-types";
 function FolderForm({
@@ -314,27 +311,27 @@ export default function App() {
           updatedAt: r.created,
           url: `/api/documents/${r.id}/content`,
           previewPageCount:
-            previews[r.id]?.pageCount ??
+            r.thumbnail?.pageCount ?? previews[r.id]?.pageCount ??
             (textExtensions.includes(extension(r.name)) ||
             ["pdf", "docx", "pptx"].includes(extension(r.name))
               ? Math.max(r.pages || 1, 1)
               : undefined),
-          previewImageUrls: previews[r.id]?.urls,
+          previewImageUrls: r.thumbnail ? [r.thumbnail.url, ...(previews[r.id]?.urls?.slice(1) ?? [])] : previews[r.id]?.urls,
           previewAspectRatio:
-            previews[r.id]?.aspectRatio ??
+            (r.thumbnail ? r.thumbnail.width / r.thumbnail.height : undefined) ?? previews[r.id]?.aspectRatio ??
             (extension(r.name) === "pptx"
               ? 16 / 9
               : extension(r.name) === "xlsx"
                 ? 1.6
                 : undefined),
-          previewImageUrl: imageExtensions.includes(extension(r.name))
-            ? `/api/documents/${r.id}/content`
-            : undefined,
+          previewImageUrl: r.thumbnail?.url,
         },
   );
   const loadPreviewImageUrl = useCallback(
     async (file: FileSystemItem, pageIndex: number) => {
       if (file.kind !== "file" || !file.url) return null;
+      if (pageIndex === 0) return file.previewImageUrls?.[0] ?? file.previewImageUrl ?? null;
+      const { renderDocumentThumbnail } = await import("./lib/document-thumbnail-utils");
       const thumbnail = await renderDocumentThumbnail(
         file.url,
         file.path,
@@ -892,26 +889,6 @@ export default function App() {
                   </Button>
                 </div>
               )}
-              {documents
-                .filter(
-                  (r) =>
-                    extension(r.name) === "xlsx" &&
-                    r.parent_id === (directory ?? null) &&
-                    !previews[r.id]?.urls,
-                )
-                .map((r) => (
-                  <XlsxThumbnailUrlGenerator
-                    key={r.id}
-                    url={`/api/documents/${r.id}/content`}
-                    fileName={r.name}
-                    onUrls={(urls, pageCount) =>
-                      setPreviews((current) => ({
-                        ...current,
-                        [r.id]: { urls, pageCount, aspectRatio: 1.6 },
-                      }))
-                    }
-                  />
-                ))}
               <input
                 ref={uploadInput}
                 className="sr-only"

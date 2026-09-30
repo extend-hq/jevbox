@@ -8,18 +8,20 @@ export async function enqueueIndex(
   data = {},
   delay = 0,
 ) {
-  const id = await store.jobs.send(
-    queues.index,
-    { resourceId, ...data },
-    resourceId,
-    delay,
-  );
-  await store.run(
-    "UPDATE resources SET index_job_id=? WHERE id=?",
-    id,
-    resourceId,
-  );
-  return id;
+  return store.transaction(async () => {
+    const id = await store.jobs.send(
+      queues.index,
+      { resourceId, ...data },
+      resourceId,
+      delay,
+    );
+    await store.run(
+      "UPDATE resources SET index_job_id=? WHERE id=?",
+      id,
+      resourceId,
+    );
+    return id;
+  });
 }
 
 export function createIndexHandler(

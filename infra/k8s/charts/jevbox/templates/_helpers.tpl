@@ -15,6 +15,20 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if or (not .Values.image.repository) (not .Values.image.tag) (eq .Values.image.tag "latest") -}}
 {{- fail "Set image.repository and an immutable image.tag" -}}
 {{- end -}}
+{{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.ingressNamespace) (not .Values.networkPolicy.ingressCidrs) -}}
+{{- fail "Set networkPolicy.ingressNamespace or networkPolicy.ingressCidrs" -}}
+{{- end -}}
+{{- if and .Values.ingress.enabled (not .Values.ingress.tlsSecretName) -}}
+{{- if ne .Values.ingress.className "alb" -}}
+{{- fail "Set ingress.tlsSecretName for HTTPS" -}}
+{{- end -}}
+{{- if not (index .Values.ingress.annotations "alb.ingress.kubernetes.io/certificate-arn") -}}
+{{- fail "Set the ALB certificate-arn annotation for HTTPS" -}}
+{{- end -}}
+{{- if ne (index .Values.ingress.annotations "alb.ingress.kubernetes.io/ssl-redirect") "443" -}}
+{{- fail "Set the ALB ssl-redirect annotation to 443" -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "jevbox.spicedbLabels" -}}

@@ -4075,7 +4075,6 @@ function FileSystemPierreTree({
       }
     > = {};
     const symbols: string[] = [MICRO_FILE_SYMBOLS];
-    let thumbnailCount = 0;
     for (const relativePath of relativePaths) {
       const file = index.files.get(`${currentPath}${relativePath}`);
       const coverUrl = file
@@ -4087,13 +4086,12 @@ function FileSystemPierreTree({
       const baseName = file.name.toLowerCase();
       if (byFileName[baseName]) continue;
       byFileName[baseName] = resolveFileIcon("file", file.name);
-      if (!coverUrl || thumbnailCount >= TREE_THUMBNAIL_SPRITE_LIMIT) continue;
+      if (!coverUrl) continue;
       const symbolId = `file-system-thumbnail-${symbols.length}`;
       symbols.push(
         `<symbol id="${symbolId}" viewBox="0 0 16 16"><clipPath id="${symbolId}-clip"><rect width="16" height="16" rx="2.5"/></clipPath><image href="${escapeXmlAttribute(coverUrl)}" width="16" height="16" preserveAspectRatio="xMidYMid slice" clip-path="url(#${symbolId}-clip)"/></symbol>`,
       );
       byFileName[baseName] = { name: symbolId, viewBox: "0 0 16 16" };
-      thumbnailCount += 1;
     }
     return {
       byFileName,

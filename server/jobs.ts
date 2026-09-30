@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import { PgBoss, type Db, type JobWithMetadata, type Queue } from "pg-boss";
 import { HttpError } from "./errors";
 import type { AuthEmail } from "./auth-email";
+import { ZodError } from "zod";
 
 export const queues = {
   index: "document-index",
+  thumbnail: "document-thumbnail",
   filing: "document-filing",
   review: "organization-review",
   chat: "chat-answer",
@@ -33,7 +35,10 @@ export function jobError(error: unknown) {
 export function permanent(error: unknown) {
   return (
     error instanceof PermanentJobError ||
-    (error instanceof HttpError && "retryable" in error && error.retryable === false) ||
+    error instanceof ZodError ||
+    (error instanceof HttpError &&
+      "retryable" in error &&
+      error.retryable === false) ||
     (error instanceof HttpError && error.status < 500 && error.status !== 429)
   );
 }
@@ -43,6 +48,7 @@ export async function createJobs(options: {
   schema: string;
   db: Db;
   transaction: <T>(fn: () => Promise<T>) => Promise<T>;
+  beforeCommit: (check: () => Promise<void>) => void;
   encrypt: (text: string) => string;
 }) {
   const schema =
@@ -57,6 +63,7 @@ export async function createJobs(options: {
     application_name: "jevbox-jobs",
     useListenNotify: true,
     superviseIntervalSeconds: 5,
+    monitorIntervalSeconds: 15,
     persistWarnings: true,
     warningRetentionDays: 7,
   });
@@ -80,6 +87,12 @@ export async function createJobs(options: {
     const configurations: Record<QueueName, Omit<Queue, "name">> = {
       [queues.failed]: { ...defaults, retryLimit: 10, expireInSeconds: 60 },
       [queues.index]: {
+        ...defaults,
+        policy: "singleton",
+        expireInSeconds: 180,
+        deadLetter: queues.failed,
+      },
+      [queues.thumbnail]: {
         ...defaults,
         policy: "singleton",
         expireInSeconds: 180,
@@ -142,10 +155,19 @@ export async function createJobs(options: {
     return options.transaction(async () => {
       job.signal.throwIfAborted();
       const result = await options.db.executeSql(
-        `SELECT id FROM "${schema}".job WHERE name=$1 AND id=$2 AND state='active' AND retry_count=$3 AND started_on + make_interval(secs => expire_seconds) > clock_timestamp() FOR UPDATE`,
+        `SELECT id,started_on + make_interval(secs => expire_seconds) AS deadline FROM "${schema}".job WHERE name=$1 AND id=$2 AND state='active' AND retry_count=$3 AND started_on + make_interval(secs => expire_seconds) > clock_timestamp() FOR UPDATE`,
         [job.name, job.id, job.retryCount],
       );
       if (!result.rows.length) throw new LostJobClaim("Job claim expired");
+      options.beforeCommit(async () => {
+        job.signal.throwIfAborted();
+        const deadline = await options.db.executeSql(
+          "SELECT clock_timestamp() < $1::timestamptz AS valid",
+          [result.rows[0].deadline],
+        );
+        if (!deadline.rows[0].valid)
+          throw new LostJobClaim("Job claim expired");
+      });
       return fn();
     });
   }
@@ -158,6 +180,12 @@ export async function createJobs(options: {
       await guard(job, async () => {
         await fn();
         await boss.complete(job.name, job, undefined, { db: options.db });
+      });
+    },
+    async remove(job: BackgroundJob, fn: () => Promise<void> = async () => {}) {
+      await guard(job, async () => {
+        await fn();
+        await boss.deleteJob(job.name, job, { db: options.db });
       });
     },
     async cancel(name: QueueName, id: string) {

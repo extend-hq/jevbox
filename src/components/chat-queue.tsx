@@ -123,12 +123,8 @@ function QueueRow({
             <p className="chat-queue-content" title={turn.content}>
               {turn.regenerating ? "Regenerate answer" : turn.content}
             </p>
-            {stopped && (
-              <span className="chat-queue-state">
-                {turn.status === "cancelled"
-                  ? "Stopped · queue paused"
-                  : "Failed · queue paused"}
-              </span>
+            {turn.status === "cancelled" && (
+              <span className="chat-queue-state">Stopped · queue paused</span>
             )}
             {turn.error && turn.status === "failed" && (
               <p className="chat-queue-error">{turn.error}</p>

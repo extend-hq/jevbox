@@ -22,5 +22,8 @@ export default defineConfig({
   },
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   server: { allowedHosts: ["localhost", "127.0.0.1"] },
-  build: { chunkSizeWarningLimit: 2000 },
+  build: {
+    chunkSizeWarningLimit: 2000,
+    rollupOptions: { input: ["index.html", "thumbnail-renderer.html"] },
+  },
 });

@@ -425,6 +425,119 @@ test("queued messages survive runtime replacement and an interrupted answer requ
     (s) => s.messages.length === 4,
   );
 });
+test("long histories use bounded recent-first pages and indexed cursors", async () => {
+  const chat = await newChat();
+  const messages = Array.from({ length: 10000 }, (_, position) => ({
+    role: position % 2 ? "assistant" : "user",
+    content: `Message ${position}`,
+  }));
+  await runtime.store.run(
+    "UPDATE chats SET messages=? WHERE id=?",
+    JSON.stringify(messages),
+    chat,
+  );
+  const recent = await state(chat);
+  assert.equal(recent.messageCount, 10000);
+  assert.equal(recent.messages.length, 50);
+  assert.equal(recent.messages[0].position, 9950);
+  assert.equal(recent.messages.at(-1).position, 9999);
+  assert.equal(recent.nextCursor, 9950);
+  const older = (await req(`/chats/${chat}?before=${recent.nextCursor}`)).data;
+  assert.equal(older.messages[0].position, 9900);
+  assert.equal(older.messages.at(-1).position, 9949);
+  assert.equal(older.nextCursor, 9900);
+  const first = (await req(`/chats/${chat}?before=50`)).data;
+  assert.equal(first.messages.length, 50);
+  assert.equal(first.nextCursor, null);
+  assert.equal((await req(`/chats/${chat}?before=invalid`)).status, 400);
+  assert.equal(
+    (await req(`/chats/${chat}?before=50`, "GET", undefined, other)).status,
+    404,
+  );
+  const outline = (await req(`/chats/${chat}/outline`)).data;
+  assert.equal(outline.roles, "ua".repeat(5000));
+  assert.equal(outline.revision, recent.revision);
+  assert.equal(JSON.stringify(outline).includes("Message"), false);
+  const middle = (await req(`/chats/${chat}/history?start=4000&end=4100`)).data;
+  assert.equal(middle.messages.length, 100);
+  assert.equal(middle.messages[0].position, 4000);
+  assert.equal(middle.messages.at(-1).position, 4099);
+  assert.equal(
+    (await req(`/chats/${chat}/history?start=0&end=161`)).status,
+    400,
+  );
+  assert.equal(
+    (await req(`/chats/${chat}/history?start=50&end=10`)).status,
+    400,
+  );
+  assert.equal(
+    (await req(`/chats/${chat}/outline`, "GET", undefined, other)).status,
+    404,
+  );
+  assert.equal(
+    (
+      await req(
+        `/chats/${chat}/history?start=0&end=100`,
+        "GET",
+        undefined,
+        other,
+      )
+    ).status,
+    404,
+  );
+  await runtime.store.all("VACUUM ANALYZE chat_messages");
+  const outlinePlan = await runtime.store.all(
+    "EXPLAIN (ANALYZE, FORMAT JSON) SELECT string_agg(role,'' ORDER BY position) FROM chat_messages WHERE chat_id=?",
+    chat,
+  );
+  const outlineSerialized = JSON.stringify(outlinePlan);
+  assert.ok(outlineSerialized.includes("chat_messages_outline"));
+  assert.ok(outlineSerialized.includes("Index Only Scan"));
+  await runtime.store.run("ANALYZE chat_messages");
+  const plan = await runtime.store.all(
+    "EXPLAIN (ANALYZE, FORMAT JSON) SELECT position,payload FROM chat_messages WHERE chat_id=? AND position<? ORDER BY position DESC LIMIT 51",
+    chat,
+    9950,
+  );
+  const serialized = JSON.stringify(plan);
+  assert.ok(
+    serialized.includes("chat_messages_pkey") ||
+      serialized.includes("chat_messages_outline"),
+  );
+  assert.equal(serialized.includes("Seq Scan"), false);
+  const abort = new AbortController();
+  const stream = await fetch(base + `/api/chats/${chat}/events`, {
+    headers: { Cookie: cookie },
+    signal: abort.signal,
+  });
+  const reader = stream.body!.getReader();
+  try {
+    const frame = new TextDecoder().decode((await reader.read()).value);
+    const snapshot = JSON.parse(frame.split("data: ")[1].split("\n")[0]);
+    assert.equal(snapshot.messages.length, 50);
+    assert.equal(snapshot.nextCursor, 9950);
+    assert.ok(frame.length < JSON.stringify(messages).length / 50);
+  } finally {
+    abort.abort();
+    await reader.cancel().catch(() => {});
+  }
+  const branch = (
+    await req(`/chats/${chat}/branch`, "POST", { messageIndex: 9951 })
+  ).data;
+  assert.equal((await state(branch.id)).messageCount, 9952);
+  assert.equal(
+    (await state(branch.id)).messages.at(-1).content,
+    "Message 9951",
+  );
+  await runtime.store.run(
+    "UPDATE chats SET messages=? WHERE id=?",
+    JSON.stringify(messages.slice(0, 2)),
+    chat,
+  );
+  assert.equal((await state(chat)).messageCount, 2);
+  assert.equal((await state(chat)).nextCursor, null);
+});
+
 test("revoked membership hides live snapshots and prevents the queued successor from running", async () => {
   hold = true;
   const chat = await newChat();

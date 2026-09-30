@@ -218,6 +218,7 @@ test("citation thumbnails stay mounted when preview callbacks and source snapsho
   const image = chip?.querySelector("img");
   assert.ok(chip);
   assert.ok(image);
+  assert.equal(image.getAttribute("src"), "/api/documents/doc/thumbnail");
   for (const title of ["Overview", "Details", "Passage"]) {
     await render(title);
     assert.equal(host.querySelector(".chat-source-chip"), chip);
@@ -407,6 +408,108 @@ test("regenerate menu sends the enabled model chosen from its provider group", a
       model: "model-b",
     });
     assert.match(payload.id, /^[0-9a-f-]{36}$/);
+  } finally {
+    globalThis.EventSource = previousEventSource;
+  }
+});
+
+test("switching chats keeps a bottom composer and blank transcript until the selected history loads", async () => {
+  const previousEventSource = globalThis.EventSource;
+  globalThis.EventSource = class {
+    addEventListener() {}
+    close() {}
+  } as unknown as typeof EventSource;
+  const resolve = new Map<string, (response: Response) => void>();
+  let branchIndex: number | undefined;
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    if (path === "/api/chats")
+      return Response.json([
+        { id: "first", title: "First" },
+        { id: "second", title: "Second" },
+      ]);
+    if (path.endsWith("/branch")) {
+      branchIndex = JSON.parse(String(init?.body)).messageIndex;
+      return Response.json({ id: "branch" });
+    }
+    return new Promise<Response>((done) => resolve.set(path, done));
+  };
+  const render = (chatId: string | null) =>
+    root.render(
+      <ChatView
+        me={{ chatEnabled: true } as Me}
+        chatId={chatId}
+        onTitleChange={() => {}}
+        onChatChange={() => {}}
+        onOpen={() => {}}
+        onSettings={() => {}}
+      />,
+    );
+  try {
+    await act(async () => render("first"));
+    assert.equal(host.querySelector(".chat-transcript"), null);
+    assert.equal(host.querySelector(".chat-message"), null);
+    assert.equal(host.querySelector(".chat-scroll")?.textContent?.trim(), "");
+    assert.equal(host.querySelector(".new-chat"), null);
+    assert.equal(host.querySelector(".chat-empty"), null);
+    assert.ok(host.querySelector(".chat-compose"));
+    await act(async () => render("second"));
+    await act(async () =>
+      resolve.get("/api/chats/first")!(
+        Response.json({
+          id: "first",
+          title: "First",
+          blocked: false,
+          messages: [{ role: "user", content: "Stale question" }],
+        }),
+      ),
+    );
+    assert.equal(host.querySelector(".chat-transcript"), null);
+    assert.equal(host.querySelector(".chat-message"), null);
+    assert.equal(host.textContent?.includes("Stale question"), false);
+    await act(async () =>
+      resolve.get("/api/chats/second")!(
+        Response.json({
+          id: "second",
+          title: "Second",
+          blocked: false,
+          messageCount: 102,
+          nextCursor: 100,
+          messages: [
+            { position: 100, role: "user", content: "Latest question" },
+            { position: 101, role: "assistant", content: "Latest answer" },
+          ],
+        }),
+      ),
+    );
+    assert.ok(host.querySelector(".chat-transcript"));
+    const question = host.querySelector('[data-message-id="100-user"]');
+    assert.ok(question);
+    await click(button("Load earlier messages"));
+    await act(async () =>
+      resolve.get("/api/chats/second?before=100")!(
+        Response.json({
+          id: "second",
+          title: "Second",
+          blocked: false,
+          messageCount: 102,
+          nextCursor: 98,
+          messages: [
+            { position: 98, role: "user", content: "Earlier question" },
+            { position: 99, role: "assistant", content: "Earlier answer" },
+          ],
+        }),
+      ),
+    );
+    assert.equal(host.querySelector('[data-message-id="100-user"]'), question);
+    await click(
+      host.querySelector(
+        '[data-message-id="100-user"] button[aria-label="Branch into a new chat"]',
+      ),
+    );
+    assert.equal(branchIndex, 100);
+    await act(async () => render(null));
+    assert.ok(host.querySelector(".new-chat .chat-empty"));
   } finally {
     globalThis.EventSource = previousEventSource;
   }
@@ -1180,6 +1283,22 @@ test("Finder Grid requests and renders the first PDF thumbnail", async () => {
       '[role="option"] img[src="data:image/png;base64,cHJldmlldw=="]',
     ),
   );
+});
+
+test("Finder uses a stored cover without invoking document thumbnail generation", async () => {
+  const loaded: number[] = [];
+  for (const view of ["icons", "columns"] as const) {
+    await act(async () => root.render(
+      <FileSystem
+        items={[{ kind: "file", path: "Document.pdf", url: "/original", previewImageUrl: "/small-thumbnail.webp", previewPageCount: 2 }]}
+        view={view}
+        loadPreviewImageUrl={async (_file, page) => { loaded.push(page); return null; }}
+      />,
+    ));
+    assert.ok(host.querySelector('img[src="/small-thumbnail.webp"]'));
+    assert.deepEqual(loaded, []);
+    assert.equal(host.querySelector('img[src="/original"]'), null);
+  }
 });
 
 test("Finder Columns loads a row thumbnail and reuses it when switching to Grid", async () => {

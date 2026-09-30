@@ -30,6 +30,10 @@ export async function renderDocumentThumbnail(
       const { renderDocxThumbnailUrl } = await import("./docx-thumbnail-utils");
       return renderDocxThumbnailUrl({ url: absoluteUrl, fileName, pageIndex });
     }
+    case "xlsx": {
+      const { renderXlsxThumbnailUrl } = await import("./xlsx-thumbnail-utils");
+      return renderXlsxThumbnailUrl(absoluteUrl, fileName, pageIndex, width);
+    }
     case "pptx": {
       const { renderPptxThumbnailUrl } = await import("./pptx-thumbnail-utils");
       const result = await renderPptxThumbnailUrl({
