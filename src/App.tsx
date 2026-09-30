@@ -84,6 +84,13 @@ import {
   DropdownMenuSeparator,
 } from "./components/ui/dropdown-menu";
 import { api, type Me, type Resource } from "@/lib/api";
+import {
+  isAuthPage,
+  isOAuthLogin,
+  loginDestination,
+  loginPath,
+  loginRedirect,
+} from "../shared/auth-navigation";
 import { Auth } from "@/components/auth";
 import { Brand, Loading, useAction } from "@/components/common";
 import { Sharing } from "@/components/sharing";
@@ -196,6 +203,10 @@ export default function App() {
   const [chatTitle, setChatTitle] = useState("");
   const navigation = useAppNavigation();
   const libraryNavigation = useLibraryNavigation();
+  const pathname = location.pathname;
+  const search = location.search;
+  const oauthLogin =
+    pathname === loginPath && isOAuthLogin(new URL(location.href));
   const {
     page,
     settingsSection,
@@ -237,15 +248,29 @@ export default function App() {
   const authenticated = useRef(false);
   const action = useAction();
   const loadMe = useCallback(async () => {
+    setLoading(true);
     try {
       setMe(await api<Me>("/me"));
       authenticated.current = true;
     } catch {
+      authenticated.current = false;
       setMe(null);
     } finally {
       setLoading(false);
     }
   }, []);
+  useEffect(() => {
+    if (loading || navigation.route.shareToken) return;
+    if (!me && !isAuthPage(pathname))
+      navigateTo(loginRedirect(new URL(location.href)), { replace: true });
+    else if (
+      me &&
+      pathname === loginPath &&
+      !oauthLogin &&
+      !new URLSearchParams(search).has("invite")
+    )
+      navigateTo(loginDestination(new URL(location.href)), { replace: true });
+  }, [loading, me, pathname, search, oauthLogin, navigation.route.shareToken]);
   const refresh = useCallback(async () => {
     try {
       setResources(await api<Resource[]>("/resources"));
@@ -259,12 +284,13 @@ export default function App() {
   useEffect(() => {
     if (!navigation.route.shareToken) void loadMe();
     const expire = () => {
-      if (authenticated.current) {
-        authenticated.current = false;
-        location.replace("/");
-      }
+      const wasAuthenticated = authenticated.current;
+      authenticated.current = false;
       setMe(null);
       setResources([]);
+      setPreviews({});
+      if (wasAuthenticated)
+        location.replace(loginRedirect(new URL(location.href)));
     };
     window.addEventListener("session-expired", expire);
     return () => window.removeEventListener("session-expired", expire);
@@ -408,8 +434,15 @@ export default function App() {
   if (navigation.route.shareToken)
     return <SharedResourceView route={navigation.route} />;
   if (loading) return <Loading fullScreen />;
-  if (!me || location.pathname === "/reset-password")
+  if (
+    pathname === "/reset-password" ||
+    (pathname === loginPath &&
+      (!me || new URLSearchParams(search).has("invite")))
+  )
     return <Auth onLogin={() => void loadMe()} />;
+  if (!me) return <Loading fullScreen />;
+  if (pathname === loginPath)
+    return oauthLogin ? <OAuthResume /> : <Loading fullScreen />;
   if (location.pathname === "/oauth/consent") return <OAuthConsent me={me} />;
   if (location.pathname === "/oauth/sign-in") return <OAuthResume />;
   const currentDocument = resources.find((r) => r.id === documentId);
@@ -680,7 +713,7 @@ export default function App() {
                   onClick={() =>
                     void action.run(async () => {
                       await api("/auth/logout", { method: "POST" });
-                      location.replace("/");
+                      location.replace(loginPath);
                     })
                   }
                 >

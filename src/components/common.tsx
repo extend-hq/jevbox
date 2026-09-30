@@ -1,7 +1,7 @@
 import { JevboxIcon } from "./jevbox-icon";
 import { ScrollArea } from "@/components/coss/scroll-area";
 import { createContext, useContext, useState, type ReactNode } from "react";
-import { LoadingState } from "./loading-state";
+import { Spinner } from "./coss/spinner";
 import {
   Select,
   SelectTrigger,
@@ -48,13 +48,19 @@ export function Brand({ small = false }: { small?: boolean }) {
 export function Loading({
   label = "Loading",
   fullScreen = false,
+  inline = false,
 }: {
   label?: string;
   fullScreen?: boolean;
+  inline?: boolean;
 }) {
   return (
-    <div className={`loading${fullScreen ? " loading-fullscreen" : ""}`}>
-      <LoadingState label={label} />
+    <div
+      className={`loading${fullScreen ? " loading-fullscreen" : ""}${inline ? " loading-inline" : ""}`}
+      role="status"
+      aria-label={label}
+    >
+      <Spinner aria-hidden="true" />
     </div>
   );
 }

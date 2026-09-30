@@ -4,6 +4,11 @@ import { createExternalAccess } from "./external-access";
 import { createMcpRouter } from "./mcp";
 import { createKeyManagement } from "./api-key-management";
 import { apiScopes } from "../shared/api-access";
+import {
+  isAuthPage,
+  loginPath,
+  loginRedirect,
+} from "../shared/auth-navigation";
 import { oauthProviderAuthServerMetadata } from "@better-auth/oauth-provider";
 import { enqueueIndex } from "./indexing-jobs";
 import { describeThumbnail, enqueueThumbnail } from "./thumbnails";
@@ -182,6 +187,7 @@ export async function createApp(options: {
     if (authenticated) return authenticateToken(authenticated.token);
     const current = await auth.api.getSession({
       headers: fromNodeHeaders(req.headers),
+      query: { disableCookieCache: true },
     });
     if (!current || !current.user.emailVerified)
       throw new HttpError(401, "Please sign in");
@@ -309,7 +315,7 @@ export async function createApp(options: {
         ...(input.invite ? { invite: input.invite } : {}),
       });
       await auth.api.sendVerificationEmail({
-        body: { email: input.email, callbackURL: `/?${callback}` },
+        body: { email: input.email, callbackURL: `${loginPath}?${callback}` },
         headers: fromNodeHeaders(req.headers),
       });
       res.status(201).json({ ok: true, verificationRequired: true });
@@ -510,7 +516,7 @@ export async function createApp(options: {
         status: 201,
         body: {
           id: invite.id,
-          url: `${options.origin}/?invite=${encodeURIComponent(invite.id)}`,
+          url: `${options.origin}${loginPath}?invite=${encodeURIComponent(invite.id)}`,
           expiresInDays: 7,
         },
       };
@@ -1405,6 +1411,37 @@ export async function createApp(options: {
     );
   });
   app.use("/api", (_req, res) => res.status(404).json({ error: "Not found" }));
+  app.use(async (req, res, next) => {
+    if (!["GET", "HEAD"].includes(req.method)) return next();
+    const url = new URL(req.originalUrl, options.origin);
+    if (
+      req.path === "/oauth/sign-in" ||
+      req.path === "/login/" ||
+      (req.path === "/" &&
+        ["invite", "verified", "error"].some((parameter) =>
+          url.searchParams.has(parameter),
+        ))
+    )
+      return res.redirect(302, loginRedirect(url));
+    if (isAuthPage(req.path) || /^\/s\/[^/]+(?:\/|$)/.test(req.path))
+      return next();
+    const pageRequest =
+      req.path === "/" ||
+      /^\/(?:library|documents|chats|search|settings|oauth|loader)(?:\/|$)/.test(
+        req.path,
+      ) ||
+      req.headers["sec-fetch-dest"] === "document" ||
+      req.headers.accept?.includes("text/html");
+    if (!pageRequest) return next();
+    try {
+      await authenticate(req);
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 401)
+        return res.redirect(302, loginRedirect(url));
+      throw error;
+    }
+    next();
+  });
   app.use(
     (error: unknown, _req: Request, res: Response, _next: NextFunction) => {
       if (error instanceof z.ZodError)

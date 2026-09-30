@@ -48,6 +48,9 @@ before(async () => {
     rateLimits: false,
     sendAuthEmail: mailbox.sendAuthEmail,
   });
+  runtime.app.get("/{*path}", (_req, res) =>
+    res.type("html").send("APP_SHELL"),
+  );
   server = runtime.app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const address = server.address();
@@ -69,6 +72,14 @@ test("registration requires mailbox verification before access and cannot bypass
   });
   assert.equal(response.status, 201);
   assert.equal(response.headers.get("set-cookie"), null);
+  const verification = new URL(
+    mailbox.messages.findLast((message) => message.kind === "verification")!
+      .url,
+  );
+  assert.equal(
+    new URL(verification.searchParams.get("callbackURL")!, origin).pathname,
+    "/login",
+  );
   assert.equal((await request("/me")).status, 401);
   const rejected = await request("/auth/sign-in/email", {
     email: "auth@local.test",
@@ -102,6 +113,101 @@ test("registration requires mailbox verification before access and cannot bypass
   );
   assert.match(credential!.password, /^scrypt\$/);
 });
+test("protected pages redirect before the app shell is served, while APIs return unauthorized", async () => {
+  for (const path of [
+    "/",
+    "/library",
+    "/library/documents/document",
+    "/chats/conversation",
+    "/search?q=query",
+    "/settings/api-keys",
+    "/oauth/consent?client_id=client",
+    "/unknown",
+  ]) {
+    const response = await fetch(base + path, {
+      headers: { Accept: "text/html" },
+      redirect: "manual",
+    });
+    assert.equal(response.status, 302, path);
+    assert.equal(
+      new URL(response.headers.get("location")!, base).pathname,
+      "/login",
+    );
+    assert.match(response.headers.get("cache-control")!, /no-store/);
+    assert.doesNotMatch(await response.text(), /APP_SHELL/);
+  }
+  for (const cookie of [owner.replace(/.$/, "x"), "jevbox_session=forged"]) {
+    const response = await fetch(base + "/library", {
+      headers: { Cookie: cookie },
+      redirect: "manual",
+    });
+    assert.equal(response.status, 302);
+  }
+  for (const path of ["/me", "/resources", "/chats"]) {
+    const response = await request(path);
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get("location"), null);
+    assert.doesNotMatch(await response.text(), /APP_SHELL/);
+  }
+  const head = await fetch(base + "/settings/api-keys", {
+    method: "HEAD",
+    redirect: "manual",
+  });
+  assert.equal(head.status, 302);
+});
+
+test("public auth and share pages remain reachable and legacy login links are canonicalized", async () => {
+  for (const path of [
+    "/login",
+    "/reset-password?token=token",
+    "/s/share-token",
+    "/jevbox.svg",
+  ]) {
+    const response = await fetch(base + path, {
+      headers: {
+        Accept: path.endsWith(".svg") ? "image/svg+xml" : "text/html",
+      },
+      redirect: "manual",
+    });
+    assert.equal(response.status, 200, path);
+  }
+  for (const [path, destination] of [
+    ["/?invite=token", "/login?invite=token"],
+    ["/?verified=1", "/login?verified=1"],
+    ["/login/", "/login"],
+    [
+      "/oauth/sign-in?client_id=client&sig=signature",
+      "/login?client_id=client&sig=signature",
+    ],
+  ]) {
+    const response = await fetch(base + path, { redirect: "manual" });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get("location"), destination);
+  }
+});
+
+test("verified sessions can open protected pages and revoked sessions cannot", async () => {
+  const signIn = await request("/auth/sign-in/email", {
+    email: "auth@local.test",
+    password,
+  });
+  assert.equal(signIn.status, 200);
+  const cookie = signIn.headers
+    .getSetCookie()
+    .map((value) => value.split(";")[0])
+    .join("; ");
+  const visit = () =>
+    fetch(base + "/library", {
+      headers: { Cookie: cookie },
+      redirect: "manual",
+    });
+  const allowed = await visit();
+  assert.equal(allowed.status, 200);
+  assert.equal(await allowed.text(), "APP_SHELL");
+  assert.equal((await request("/auth/logout", {}, cookie)).status, 200);
+  assert.equal((await visit()).status, 302);
+});
+
 test("session organization cannot be supplied by the client and forged cookies are rejected", async () => {
   assert.equal(
     (await request("/auth/update-session", { orgId: randomUUID() }, owner))

@@ -213,6 +213,45 @@ test("credential rejection is inline and editing either credential allows a retr
   assert.equal(requests.length, 2);
 });
 
+test("login returns to a protected destination and rejects external destinations", async () => {
+  for (const [destination, expected] of [
+    [
+      "/library/documents/document?node=section",
+      "/library/documents/document?node=section",
+    ],
+    ["https://outside.test/library", "/library"],
+  ]) {
+    history.replaceState(
+      {},
+      "",
+      `/login?${new URLSearchParams({ returnTo: destination })}`,
+    );
+    respond = () => json({});
+    await act(async () =>
+      root.render(<Auth key={destination} onLogin={() => {}} />),
+    );
+    await fill("email", "member@example.test");
+    await fill("password", "password");
+    await submit();
+    assert.equal(location.pathname + location.search, expected);
+  }
+});
+
+test("OAuth sign-in at the canonical login path forwards the signed authorization query", async () => {
+  const query = "client_id=client&sig=signature&exp=123";
+  history.replaceState({}, "", `/login?${query}`);
+  respond = () => json({});
+  await act(async () => root.render(<Auth onLogin={() => {}} />));
+  await fill("email", "member@example.test");
+  await fill("password", "password");
+  await submit();
+  assert.equal(requests[0].body.oauth_query, query);
+  assert.equal(
+    new URL(String(requests[0].body.callbackURL), location.origin).pathname,
+    "/login",
+  );
+});
+
 test("registration validates names and password length without altering credentials", async () => {
   respond = () => json({});
   await act(async () => root.render(<Auth onLogin={() => {}} />));

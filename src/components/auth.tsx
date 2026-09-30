@@ -1,5 +1,10 @@
 import { ShapeTriangle } from "./icons";
 import { navigateTo, paths } from "@/lib/navigation";
+import {
+  isOAuthLogin,
+  loginDestination,
+  loginPath,
+} from "../../shared/auth-navigation";
 import { ScrollArea } from "@/components/coss/scroll-area";
 import { useState } from "react";
 import { ArrowRight } from "@/components/icons";
@@ -17,6 +22,13 @@ import { Brand, useAction } from "./common";
 export function Auth({ onLogin }: { onLogin: () => void }) {
   const invite = new URLSearchParams(location.search).get("invite");
   const query = new URLSearchParams(location.search);
+  const verificationCallback = `${loginPath}?${new URLSearchParams({
+    verified: "1",
+    ...(invite ? { invite } : {}),
+    ...(query.has("returnTo")
+      ? { returnTo: loginDestination(new URL(location.href)) }
+      : {}),
+  })}`;
   type Mode =
     "signin" | "register" | "verification" | "forgot" | "reset" | "sent";
   const [mode, setMode] = useState<Mode>(
@@ -74,15 +86,11 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
                     disabled={action.busy}
                     onClick={() =>
                       void action.run(async () => {
-                        const callback = new URLSearchParams({
-                          verified: "1",
-                          ...(invite ? { invite } : {}),
-                        });
                         await api("/auth/send-verification-email", {
                           method: "POST",
                           body: JSON.stringify({
                             email: address,
-                            callbackURL: `/?${callback}`,
+                            callbackURL: verificationCallback,
                           }),
                         });
                         setNotice("Verification email sent.");
@@ -163,7 +171,7 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
                             newPassword: data.get("password"),
                           }),
                         });
-                        navigateTo("/", { replace: true });
+                        navigateTo(loginPath, { replace: true });
                         setMode("signin");
                         setNotice(
                           "Password reset. Sign in with your new password.",
@@ -180,8 +188,11 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
                           body: JSON.stringify({
                             email,
                             password: data.get("password"),
+                            ...(!register
+                              ? { callbackURL: verificationCallback }
+                              : {}),
                             ...(!register &&
-                            location.pathname === "/oauth/sign-in"
+                            isOAuthLogin(new URL(location.href))
                               ? { oauth_query: location.search.slice(1) }
                               : {}),
                             ...(register
@@ -235,13 +246,13 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
                           method: "POST",
                           body: JSON.stringify({ token: invite }),
                         });
-                      if (
-                        invite ||
-                        location.pathname === "/" ||
-                        location.pathname === "/reset-password"
-                      )
-                        navigateTo(paths.library(), { replace: true });
                       onLogin();
+                      navigateTo(
+                        invite
+                          ? paths.library()
+                          : loginDestination(new URL(location.href)),
+                        { replace: true },
+                      );
                     });
                   }}
                 >

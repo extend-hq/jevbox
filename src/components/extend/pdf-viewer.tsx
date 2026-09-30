@@ -124,6 +124,7 @@ import {
   useElementWidth,
   useInlineThumbnailSidebar,
 } from "@/components/extend/document-viewer-sidebar";
+import { DocumentViewerLoadingShell } from "@/components/document-viewer-loading";
 export type PDFViewerPageOverlayProps = {
   pageNumber: number;
   pageWidth: number;
@@ -457,7 +458,7 @@ function PDFViewerLoadingSkeleton({
   sidebarInline: boolean;
 }) {
   return (
-    <div className="absolute inset-0 z-20 flex bg-muted/30">
+    <div className="absolute inset-0 z-20 flex bg-muted/30" aria-busy="true">
       {sidebarOpen ? (
         <DocumentViewerSidebarSkeleton
           className={THUMBNAIL_SIDEBAR_WIDTH_CLASS}
@@ -495,6 +496,13 @@ function PDFViewerFallbackShell({
   toolbarActions?: React.ReactNode;
   onUploadFile?: (file: File) => void;
 }) {
+  const navigation = useDocumentNavigation();
+  if (state === "loading" && navigation)
+    return (
+      <div data-slot="pdf-viewer" className={cn("h-full min-h-0", className)}>
+        <DocumentViewerLoadingShell extension="pdf" showToolbar={showToolbar} />
+      </div>
+    );
   return (
     <div
       data-slot="pdf-viewer"
@@ -2459,7 +2467,7 @@ function PDFViewerInner({
         ref={viewerShellRef}
         className="relative flex min-h-0 flex-1 overflow-hidden bg-muted/30"
       >
-        {isLoading ? (
+        {isLoading && !navigation ? (
           <PDFViewerLoadingSkeleton
             sidebarInline={sidebarInline}
             sidebarOpen={sidebarOpen}
@@ -2469,11 +2477,18 @@ function PDFViewerInner({
           <DocumentViewerThumbnailSidebar
             closedInlineClassName={THUMBNAIL_SIDEBAR_CLOSED_CLASS}
             inline={sidebarInline}
-            open={thumbnailSidebarVisible}
+            open={navigation ? sidebarOpen : thumbnailSidebarVisible}
             onOpenChange={setSidebarOpen}
             widthClassName={THUMBNAIL_SIDEBAR_WIDTH_CLASS}
           >
-            {thumbnailSidebarVisible ? (
+            {isLoading && navigation ? (
+              <div className="p-4" aria-busy="true">
+                <div
+                  className="mx-auto h-28 w-20 animate-pulse rounded-md bg-muted motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+              </div>
+            ) : thumbnailSidebarVisible ? (
               <PDFViewerThumbnails
                 basePageRotations={basePageRotations}
                 documentId={documentId}
@@ -2490,6 +2505,12 @@ function PDFViewerInner({
             documentId={documentId}
             className="relative h-full max-h-full min-h-0 min-w-0 flex-1"
           >
+            {isLoading && navigation ? (
+              <PDFViewerLoadingSkeleton
+                sidebarInline={false}
+                sidebarOpen={false}
+              />
+            ) : null}
             <PDFViewerViewportBridge viewportElementRef={viewportElementRef} />
             <PDFViewerSelectionCopyShortcut documentId={documentId} />
             <PDFViewerSelectionReleaseGuard documentId={documentId} />

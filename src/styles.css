@@ -141,6 +141,10 @@ label textarea {
 .loading-fullscreen {
   position: fixed;
 }
+.loading-inline {
+  position: static;
+  padding: 24px 0;
+}
 /* One shared 2.8s timeline. Every element starts and ends on the JevboxIcon
    frame, so the loop is seamless and rests on the logo. */
 .box-loader {
@@ -1170,6 +1174,306 @@ label textarea {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.mcp-guides {
+  margin-top: 32px;
+  min-width: 0;
+}
+.mcp-guides-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.mcp-guides-heading h3,
+.mcp-guide-intro h3 {
+  font-size: var(--type-body);
+  font-weight: 600;
+  letter-spacing: var(--tracking-heading);
+}
+.mcp-guides-heading > span {
+  color: var(--muted-foreground);
+  font-size: var(--type-caption);
+}
+.mcp-guide-tabs {
+  gap: 0;
+}
+.mcp-guide-tab-scroll {
+  height: auto;
+  border-bottom: var(--hairline) solid var(--border);
+}
+.mcp-guide-tab-list {
+  width: max-content;
+  min-width: 100%;
+  gap: 4px;
+}
+.mcp-guide-tab-list [data-slot="tabs-tab"] {
+  gap: 8px;
+  padding-inline: 13px;
+}
+.mcp-guide-panel {
+  min-width: 0;
+  padding-top: 25px;
+}
+.mcp-guide-intro p {
+  margin-top: 6px;
+  color: var(--muted-foreground);
+  font-size: var(--type-ui);
+  line-height: 1.6;
+}
+.mcp-guide-note {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--muted);
+  font-size: var(--type-ui);
+  line-height: 1.6;
+}
+.mcp-guide-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 30px;
+  margin-top: 24px;
+}
+.mcp-guide-steps {
+  list-style: none;
+  display: grid;
+  gap: 23px;
+  margin: 0;
+  padding: 0;
+}
+.mcp-guide-steps li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 12px;
+}
+.mcp-guide-step-number {
+  color: var(--muted-foreground);
+  font-size: var(--type-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: 21px;
+}
+.mcp-guide-steps h4 {
+  font-size: var(--type-ui);
+  font-weight: 600;
+  line-height: 21px;
+}
+.mcp-guide-steps p {
+  margin-top: 5px;
+  font-size: var(--type-ui);
+  line-height: 1.65;
+  color: var(--muted-foreground);
+}
+.mcp-guide-steps strong {
+  color: var(--foreground);
+  font-weight: 500;
+}
+.mcp-guide-steps code {
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+.mcp-guide-screenshot,
+.mcp-preview {
+  min-width: 0;
+  margin: 0;
+}
+.mcp-guide-screenshot > button {
+  display: block;
+  width: 100%;
+  position: relative;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--muted);
+  padding: 0;
+}
+.mcp-guide-screenshot img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.mcp-screenshot-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  padding: 4px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--popover);
+  color: var(--foreground);
+  font-size: 11px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 12%);
+}
+.mcp-guide-screenshot figcaption,
+.mcp-preview figcaption {
+  margin-top: 10px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.mcp-guide-screenshot figcaption a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.mcp-preview-window {
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--popover);
+  overflow: hidden;
+}
+.mcp-preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: var(--hairline) solid var(--border);
+  background: var(--muted);
+  padding: 12px 15px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.mcp-preview-form {
+  padding: 18px;
+}
+.mcp-preview-form h4 {
+  margin: 0 0 17px;
+  font-size: var(--type-ui);
+  font-weight: 600;
+}
+.mcp-preview-form dl {
+  display: grid;
+  gap: 13px;
+  margin: 0;
+  font-size: 11px;
+}
+.mcp-preview-form dt {
+  margin-bottom: 5px;
+  color: var(--muted-foreground);
+}
+.mcp-preview-form dd {
+  border: var(--hairline) solid var(--input);
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin: 0;
+  background: var(--background);
+  overflow-wrap: anywhere;
+}
+.mcp-preview-url {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.mcp-preview-auth {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 15px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.mcp-preview-save {
+  display: block;
+  width: fit-content;
+  margin: 17px 0 0 auto;
+  border-radius: 5px;
+  background: var(--foreground);
+  color: var(--background);
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.mcp-guide-code {
+  margin-top: 26px;
+  padding: 0 16px 15px;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--muted);
+  min-width: 0;
+}
+.mcp-guide-code-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 45px;
+  border-bottom: var(--hairline) solid var(--border);
+  font-size: var(--type-caption);
+  color: var(--muted-foreground);
+}
+.mcp-guide-code pre {
+  margin: 14px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption);
+  line-height: 1.75;
+}
+.mcp-guide-code p {
+  color: var(--muted-foreground);
+  font-size: var(--type-caption);
+  line-height: 1.6;
+}
+.mcp-guide-code > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 8px;
+  font-size: var(--type-caption);
+}
+.mcp-guide-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 22px;
+  color: var(--muted-foreground);
+  font-size: var(--type-caption);
+}
+.mcp-guide-footer span,
+.mcp-guide-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.mcp-guide-footer a {
+  color: var(--foreground);
+}
+.mcp-guide-help {
+  margin-top: 23px;
+  padding-top: 18px;
+  border-top: var(--hairline) solid var(--border);
+  font-size: var(--type-caption);
+  color: var(--muted-foreground);
+}
+.mcp-guide-help summary {
+  width: fit-content;
+  color: var(--foreground);
+}
+.mcp-guide-help p {
+  margin-top: 12px;
+  line-height: 1.65;
+}
+.mcp-screenshot-dialog img {
+  display: block;
+  max-width: 100%;
+  max-height: 65vh;
+  width: auto;
+  height: auto;
+  margin-inline: auto;
+  border-radius: var(--radius-md);
+}
+@media (max-width: 800px) {
+  .mcp-guide-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 25px;
+  }
+  .mcp-guide-screenshot,
+  .mcp-preview {
+    max-width: 440px;
+  }
 }
 @media (max-width: 600px) {
   .api-key-row {

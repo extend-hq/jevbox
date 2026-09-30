@@ -63,7 +63,11 @@ import {
   DocumentViewerInspectorToggle,
 } from "./extend/document-viewer-sidebar";
 import { JsonCodeViewer } from "./json-code-viewer";
-import { DocumentViewerLoadingShell } from "./document-viewer-loading";
+import {
+  DocumentDetailsSkeleton,
+  DocumentIndexSkeleton,
+  DocumentViewerLoadingShell,
+} from "./document-viewer-loading";
 import type { PDFViewerHandle } from "@/components/extend/pdf-viewer";
 const OtherViewer = lazy(() =>
   import("./other-viewer").then((m) => ({ default: m.OtherViewer })),
@@ -175,6 +179,8 @@ export function DocumentView({
   const [doc, setDoc] = useState<Resource | null>(() =>
     initialResource?.id === documentId ? initialResource : null,
   );
+  const [loadedDocumentId, setLoadedDocumentId] = useState<string>();
+  const detailsLoading = loadedDocumentId !== documentId && !doc?.parsed;
   const filingNote = filingNotes[doc?.filing?.reason ?? ""];
   const selected = initialNode ?? "";
   const tab = ["index", "links"].includes(initialTab) ? initialTab : "parsed";
@@ -253,7 +259,10 @@ export function DocumentView({
             ? `/shared/${sharedToken}/resources/${documentId}`
             : `/resources/${documentId}`,
         );
-        if (!stopped) setDoc(value);
+        if (!stopped) {
+          setDoc(value);
+          setLoadedDocumentId(documentId);
+        }
       } catch (e) {
         if (!stopped) {
           setDoc(null);
@@ -372,12 +381,7 @@ export function DocumentView({
             <DocumentNavigationContext.Provider
               value={{
                 userId,
-                index: (
-                  <div className="space-y-3 p-4" aria-hidden="true">
-                    <div className="h-3 w-3/4 rounded bg-muted" />
-                    <div className="h-3 w-1/2 rounded bg-muted" />
-                  </div>
-                ),
+                index: <DocumentIndexSkeleton />,
                 initiallyOpen: true,
                 navigationOpen,
                 onNavigationOpenChange: setNavigationOpen,
@@ -429,8 +433,8 @@ export function DocumentView({
                         </TabsTab>
                       </TabsList>
                     </div>
-                    <div className="relative min-h-0 flex-1">
-                      <Loading label="Loading document details" />
+                    <div className="relative min-h-0 flex-1 overflow-hidden p-4">
+                      <DocumentDetailsSkeleton />
                     </div>
                   </Tabs>
                 </aside>
@@ -453,6 +457,7 @@ export function DocumentView({
     : `/api/documents/${doc.id}/content`;
   const ext = doc.name.split(".").pop()?.toLowerCase();
   const indexIssue = doc.status === "failed" || doc.status === "awaiting_key";
+  const indexing = doc.status === "queued" || doc.status === "processing";
   const blocks = documentBlocks(doc.parsed);
   const selectedBlocks = focusBlockIds?.length
     ? blocks.filter((block) => focusBlockIds.includes(block.id))
@@ -521,7 +526,9 @@ export function DocumentView({
   ) : (
     <Loading label="Waiting for the document index" />
   );
-  const indexContent = nodes.length ? (
+  const indexContent = detailsLoading ? (
+    <DocumentIndexSkeleton />
+  ) : nodes.length ? (
     <nav className="viewer-index" aria-label="Document index">
       <DocumentIndexTree
         nodes={doc.parsed?.nodes ?? []}
@@ -533,8 +540,12 @@ export function DocumentView({
     <div className="p-4">
       {doc.status === "stored" ? (
         <p className="muted text-sm">No index is available for this format.</p>
-      ) : (
+      ) : indexing || indexIssue ? (
         indexingNotice
+      ) : (
+        <p className="muted text-sm">
+          No sections were found in this document.
+        </p>
       )}
     </div>
   );
@@ -1021,7 +1032,10 @@ export function DocumentView({
                   </TabsTab>
                   <TabsTab value="links">
                     <Link2 size={14} />
-                    Links <span className="count">{links.length}</span>
+                    Links{" "}
+                    <span className="count">
+                      {detailsLoading ? "…" : links.length}
+                    </span>
                   </TabsTab>
                 </TabsList>
               </div>
@@ -1113,7 +1127,9 @@ export function DocumentView({
                           </div>
                         )}
                       {node && indexIssue && indexingNotice}
-                      {node ? (
+                      {detailsLoading ? (
+                        <DocumentDetailsSkeleton />
+                      ) : node ? (
                         <>
                           <div className="node-breadcrumb">
                             <IndexTreeIcon size={14} /> Document <span>/</span>{" "}
@@ -1252,8 +1268,12 @@ export function DocumentView({
                           This format is stored for viewing and download.
                           Content indexing is unavailable.
                         </div>
-                      ) : (
+                      ) : indexing || indexIssue ? (
                         <div className="index-waiting">{indexingNotice}</div>
+                      ) : (
+                        <div className="empty-inline">
+                          No sections were found in this document.
+                        </div>
                       )}
                     </article>
                   </ScrollArea>
@@ -1279,7 +1299,9 @@ export function DocumentView({
                     <JsonCodeViewer value={doc.parsed} />
                   ) : (
                     <ScrollArea className="parsed-block-scroll" scrollFade>
-                      {blocks.length ? (
+                      {detailsLoading ? (
+                        <DocumentDetailsSkeleton />
+                      ) : blocks.length ? (
                         <>
                           {!blocks.some((block) => blockHighlightArea(block)) &&
                             doc.parsed?.source === "extend" &&
@@ -1314,11 +1336,15 @@ export function DocumentView({
                             onSelect={selectBlock}
                           />
                         </>
+                      ) : indexIssue ? (
+                        indexingNotice
                       ) : (
                         <div className="empty-inline">
                           {doc.status === "stored"
                             ? "Parsed output is unavailable for this format."
-                            : "Parsed content will appear here when indexing is complete."}
+                            : indexing
+                              ? "Parsed content will appear here when indexing is complete."
+                              : "No parsed content is available."}
                         </div>
                       )}
                     </ScrollArea>
@@ -1333,7 +1359,9 @@ export function DocumentView({
                       References extracted from the source, with the section
                       they belong to.
                     </p>
-                    {links.length ? (
+                    {detailsLoading ? (
+                      <DocumentDetailsSkeleton />
+                    ) : links.length ? (
                       links.map((l, i) => (
                         <div className="link-row" key={i}>
                           <Link2 size={19} />

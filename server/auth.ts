@@ -163,7 +163,7 @@ export function createAuthentication(
             kind: "invitation",
             invitationId: id,
             organizationName: organization.name,
-            url: `${options.origin}/?invite=${encodeURIComponent(id)}`,
+            url: `${options.origin}/login?invite=${encodeURIComponent(id)}`,
           }),
         organizationHooks: {
           beforeUpdateMemberRole: async ({ member, newRole }) => {
@@ -237,7 +237,7 @@ export function createAuthentication(
       cimd({ fetchClientMetadataResource, metadataProfile: "mcp-2026-07-28" }),
       mcp({
         resource: `${options.origin}/mcp`,
-        loginPage: "/oauth/sign-in",
+        loginPage: "/login",
         consentPage: "/oauth/consent",
         scopes: [...apiScopes, "offline_access"],
         grantTypes: ["authorization_code", "refresh_token"],

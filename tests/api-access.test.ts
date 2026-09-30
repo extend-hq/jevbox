@@ -527,7 +527,7 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
       : (await authorize.json()).url,
     origin,
   );
-  assert.equal(loginURL.pathname, "/oauth/sign-in");
+  assert.equal(loginURL.pathname, "/login");
   const signIn = await session(
     "/auth/sign-in/email",
     "POST",

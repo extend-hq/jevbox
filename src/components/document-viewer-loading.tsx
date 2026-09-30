@@ -11,6 +11,51 @@ import {
   useInlineThumbnailSidebar,
 } from "./extend/document-viewer-sidebar";
 
+export function DocumentIndexSkeleton() {
+  return (
+    <div className="space-y-4 p-4" role="status" aria-busy="true">
+      <span className="sr-only">Loading document index</span>
+      <div
+        className="space-y-4 animate-pulse motion-reduce:animate-none"
+        aria-hidden="true"
+      >
+        {Array.from({ length: 6 }, (_, index) => (
+          <div key={index} className="flex items-center gap-2">
+            <div className="size-3 shrink-0 rounded bg-muted" />
+            <div
+              className={`h-3 rounded bg-muted ${index % 2 ? "w-1/2" : "w-3/4"}`}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function DocumentDetailsSkeleton() {
+  return (
+    <div role="status" aria-busy="true">
+      <span className="sr-only">Loading document details</span>
+      <div
+        className="space-y-3 animate-pulse motion-reduce:animate-none"
+        aria-hidden="true"
+      >
+        {Array.from({ length: 4 }, (_, index) => (
+          <div key={index} className="space-y-3 rounded-lg border p-3">
+            <div className="flex items-center justify-between">
+              <div className="h-5 w-20 rounded bg-muted" />
+              <div className="h-4 w-8 rounded bg-muted" />
+            </div>
+            <div className="h-3 rounded bg-muted" />
+            <div className="h-3 w-5/6 rounded bg-muted" />
+            <div className="h-3 w-2/3 rounded bg-muted" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function DocumentViewerLoadingShell({
   extension,
   label = "Loading viewer",

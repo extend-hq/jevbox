@@ -22,6 +22,7 @@ import {
 } from "./coss/dialog";
 import { Copy, Plus, UserKey, Code, PlugFilled } from "./icons";
 import { Choice, Loading, useAction } from "./common";
+import { McpConnectionGuide } from "./mcp-connection-guide";
 
 export function ApiKeysView({ me }: { me: Me }) {
   const [keys, setKeys] = useState<ApiKeyInfo[] | null>(null);
@@ -70,7 +71,7 @@ export function ApiKeysView({ me }: { me: Me }) {
       <section aria-label="Your API keys" className="settings-section">
         {!keys ? (
           action.error ? null : (
-            <Loading />
+            <Loading inline />
           )
         ) : !keys.length ? (
           <div className="empty-inline">
@@ -148,6 +149,10 @@ export function ApiKeysView({ me }: { me: Me }) {
             </Button>
           </div>
         ))}
+        <McpConnectionGuide
+          origin={location.origin}
+          onCopy={(value) => void copy(value)}
+        />
         {form.error && !open && (
           <p className="error" role="alert">
             {form.error}
