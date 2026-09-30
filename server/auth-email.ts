@@ -3,7 +3,9 @@ import nodemailer from "nodemailer";
 export type AuthEmail = {
   id?: string;
   to: string;
-  kind: "verification" | "password-reset";
+  kind: "verification" | "password-reset" | "invitation";
+  invitationId?: string;
+  organizationName?: string;
   url: string;
 };
 export type SendAuthEmail = (message: AuthEmail) => Promise<void>;
@@ -39,17 +41,21 @@ export function createAuthEmailSender(localDevelopment = false): SendAuthEmail {
     greetingTimeout: 10000,
     socketTimeout: 15000,
   });
-  return async ({ to, kind, url, id }) => {
+  return async ({ to, kind, url, id, organizationName }) => {
     await transport.sendMail({
       from,
       to,
       ...(id ? { messageId: `<${id}@jevbox.auth>` } : {}),
       subject:
-        kind === "verification"
+        kind === "invitation"
+          ? "You are invited to Jevbox"
+          : kind === "verification"
           ? "Verify your email address"
           : "Reset your password",
       text:
-        kind === "verification"
+        kind === "invitation"
+          ? `Join ${organizationName ?? "your organization"} on Jevbox:\n\n${url}\n\nSign in with this email address to accept. This invitation expires in seven days.`
+          : kind === "verification"
           ? `Verify your email address to sign in to Jevbox:\n\n${url}\n\nThis link expires in one hour.`
           : `Reset your Jevbox password:\n\n${url}\n\nThis link expires in one hour. If you did not request it, you can ignore this email.`,
     });

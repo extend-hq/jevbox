@@ -418,7 +418,7 @@ test("migration preserves user IDs and passwords, requires verification, and inv
     oldHash,
   ]);
   await pool.query("INSERT INTO orgs(id,name) VALUES($1,'Workspace')", [org]);
-  await pool.query("INSERT INTO members VALUES($1,$2,'admin')", [org, id]);
+  await pool.query("INSERT INTO members(org_id,user_id,role) VALUES($1,$2,'admin')", [org, id]);
   await pool.query("INSERT INTO sessions VALUES('legacy',$1,$2,$3)", [
     id,
     org,

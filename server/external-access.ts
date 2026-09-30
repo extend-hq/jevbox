@@ -1,5 +1,5 @@
 import { Router, type Request } from "express";
-import { createLocalJWKSet, jwtVerify } from "jose";
+import { createLocalJWKSet, jwtVerify, type JWTPayload } from "jose";
 import { z } from "zod";
 import { apiScopes, type ApiScope } from "../shared/api-access";
 import { createApiKeys } from "./api-keys";
@@ -51,7 +51,7 @@ export function createExternalAccess(
   consume: ReturnType<typeof createAuthentication>["consume"],
   rateLimits = true,
 ) {
-  const keys = createApiKeys(store);
+  const keys = createApiKeys(store, auth);
   async function authenticate(
     req: Request,
     audience: "/mcp" | "/api/v1",
@@ -76,8 +76,12 @@ export function createExternalAccess(
     } catch {
       throw new HttpError(401, "Invalid or expired access token");
     }
+    if (payload.cnf) throw new HttpError(401, "Sender-constrained token requires MCP authentication");
+    return principalFromClaims(payload, audience);
+  }
+  async function principalFromClaims(payload: JWTPayload, audience: "/mcp" | "/api/v1"): Promise<Principal> {
     if (
-      payload.cnf ||
+      typeof payload.exp !== "number" || payload.exp <= Date.now() / 1000 ||
       typeof payload.sub !== "string" ||
       typeof payload.azp !== "string" ||
       typeof payload.scope !== "string" ||

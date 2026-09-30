@@ -147,8 +147,9 @@ export function createWorkers(
         message.to,
       );
       if (
-        !recipient ||
-        (message.kind === "verification" && recipient.email_verified)
+        (message.kind === "invitation"
+          ? !await store.one("SELECT id FROM invites WHERE id=? AND email=? AND status='pending' AND expires_at>now()", message.invitationId, message.to)
+          : !recipient || (message.kind === "verification" && recipient.email_verified))
       ) {
         await store.jobs.remove(job);
         return;

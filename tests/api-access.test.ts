@@ -145,7 +145,7 @@ before(async () => {
       [foreignOrgId, otherId, "admin"],
     ])
       await runtime.store.run(
-        "INSERT INTO members VALUES(?,?,?)",
+        "INSERT INTO members(org_id,user_id,role) VALUES(?,?,?)",
         org,
         user,
         role,
@@ -392,7 +392,7 @@ test("revocation during retrieval and membership removal prevent returning evide
     404,
   );
   await runtime.store.run(
-    "INSERT INTO members VALUES(?,?,'admin')",
+    "INSERT INTO members(org_id,user_id,role) VALUES(?,?,'admin')",
     secondOrgId,
     userId,
   );

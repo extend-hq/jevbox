@@ -110,7 +110,7 @@ before(async () => {
         JSON.stringify({ extendKey: "test", organization: { enabled: false } }),
       ),
     );
-    await store.run("INSERT INTO members VALUES(?,?,'admin')", org, user);
+    await store.run("INSERT INTO members(org_id,user_id,role) VALUES(?,?,'admin')", org, user);
   });
   const sendAuthEmail = async (message: { id?: string }) => {
     emailAttempts++;
@@ -494,7 +494,7 @@ test("revoked ownership access prevents provider submission", async () => {
   assert.equal(submits, 0);
   assert.equal(polls, 0);
   await workers.stop([queues.index]);
-  await store.run("INSERT INTO members VALUES(?,?,'admin')", org, user);
+  await store.run("INSERT INTO members(org_id,user_id,role) VALUES(?,?,'admin')", org, user);
 });
 
 test("encrypted email delivery survives retries, keeps its identity, and purges success", async () => {

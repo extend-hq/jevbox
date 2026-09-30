@@ -1,5 +1,7 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { requireMcpAuth } from "@better-auth/mcp";
+import { toNodeHandler } from "better-auth/node";
+import type { createAuthentication } from "./auth";
 import { Router } from "express";
 import { z } from "zod";
 import { HttpError } from "./db";
@@ -11,12 +13,15 @@ import {
 
 export function createMcpRouter(
   access: ReturnType<typeof createExternalAccess>,
+  auth: ReturnType<typeof createAuthentication>["auth"],
+  origin: string,
 ) {
   const router = Router();
   router.post("/", async (req, res, next) => {
     try {
-      const principal = await access.authenticate(req, "/mcp");
-      const revalidate = () => access.authenticate(req, "/mcp");
+      const handler = toNodeHandler(async (request) => {
+        const serve = async (principal: Awaited<ReturnType<typeof access.authenticate>>, revalidate: () => Promise<typeof principal>) => {
+          const protocol = createMcpHandler(() => {
       const server = new McpServer({ name: "jevbox", version: "1.0.0" });
       const annotations = {
         readOnlyHint: true,
@@ -49,7 +54,7 @@ export function createMcpRouter(
         {
           description:
             "List your accessible organizations. Use an organization ID with search and fetch.",
-          inputSchema: {},
+          inputSchema: z.object({}),
           annotations,
         },
         () => respond(async () => access.organizations(await revalidate())),
@@ -60,7 +65,7 @@ export function createMcpRouter(
           {
             description:
               "Search the accessible document hierarchy for relevant source passages. Returns document and passage IDs, citations, and URLs. Results are bounded; empty results do not prove a topic is absent.",
-            inputSchema: searchInput.shape,
+            inputSchema: searchInput,
             annotations,
           },
           (input, extra) =>
@@ -74,20 +79,25 @@ export function createMcpRouter(
           {
             description:
               "Read a document, section, or search result ID. Returns source text, page references, and the document tree. Follow nextOffset to read more text.",
-            inputSchema: fetchInput.shape,
+            inputSchema: fetchInput,
             annotations,
           },
           (input) => respond(() => access.read(principal, input, revalidate)),
         );
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-        enableJsonResponse: true,
+          return server;
+          }, { responseMode: "json", legacy: "stateless" });
+          return protocol.fetch(request);
+        };
+        if (req.headers.authorization?.startsWith("Bearer jev_key_")) {
+          const principal = await access.authenticate(req, "/mcp");
+          return serve(principal, () => access.authenticate(req, "/mcp"));
+        }
+        return requireMcpAuth(auth, async (_request, claims) => {
+          const principal = await access.principalFromClaims(claims, "/mcp");
+          return serve(principal, () => access.principalFromClaims(claims, "/mcp"));
+        }, { resource: `${origin}/mcp`, challengeScopes: ["documents:read", "search:read"] })(request);
       });
-      res.on("close", () => {
-        void server.close();
-      });
-      await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      await handler(req, res);
     } catch (error) {
       if (error instanceof HttpError && [401, 403].includes(error.status))
         res.set("WWW-Authenticate", access.challenge(req, error));

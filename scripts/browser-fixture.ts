@@ -144,9 +144,9 @@ await runtime.store.run(
     }),
   ),
 );
-await runtime.store.run("INSERT INTO members VALUES(?,?,'admin')", org, user);
+await runtime.store.run("INSERT INTO members(org_id,user_id,role) VALUES(?,?,'admin')", org, user);
 await runtime.store.run(
-  "INSERT INTO members VALUES(?,?,'member')",
+  "INSERT INTO members(org_id,user_id,role) VALUES(?,?,'member')",
   org,
   colleague,
 );

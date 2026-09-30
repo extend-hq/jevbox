@@ -21,6 +21,7 @@ import express, {
 } from "express";
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
 import { createAuthentication, registrationContext } from "./auth";
+import { APIError } from "better-auth/api";
 import { hashPassword } from "./auth-passwords";
 import type { SendAuthEmail } from "./auth-email";
 import multer from "multer";
@@ -230,7 +231,7 @@ export async function createApp(options: {
           password,
           name,
           organization: name.optional(),
-          invite: z.string().min(32).max(256).optional(),
+          invite: z.string().min(1).max(256).optional(),
           bootstrapToken: z.string().max(256).optional(),
         })
         .parse(req.body);
@@ -248,9 +249,8 @@ export async function createApp(options: {
         await store.transaction(async () => {
           const invite = input.invite
             ? await store.one<{ org_id: string; email: string }>(
-                "SELECT * FROM invites WHERE token=? AND expires>?",
-                digest(input.invite),
-                Date.now(),
+                "SELECT * FROM invites WHERE id=? AND status='pending' AND expires_at>now()",
+                input.invite,
               )
             : undefined;
           if (input.invite && (!invite || invite.email !== input.email))
@@ -287,19 +287,11 @@ export async function createApp(options: {
           );
           if (existing) return;
           createdId = response.user.id;
-          const orgId = invite?.org_id ?? randomUUID();
           if (!invite)
-            await store.run(
-              "INSERT INTO orgs(id,name) VALUES(?,?)",
-              orgId,
-              input.organization ?? `${input.name}'s organization`,
-            );
-          await store.run(
-            "INSERT INTO members VALUES(?,?,?)",
-            orgId,
-            createdId,
-            invite ? "member" : "admin",
-          );
+            await auth.api.createOrganization({ body: {
+              name: input.organization ?? `${input.name}'s organization`,
+              slug: randomUUID(), userId: createdId,
+            } });
         });
       } catch (error) {
         if (createdId)
@@ -320,7 +312,24 @@ export async function createApp(options: {
       res.status(201).json({ ok: true, verificationRequired: true });
     },
   );
-  const authHandler = toNodeHandler(auth);
+  const authHandler = toNodeHandler(async (request) => {
+    if (!new URL(request.url).pathname.startsWith("/api/auth/organization/"))
+      return auth.handler(request);
+    let rejected: globalThis.Response | undefined;
+    try {
+      return await store.transaction(async () => {
+        const response = await auth.handler(request);
+        if (response.status >= 400) {
+          rejected = response;
+          throw new Error("Organization operation rejected");
+        }
+        return response;
+      });
+    } catch (error) {
+      if (rejected) return rejected;
+      throw error;
+    }
+  });
   const authMetadata = oauthProviderAuthServerMetadata(auth);
   app.get(
     "/.well-known/oauth-authorization-server/api/auth",
@@ -357,8 +366,18 @@ export async function createApp(options: {
   });
   app.use(express.json({ limit: "1mb" }));
   app.use("/api/v1", external.router);
-  app.use("/mcp", createMcpRouter(external));
+  app.use("/mcp", createMcpRouter(external, auth, options.origin));
   app.use("/api/shared", createLinkSharingRouter(store));
+  app.post("/api/invitations/accept", async (req, res) => {
+    const invitationId = z.string().min(1).max(256).parse(req.body.token);
+    await store.transaction(async () => {
+      const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+      if (!session?.user.emailVerified) throw new HttpError(401, "Please verify your email and sign in");
+      await auth.api.acceptInvitation({ body: { invitationId }, headers: fromNodeHeaders(req.headers) });
+    });
+    res.json({ ok: true });
+  });
+
   app.use("/api", async (req, _res, next) => {
     try {
       (req as AuthedRequest).actor = await authenticate(req);
@@ -420,163 +439,56 @@ export async function createApp(options: {
         ))
       )
         throw new HttpError(404, "Organization not found");
-      await store.run(
-        "UPDATE auth_sessions SET org_id=? WHERE id=?",
-        orgId,
-        a.token,
-      );
+      await auth.api.setActiveOrganization({ body: { organizationId: orgId }, headers: fromNodeHeaders(req.headers) });
       return {
         status: 200,
         body: { ok: true },
       };
     }),
   );
-  app.post(
-    "/api/invitations/accept",
-    mutation(async (req, res) => {
-      const token = z.string().min(32).parse(req.body.token);
-      const a = actor(req);
-      await store.transaction(async () => {
-        const invite = await store.one<{
-          org_id: string;
-          email: string;
-        }>(
-          "SELECT * FROM invites WHERE token=? AND expires>?",
-          digest(token),
-          Date.now(),
-        );
-        const user = (await store.one<{
-          email: string;
-        }>("SELECT email FROM users WHERE id=?", a.userId))!;
-        if (!invite || invite.email !== user.email)
-          throw new HttpError(400, "Invitation is invalid or expired");
-        await store.run(
-          "INSERT INTO members VALUES(?,?,'member') ON CONFLICT DO NOTHING",
-          invite.org_id,
-          a.userId,
-        );
-        await store.run("DELETE FROM invites WHERE token=?", digest(token));
-        await store.run(
-          "UPDATE auth_sessions SET org_id=? WHERE id=?",
-          invite.org_id,
-          a.token,
-        );
-      });
-      return {
-        status: 200,
-        body: { ok: true },
-      };
-    }),
-  );
-  app.get("/api/members", async (req, res) =>
-    res.json(
-      await store.all(
-        "SELECT u.id,u.name,u.email,m.role FROM members m JOIN users u ON m.user_id=u.id WHERE m.org_id=?",
-        actor(req).orgId,
-      ),
-    ),
-  );
-  app.post(
-    "/api/invitations",
-    mutation(async (req, res) => {
-      const a = await admin(req);
-      const address = email.parse(req.body.email);
-      const token = randomBytes(32).toString("hex");
-      await store.run(
-        "INSERT INTO invites VALUES(?,?,?,?)",
-        digest(token),
-        a.orgId,
-        address,
-        Date.now() + 7 * 86400000,
-      );
-      await audit(a, "invite.create");
-      return {
-        status: 201,
-        body: { url: `${options.origin}/?invite=${token}`, expiresInDays: 7 },
-      };
-    }),
-  );
-  app.patch(
-    "/api/members/:id",
-    mutation(async (req, res) => {
-      const a = await admin(req);
-      const userId = id.parse(req.params.id);
-      const { role } = z
-        .object({ role: z.enum(["admin", "member"]) })
-        .strict()
-        .parse(req.body);
-      await store.transaction(async () => {
-        const member = await store.one<{
-          role: string;
-        }>(
-          "SELECT role FROM members WHERE org_id=? AND user_id=?",
-          a.orgId,
-          userId,
-        );
-        if (!member) throw new HttpError(404, "Member not found");
-        if (
-          member.role === "admin" &&
-          role === "member" &&
-          (await store.one<{
-            count: number;
-          }>(
-            "SELECT count(*) AS count FROM members WHERE org_id=? AND role='admin'",
-            a.orgId,
-          ))!.count <= 1
-        )
-          throw new HttpError(400, "Keep at least one organization admin");
-        await store.run(
-          "UPDATE members SET role=? WHERE org_id=? AND user_id=?",
-          role,
-          a.orgId,
-          userId,
-        );
-      });
-      await audit(a, "member.role");
-      return {
-        status: 200,
-        body: { ok: true },
-      };
-    }),
-  );
-  app.delete(
-    "/api/members/:id",
-    mutation(async (req, res) => {
-      const a = await admin(req);
-      const userId = id.parse(req.params.id);
-      const member = await store.one<{
-        role: string;
-      }>(
-        "SELECT role FROM members WHERE org_id=? AND user_id=?",
-        a.orgId,
-        userId,
-      );
-      if (!member || userId === a.userId)
-        throw new HttpError(400, "This membership cannot be removed");
-      await store.transaction(async () => {
-        await store.run(
-          "DELETE FROM members WHERE org_id=? AND user_id=?",
-          a.orgId,
-          userId,
-        );
-        await store.run(
-          "DELETE FROM auth_sessions WHERE org_id=? AND user_id=?",
-          a.orgId,
-          userId,
-        );
-        await store.run(
-          "DELETE FROM grants WHERE user_id=? AND resource_id IN (SELECT id FROM resources WHERE org_id=?)",
-          userId,
-          a.orgId,
-        );
-      });
-      await audit(a, "member.remove");
-      return {
-        status: 200,
-        body: { ok: true },
-      };
-    }),
-  );
+  app.get("/api/members", async (req, res) => {
+    const result = await auth.api.listMembers({ query: { organizationId: actor(req).orgId, limit: 100 }, headers: fromNodeHeaders(req.headers) });
+    res.json(result.members.map((member) => ({ id: member.userId, name: member.user.name, email: member.user.email, role: member.role })));
+  });
+  app.get("/api/invitations", async (req, res) => {
+    const a = await admin(req);
+    res.json(await auth.api.listInvitations({ query: { organizationId: a.orgId }, headers: fromNodeHeaders(req.headers) }));
+  });
+  app.post("/api/invitations", mutation(async (req) => {
+    const a = await admin(req);
+    const address = email.parse(req.body.email);
+    const invite = await auth.api.createInvitation({ body: { email: address, role: "member", organizationId: a.orgId, resend: true }, headers: fromNodeHeaders(req.headers) });
+    await audit(a, "invite.create");
+    return { status: 201, body: { id: invite.id, url: `${options.origin}/?invite=${encodeURIComponent(invite.id)}`, expiresInDays: 7 } };
+  }));
+  app.delete("/api/invitations/:id", mutation(async (req) => {
+    const a = await admin(req);
+    const invitationId = id.parse(req.params.id);
+    if (!await store.one("SELECT id FROM invites WHERE id=? AND org_id=?", invitationId, a.orgId)) throw new HttpError(404, "Invitation not found");
+    await auth.api.cancelInvitation({ body: { invitationId }, headers: fromNodeHeaders(req.headers) });
+    await audit(a, "invite.cancel");
+    return { status: 200, body: { ok: true } };
+  }));
+  app.patch("/api/members/:id", mutation(async (req) => {
+    const a = await admin(req);
+    const userId = id.parse(req.params.id);
+    const { role } = z.object({ role: z.enum(["admin", "member"]) }).strict().parse(req.body);
+    const member = await store.one<{ id: string }>("SELECT id FROM members WHERE org_id=? AND user_id=?", a.orgId, userId);
+    if (!member) throw new HttpError(404, "Member not found");
+    await auth.api.updateMemberRole({ body: { memberId: member.id, role, organizationId: a.orgId }, headers: fromNodeHeaders(req.headers) });
+    await audit(a, "member.role");
+    return { status: 200, body: { ok: true } };
+  }));
+  app.delete("/api/members/:id", mutation(async (req) => {
+    const a = await admin(req);
+    const userId = id.parse(req.params.id);
+    if (userId === a.userId) throw new HttpError(400, "This membership cannot be removed");
+    const member = await store.one<{ id: string }>("SELECT id FROM members WHERE org_id=? AND user_id=?", a.orgId, userId);
+    if (!member) throw new HttpError(404, "Member not found");
+    await auth.api.removeMember({ body: { memberIdOrEmail: member.id, organizationId: a.orgId }, headers: fromNodeHeaders(req.headers) });
+    await audit(a, "member.remove");
+    return { status: 200, body: { ok: true } };
+  }));
   app.get("/api/settings", async (req, res) => {
     const a = await admin(req);
     const s = await getSettings(store, a.orgId);
@@ -1381,6 +1293,8 @@ export async function createApp(options: {
         return res
           .status(400)
           .json({ error: "Upload must contain one file smaller than 30 MB" });
+      if (error instanceof APIError)
+        return res.status(error.statusCode).json({ error: error.body?.message ?? "Authentication request rejected" });
       if (error instanceof HttpError)
         return res.status(error.status).json({ error: error.message });
       res

@@ -75,6 +75,37 @@ export async function createStore(
     })());
   const context = new AsyncLocalStorage<PoolClient>();
   const commitChecks = new AsyncLocalStorage<(() => Promise<void>)[]>();
+  let savepointSequence = 0;
+  const authPool = new Proxy(authDb, {
+    get(pool, property) {
+      if (property === "connect") return async () => {
+        const client = context.getStore();
+        if (!client) return pool.connect();
+        const savepoint = `auth_${++savepointSequence}`;
+        return new Proxy(client, {
+          get(connection, field) {
+            if (field === "release") return () => {};
+            if (field === "query") return (sql: string, args?: unknown[]) => {
+              const command = sql.trim().toLowerCase();
+              if (/^(begin|start transaction)/.test(command))
+                return connection.query(`SAVEPOINT ${savepoint}`);
+              if (command === "commit")
+                return connection.query(`RELEASE SAVEPOINT ${savepoint}`);
+              if (command === "rollback")
+                return connection.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+              return connection.query(sql, args);
+            };
+            const value = Reflect.get(connection, field);
+            return typeof value === "function" ? value.bind(connection) : value;
+          },
+        });
+      };
+      if (property === "query") return (sql: string, args?: unknown[]) =>
+        (context.getStore() ?? pool).query(sql, args);
+      const value = Reflect.get(pool, property);
+      return typeof value === "function" ? value.bind(pool) : value;
+    },
+  });
   const authorization = createAuthorization(spiceUrl, spiceKey);
   function parameterize(sql: string) {
     let index = 0;
@@ -362,6 +393,7 @@ export async function createStore(
   return {
     db,
     authDb,
+    authPool,
     all,
     one,
     run,
