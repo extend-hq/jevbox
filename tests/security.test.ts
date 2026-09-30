@@ -1,4 +1,7 @@
-import { createAuthorization } from "../server/authorization";
+import {
+  createAuthorization,
+  type Relationship,
+} from "../server/authorization";
 import { HttpError, createStore, resourceAccess } from "../server/db";
 import { testDatabase } from "./database";
 import { test, before, after } from "node:test";
@@ -98,6 +101,36 @@ async function req(path: string, cookie = "", method = "GET", body?: unknown) {
     data,
     cookie: res.headers.get("set-cookie")?.split(";")[0] ?? "",
   };
+}
+async function resourceRelationships(version: string, resourceId: string) {
+  const response = await fetch(
+    new URL("/v1/relationships/read", process.env.SPICEDB_HTTP_URL),
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.SPICEDB_PRESHARED_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        consistency: { fullyConsistent: true },
+        relationshipFilter: {
+          resourceType: "jevbox/resource",
+          optionalResourceId: `${version}/${resourceId}`,
+        },
+      }),
+      signal: AbortSignal.timeout(10000),
+    },
+  );
+  assert.equal(response.status, 200);
+  return (await response.text())
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const entry = JSON.parse(line);
+      assert.equal(entry.error, undefined);
+      assert.ok(entry.result?.relationship);
+      return entry.result.relationship as Relationship;
+    });
 }
 async function signup(email: string, invite?: string) {
   const response = await req("/auth/register", "", "POST", {
@@ -1279,6 +1312,234 @@ test("folder links include only inherited descendants and failed permission writ
     (await req(`/resources/${restricted}/access`, cookie)).data.access,
     "restricted",
   );
+});
+
+test("folder subtree moves replace SpiceDB parent and inherited edges and revoke old user and link access", async () => {
+  const suffix = randomUUID();
+  const cookie = await signup(`graph-owner-${suffix}@local.test`);
+  const me = (await req("/me", cookie)).data;
+  const readers: { session: string; id: string }[] = [];
+  for (const label of ["source", "target"]) {
+    const email = `graph-${label}-${suffix}@local.test`;
+    const invitation = await req("/invitations", cookie, "POST", { email });
+    const session = await signup(
+      email,
+      new URL(invitation.data.url).searchParams.get("invite")!,
+    );
+    readers.push({ session, id: (await req("/me", session)).data.user.id });
+  }
+  const createFolder = async (name: string, parentId: string | null = null) => {
+    const response = await req("/folders", cookie, "POST", { name, parentId });
+    assert.equal(response.status, 201);
+    return response.data.id as string;
+  };
+  const source = await createFolder("Source");
+  const target = await createFolder("Target");
+  const branch = await createFolder("Branch", source);
+  const nested = await createFolder("Nested", branch);
+  const inherited = await upload(cookie, "Inherited evidence", nested);
+  const restricted = await upload(cookie, "Restricted evidence", nested);
+  for (const resource of [branch, nested, inherited])
+    assert.equal(
+      (
+        await req(`/resources/${resource}/access`, cookie, "PUT", {
+          access: "inherit",
+          grants: [],
+        })
+      ).status,
+      200,
+    );
+  await req(`/resources/${restricted}/access`, cookie, "PUT", {
+    access: "restricted",
+    grants: [{ userId: readers[0].id, role: "viewer" }],
+  });
+  const links: string[] = [];
+  for (const [index, resource] of [source, target].entries()) {
+    const response = await req(`/resources/${resource}/access`, cookie, "PUT", {
+      access: "link",
+      grants: [{ userId: readers[index].id, role: "editor" }],
+    });
+    assert.equal(response.status, 200);
+    links.push(new URL(response.data.shareUrl).pathname.split("/").pop()!);
+  }
+  const version = async () =>
+    (await runtime.store.one<{ authz_version: string }>(
+      "SELECT authz_version FROM orgs WHERE id=?",
+      me.organization.id,
+    ))!.authz_version;
+  const assertEdges = async (
+    snapshot: string,
+    resource: string,
+    parent: string | null,
+    inherit: boolean,
+  ) => {
+    const edges = (await resourceRelationships(snapshot, resource))
+      .filter((edge) => ["parent", "root", "inherited"].includes(edge.relation))
+      .map(
+        (edge) =>
+          `${edge.relation}:${edge.subject.object.objectType}:${edge.subject.object.objectId}`,
+      )
+      .sort();
+    const expected = parent
+      ? [
+          `parent:jevbox/resource:${snapshot}/${parent}`,
+          ...(inherit
+            ? [`inherited:jevbox/resource:${snapshot}/${parent}`]
+            : []),
+        ]
+      : [`root:jevbox/organization:${snapshot}/${me.organization.id}`];
+    assert.deepEqual(edges, expected.sort());
+  };
+  const assertAccess = async (
+    sourceAllowed: boolean,
+    targetAllowed: boolean,
+  ) => {
+    for (const [index, allowed] of [sourceAllowed, targetAllowed].entries()) {
+      for (const resource of [branch, nested, inherited]) {
+        const response = await req(
+          `/resources/${resource}`,
+          readers[index].session,
+        );
+        assert.equal(response.status, allowed ? 200 : 404);
+        if (allowed) assert.equal(response.data.canWrite, true);
+      }
+      assert.equal(
+        (await req(`/documents/${inherited}/content`, readers[index].session))
+          .status,
+        allowed ? 200 : 404,
+      );
+      assert.equal(
+        (await req(`/shared/${links[index]}/resources/${inherited}/content`))
+          .status,
+        allowed ? 200 : 404,
+      );
+      assert.equal(
+        (await req(`/shared/${links[index]}/resources/${restricted}/content`))
+          .status,
+        404,
+      );
+    }
+  };
+  const before = await version();
+  await assertEdges(before, branch, source, true);
+  await assertEdges(before, nested, branch, true);
+  await assertEdges(before, inherited, nested, true);
+  await assertEdges(before, restricted, nested, false);
+  await assertAccess(true, false);
+  const write = runtime.store.authorization.write;
+  try {
+    runtime.store.authorization.write = async (relationships) => {
+      await write(relationships);
+      throw new HttpError(503, "Unavailable");
+    };
+    assert.equal(
+      (
+        await req(`/resources/${branch}/move`, cookie, "POST", {
+          parentId: target,
+        })
+      ).status,
+      503,
+    );
+  } finally {
+    runtime.store.authorization.write = write;
+  }
+  assert.equal(await version(), before);
+  assert.equal(
+    (await req(`/resources/${branch}`, cookie)).data.parent_id,
+    source,
+  );
+  await assertAccess(true, false);
+  assert.equal(
+    (
+      await req(`/resources/${branch}/move`, cookie, "POST", {
+        parentId: target,
+      })
+    ).status,
+    200,
+  );
+  const moved = await version();
+  assert.notEqual(moved, before);
+  await assertEdges(moved, branch, target, true);
+  await assertEdges(moved, nested, branch, true);
+  await assertEdges(moved, inherited, nested, true);
+  await assertEdges(moved, restricted, nested, false);
+  await assertAccess(false, true);
+  assert.equal(
+    (await req(`/resources/${restricted}`, readers[0].session)).status,
+    404,
+  );
+  assert.equal(
+    (await req(`/resources/${restricted}`, readers[1].session)).status,
+    404,
+  );
+  assert.equal(
+    (await req(`/resources/${branch}/move`, cookie, "POST", { parentId: null }))
+      .status,
+    200,
+  );
+  await assertEdges(await version(), branch, null, false);
+  assert.equal(
+    (await req(`/resources/${branch}`, cookie)).data.access,
+    "restricted",
+  );
+  await assertAccess(false, false);
+  assert.equal(
+    (await req(`/resources/${branch}`, cookie, "DELETE")).status,
+    200,
+  );
+  const deleted = await version();
+  for (const resource of [branch, nested, inherited, restricted])
+    assert.deepEqual(await resourceRelationships(deleted, resource), []);
+});
+
+test("startup rebuilds committed permission snapshots after SpiceDB relationship loss", async () => {
+  const cookie = await signup(`restore-${randomUUID()}@local.test`);
+  const me = (await req("/me", cookie)).data;
+  const folder = (await req("/folders", cookie, "POST", { name: "Root" })).data
+    .id;
+  const document = await upload(cookie, "Evidence", folder);
+  await req(`/resources/${document}/access`, cookie, "PUT", {
+    access: "inherit",
+    grants: [],
+  });
+  const actor = {
+    userId: me.user.id,
+    orgId: me.organization.id,
+    role: "admin",
+    token: "test",
+  };
+  const before = (await runtime.store.one<{ authz_version: string }>(
+    "SELECT authz_version FROM orgs WHERE id=?",
+    actor.orgId,
+  ))!.authz_version;
+  await runtime.store.authorization.removeSnapshot(before);
+  assert.equal(await resourceAccess(runtime.store, actor, document), false);
+  const restarted = await createStore(directory, database.url);
+  try {
+    const after = (await restarted.one<{ authz_version: string }>(
+      "SELECT authz_version FROM orgs WHERE id=?",
+      actor.orgId,
+    ))!.authz_version;
+    assert.notEqual(after, before);
+    assert.equal(await resourceAccess(restarted, actor, document), true);
+    assert.equal(await resourceAccess(runtime.store, actor, document), true);
+    const edges = await resourceRelationships(after, document);
+    for (const relation of ["parent", "inherited"])
+      assert.equal(
+        edges.find((edge) => edge.relation === relation)?.subject.object
+          .objectId,
+        `${after}/${folder}`,
+      );
+    assert.equal(
+      await restarted.one(
+        "SELECT 1 FROM authz_dirty WHERE org_id=?",
+        actor.orgId,
+      ),
+      undefined,
+    );
+  } finally {
+    await restarted.close();
+  }
 });
 
 test("resource moves require ownership and destination write access and atomically update inherited permissions", async () => {

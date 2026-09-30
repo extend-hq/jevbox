@@ -15,6 +15,7 @@ import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
 import { CursorTooltip } from "./cursor-tooltip";
 import { Choice } from "./common";
 import { Badge } from "./coss/badge";
+import { IndexStatusBadge } from "./index-status-badge";
 import { ResourceThumbnail } from "./resource-thumbnail";
 import { api, type Me, type Resource, type Source } from "@/lib/api";
 
@@ -328,16 +329,10 @@ export function ChatComposerTools({
                       <span className="attachment-document-details">
                         <span className="truncate block">{document.name}</span>
                         <span className="attachment-badges">
-                          <Badge
-                            size="sm"
-                            variant={
-                              document.status === "ready" ? "info" : "secondary"
-                            }
-                          >
-                            {document.status === "ready"
-                              ? "Indexed"
-                              : document.status.replaceAll("_", " ")}
-                          </Badge>
+                          <IndexStatusBadge
+                            status={document.status}
+                            error={document.error}
+                          />
                           {source && (
                             <Badge size="sm" variant="secondary">
                               {source.title}
@@ -432,9 +427,10 @@ export function ChatAttachments({
           <span>
             {attachment.name}
             {attachment.status !== "ready" && (
-              <Badge size="sm" variant="secondary">
-                {attachment.status.replaceAll("_", " ")}
-              </Badge>
+              <IndexStatusBadge
+                status={attachment.status}
+                error={attachment.error}
+              />
             )}
           </span>
           <button

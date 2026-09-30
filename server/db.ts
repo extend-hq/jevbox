@@ -282,6 +282,11 @@ export async function createStore(
           .query("INSERT INTO schema_migrations VALUES($1)", [version]);
       }
       await authorization.initialize();
+      await context
+        .getStore()!
+        .query(
+          "INSERT INTO authz_dirty(org_id) SELECT id FROM orgs ON CONFLICT DO NOTHING",
+        );
     });
   } catch (error) {
     await close();

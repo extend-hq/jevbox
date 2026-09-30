@@ -444,7 +444,9 @@ export function ChatView({
   const [preview, setPreview] = useState<{
     source: Source;
     trace: NonNullable<Message["trace"]>;
+    focusRequest?: number;
   } | null>(null);
+  const sourceFocusRequest = useRef(0);
   const [previewTab, setPreviewTab] = useState("parsed");
   const previewRetrievalPath = (
     trace: NonNullable<Message["trace"]>,
@@ -908,6 +910,8 @@ export function ChatView({
                                         setPreview({
                                           source,
                                           trace: message.trace ?? [],
+                                          focusRequest:
+                                            ++sourceFocusRequest.current,
                                         });
                                         setPreviewTab("parsed");
                                       }}
@@ -961,6 +965,8 @@ export function ChatView({
                                               setPreview({
                                                 source,
                                                 trace: message.trace ?? [],
+                                                focusRequest:
+                                                  ++sourceFocusRequest.current,
                                               });
                                               setPreviewTab("parsed");
                                             }}
@@ -1277,11 +1283,12 @@ export function ChatView({
             </div>
             <div className="source-preview-document">
               <DocumentView
-                key={preview.source.documentId}
                 documentId={preview.source.documentId}
                 initialNode={preview.source.nodeId}
                 initialTab={previewTab}
                 focusBlockIds={preview.source.blockIds}
+                focusPage={preview.source.page}
+                focusRequest={preview.focusRequest}
                 embedded
                 onBack={() => setPreview(null)}
                 onShare={() => {}}

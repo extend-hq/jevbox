@@ -42,6 +42,7 @@ import {
   ScrollPluginPackage,
   ScrollStrategy,
   useScroll,
+  useScrollCapability,
   useScrollPlugin,
   type PageLayout,
   type ScrollerLayout,
@@ -1987,6 +1988,7 @@ type PDFViewerInnerProps = {
   pageClassName?: (pageNumber: number) => string | undefined;
   renderPageOverlay?: (props: PDFViewerPageOverlayProps) => React.ReactNode;
   onActivePageChange?: (pageNumber: number) => void;
+  onDocumentLoadSuccess?: (numPages: number) => void;
   onPdfUpload?: (file: File) => void;
   onPagePointerDown?: PDFViewerProps["onPagePointerDown"];
   onPagePointerMove?: PDFViewerProps["onPagePointerMove"];
@@ -2010,6 +2012,7 @@ function PDFViewerInner({
   pageClassName,
   renderPageOverlay,
   onActivePageChange,
+  onDocumentLoadSuccess,
   onPdfUpload,
   onPagePointerDown,
   onPagePointerMove,
@@ -2019,6 +2022,7 @@ function PDFViewerInner({
 }: PDFViewerInnerProps) {
   const { registry } = useRegistry();
   const { state: scrollState, provides: scroll } = useScroll(documentId);
+  const { provides: scrollCapability } = useScrollCapability();
   const { state: zoomState, provides: zoom } = useZoom(documentId);
   const { provides: thumbnails } = useThumbnailCapability();
   const { plugin: thumbnailPlugin } = useThumbnailPlugin();
@@ -2186,6 +2190,25 @@ function PDFViewerInner({
     }),
     [pdfDocument, scroll, scrollToPage, basePageRotations],
   );
+  const loadNotified = React.useRef(false);
+  const onDocumentLoadSuccessRef = React.useRef(onDocumentLoadSuccess);
+  onDocumentLoadSuccessRef.current = onDocumentLoadSuccess;
+  React.useEffect(() => {
+    if (!numPages || !scrollCapability) return;
+    let frame = 0;
+    const unsubscribe = scrollCapability.onLayoutReady((event) => {
+      if (event.documentId !== documentId || loadNotified.current) return;
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        loadNotified.current = true;
+        onDocumentLoadSuccessRef.current?.(numPages);
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      unsubscribe();
+    };
+  }, [documentId, numPages, scrollCapability]);
   const handleDownload = React.useCallback(async () => {
     if (!pdfFile || isPreparingDownload) return;
     setIsPreparingDownload(true);
@@ -2497,10 +2520,6 @@ function PDFViewerDocumentLoader({
   const { activeDocumentId, activeDocument } = useActiveDocument();
   const [loadError, setLoadError] = React.useState(false);
   const openedFileRef = React.useRef<string | null>(null);
-  const onDocumentLoadSuccessRef = React.useRef(onDocumentLoadSuccess);
-  React.useEffect(() => {
-    onDocumentLoadSuccessRef.current = onDocumentLoadSuccess;
-  });
   React.useEffect(() => {
     if (!documentManager || !pdfFile) return;
     if (openedFileRef.current === pdfFile) return;
@@ -2519,7 +2538,6 @@ function PDFViewerDocumentLoader({
       })
       .wait((response) => {
         response.task.wait((openedDocument) => {
-          onDocumentLoadSuccessRef.current?.(openedDocument.pageCount);
           previousDocumentIds.forEach((documentIdToClose) => {
             documentManager.closeDocument(documentIdToClose).wait(
               () => undefined,
@@ -2558,6 +2576,7 @@ function PDFViewerDocumentLoader({
       pdfFile={pdfFile}
       documentId={activeDocumentId}
       document={document}
+      onDocumentLoadSuccess={onDocumentLoadSuccess}
     />
   );
 }

@@ -19,13 +19,17 @@ for (const key of [
   "localStorage",
   "DocumentFragment",
   "HTMLButtonElement",
+  "HTMLDivElement",
   "HTMLImageElement",
   "Node",
   "Element",
   "HTMLElement",
+  "SVGElement",
   "HTMLInputElement",
   "HTMLTextAreaElement",
   "HTMLFormElement",
+  "HTMLTemplateElement",
+  "HTMLStyleElement",
   "MutationObserver",
   "Event",
   "CustomEvent",
@@ -76,9 +80,13 @@ const { RetrievalTree } = await import("../src/components/retrieval-tree");
 const { FileSystem } = await import("../src/components/extend/file-system");
 const { ToastProvider } = await import("../src/components/coss/toast");
 const { ParsedBlocks } = await import("../src/components/parsed-blocks");
+const { IndexStatusBadge } =
+  await import("../src/components/index-status-badge");
+const { ChatAttachments } =
+  await import("../src/components/chat-composer-tools");
 const { useFinderView, useDocumentSidebarPreference } =
   await import("../src/lib/preferences");
-import type { IndexNode, Me } from "../src/lib/api";
+import type { IndexNode, Me, Resource } from "../src/lib/api";
 let root: Root;
 let host: HTMLDivElement;
 beforeEach(() => {
@@ -218,6 +226,53 @@ test("citation thumbnails stay mounted when preview callbacks and source snapsho
   }
   await click(chip);
   assert.equal((selected as typeof source).title, "Passage");
+});
+
+test("inline citations preview on hover and focus, cancel brief hovers, and clean up on unmount", async () => {
+  const sources = [1, 2].map((page) => ({
+    documentId: "doc",
+    nodeId: "node",
+    name: "Document.png",
+    title: "Section",
+    page,
+    blockIds: [`block-${page}`],
+  }));
+  const selected: unknown[] = [];
+  await act(async () =>
+    root.render(
+      <Markdown
+        sources={sources}
+        onSourcePreview={(source) => selected.push(source)}
+      >
+        Evidence [1] and [2].
+      </Markdown>,
+    ),
+  );
+  const [first, second] =
+    host.querySelectorAll<HTMLAnchorElement>(".chat-source-chip");
+  const enter = (element: Element) =>
+    element.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  const leave = (element: Element) =>
+    element.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+  await act(async () => {
+    enter(first);
+    leave(first);
+    await new Promise((resolve) => setTimeout(resolve, 220));
+  });
+  assert.deepEqual(selected, []);
+  await act(async () => {
+    enter(second);
+    await new Promise((resolve) => setTimeout(resolve, 220));
+  });
+  assert.deepEqual(selected, [sources[1]]);
+  await act(async () => first.focus());
+  assert.deepEqual(selected, [sources[1], sources[0]]);
+  await act(async () => {
+    enter(second);
+    root.render(<div />);
+  });
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 220)));
+  assert.equal(selected.length, 2);
 });
 
 test("sources and retrieval paths collapse into bounded fading scroll areas", async () => {
@@ -794,6 +849,65 @@ test("Finder Gallery uses lazy thumbnails in its information header and has a re
   assert.ok(pane.textContent?.includes("failed"));
 });
 
+test("library and chat indexing badges share status labels, icons, and color classes", async () => {
+  for (const status of [
+    "ready",
+    "failed",
+    "awaiting_key",
+    "queued",
+    "processing",
+    "stored",
+  ]) {
+    await act(async () =>
+      root.render(
+        <>
+          <FileSystem
+            defaultView="gallery"
+            items={[
+              {
+                kind: "file",
+                path: "Document.bin",
+                metadata: { Index: status.replaceAll("_", " ") },
+              },
+            ]}
+          />
+          <IndexStatusBadge status={status} />
+          <ChatAttachments
+            attachments={[
+              {
+                id: "doc",
+                name: "Document.bin",
+                mime: "application/octet-stream",
+                status,
+              } as Resource,
+            ]}
+            disabled={false}
+            onRemove={() => {}}
+          />
+        </>,
+      ),
+    );
+    const badges = [
+      ...host.querySelectorAll<HTMLElement>("[data-index-status]"),
+    ];
+    assert.equal(badges.length, status === "ready" ? 2 : 3);
+    for (const badge of badges) {
+      assert.equal(badge.dataset.indexStatus, status);
+      assert.ok(badge.classList.contains("status-chip"));
+      assert.ok(badge.classList.contains(status));
+      assert.equal(
+        badge.textContent,
+        status === "ready" ? "Indexed" : status.replaceAll("_", " "),
+      );
+      assert.equal(
+        badge.querySelectorAll("svg").length,
+        ["ready", "failed", "awaiting_key"].includes(status) ? 1 : 0,
+      );
+      assert.equal(badge.innerHTML, badges[0].innerHTML);
+    }
+  }
+});
+
 test("Finder preference survives remounts and remains scoped to the signed-in user", async () => {
   let setView: (
     view: "icons" | "list" | "columns" | "gallery" | "spatial",
@@ -976,6 +1090,11 @@ test("document inspector keeps the viewer mounted while tabs change and labels t
     ["Parsed output", "Section", "Links 0"],
   );
   assert.equal(document.querySelector(".document-tabbar"), null);
+  const indexBadge = document.querySelector(
+    '.document-header [data-index-status="ready"]',
+  );
+  assert.equal(indexBadge?.textContent, "Indexed");
+  assert.ok(indexBadge?.querySelector("svg"));
   assert.match(
     document
       .querySelector(".document-header .status-chip[aria-label]")
@@ -1063,6 +1182,81 @@ test("Finder Grid requests and renders the first PDF thumbnail", async () => {
   );
 });
 
+test("Finder Columns loads a row thumbnail and reuses it when switching to Grid", async () => {
+  const loaded: number[] = [];
+  const items = [
+    { kind: "file" as const, path: "Document.pdf", previewPageCount: 2 },
+  ];
+  const loadPreviewImageUrl = async (_file: unknown, page: number) => {
+    loaded.push(page);
+    return "data:image/png;base64,cHJldmlldw==";
+  };
+  await act(async () =>
+    root.render(
+      <FileSystem
+        items={items}
+        view="columns"
+        loadPreviewImageUrl={loadPreviewImageUrl}
+      />,
+    ),
+  );
+  assert.deepEqual(loaded, [0]);
+  assert.ok(
+    host.querySelector(
+      '[role="option"] img[src="data:image/png;base64,cHJldmlldw=="]',
+    ),
+  );
+  await act(async () =>
+    root.render(
+      <FileSystem
+        items={items}
+        view="icons"
+        loadPreviewImageUrl={loadPreviewImageUrl}
+      />,
+    ),
+  );
+  assert.deepEqual(loaded, [0]);
+  assert.ok(
+    host.querySelector(
+      '[role="option"] img[src="data:image/png;base64,cHJldmlldw=="]',
+    ),
+  );
+});
+
+test("Finder List loads mounted file covers without opening or loading collapsed folders", async () => {
+  const loaded: string[] = [];
+  await act(async () =>
+    root.render(
+      <FileSystem
+        view="list"
+        items={[
+          { kind: "file", path: "Document.pdf", previewPageCount: 1 },
+          { kind: "file", path: "Folder/Hidden.pdf", previewPageCount: 1 },
+        ]}
+        loadPreviewImageUrl={async (file) => {
+          loaded.push(file.path);
+          return "data:image/png;base64,cHJldmlldw==";
+        }}
+      />,
+    ),
+  );
+  for (let attempt = 0; loaded.length === 0 && attempt < 40; attempt++) {
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+  }
+  const shadow = host.querySelector("file-tree-container")?.shadowRoot;
+  assert.deepEqual(loaded, ["Document.pdf"]);
+  assert.ok(
+    shadow?.querySelector(
+      'symbol image[href="data:image/png;base64,cHJldmlldw=="]',
+    ),
+  );
+  assert.ok(shadow?.querySelector('[data-item-path="Folder/"]'));
+  assert.equal(
+    shadow?.querySelector('[data-item-path="Folder/Hidden.pdf"]'),
+    null,
+  );
+});
+
 test("embedded source preview omits full inspector chrome and shows only cited blocks", async () => {
   const block = {
     id: "cited",
@@ -1129,6 +1323,64 @@ test("embedded source preview omits full inspector chrome and shows only cited b
     /Cited evidence/,
   );
   assert.equal(document.querySelector(".source-document-heading"), null);
+});
+
+test("embedded preview keeps its tabs mounted while switching and loading documents", async () => {
+  const pending = new Map<string, (response: Response) => void>();
+  globalThis.fetch = async (input) =>
+    new Promise<Response>((resolve) => pending.set(String(input), resolve));
+  const render = async (documentId: string) =>
+    act(async () =>
+      root.render(
+        <DocumentView
+          documentId={documentId}
+          initialTab="parsed"
+          embedded
+          onNavigate={() => {}}
+          onBack={() => {}}
+          onShare={() => {}}
+          onChange={() => {}}
+        />,
+      ),
+    );
+  const resolve = async (id: string) =>
+    act(async () =>
+      pending.get(`/api/resources/${id}`)?.(
+        Response.json({
+          id,
+          name: "Document.bin",
+          kind: "document",
+          mime: "application/octet-stream",
+          size: 10,
+          status: "ready",
+          parsed: {
+            source: "text",
+            nodes: [],
+            blocks: [],
+            pages: 1,
+            markdown: "",
+          },
+        }),
+      ),
+    );
+  await render("first");
+  const tabs = host.querySelector('[aria-label="Source preview view"]');
+  const preview = button("Preview");
+  assert.ok(tabs);
+  assert.ok(preview);
+  assert.equal(button("Toggle document navigation"), undefined);
+  await resolve("first");
+  assert.equal(host.querySelector('[aria-label="Source preview view"]'), tabs);
+  assert.equal(button("Preview"), preview);
+  await render("second");
+  assert.equal(host.querySelector('[aria-label="Source preview view"]'), tabs);
+  assert.equal(button("Preview"), preview);
+  assert.equal(button("Toggle document navigation"), undefined);
+  assert.ok(host.querySelector('[aria-busy="true"]'));
+  await resolve("second");
+  assert.equal(host.querySelector('[aria-label="Source preview view"]'), tabs);
+  assert.equal(button("Preview"), preview);
+  assert.equal(button("Toggle document navigation"), undefined);
 });
 
 test("hovering retrieval paths narrows an open preview without opening a closed sidebar", async () => {
@@ -1210,7 +1462,7 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
         messages: [
           {
             role: "assistant",
-            content: "Answer",
+            content: "Answer [1]",
             trace,
             sources: [
               {
@@ -1306,6 +1558,32 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
     await click(button("Close source preview", sidebar));
     await hover(row(messageTree, "Overview"));
     assert.equal(host.querySelector(".chat-source-panel"), null);
+    const citation = host.querySelector(".chat-source-chip");
+    assert.ok(citation);
+    await act(async () => {
+      citation.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+    const citationPreview = host.querySelector(".chat-source-panel");
+    assert.ok(citationPreview);
+    await click(button("Source blocks 1", citationPreview));
+    assert.equal(citationPreview.querySelectorAll(".parsed-block").length, 1);
+    assert.equal(
+      citationPreview
+        .querySelector(".parsed-block")
+        ?.getAttribute("data-block-id"),
+      "block-2",
+    );
+    await act(async () => {
+      citation.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+      citation.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+    assert.equal(host.querySelector(".chat-source-panel"), citationPreview);
+    assert.equal(
+      button("Preview", citationPreview)?.getAttribute("aria-selected"),
+      "true",
+    );
   } finally {
     globalThis.EventSource = previousEventSource;
   }

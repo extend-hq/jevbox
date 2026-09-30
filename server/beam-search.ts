@@ -90,11 +90,14 @@ export function createTraversal<T>(
             continue;
           }
           if (++expansions > retrievalLimits.expansions) break;
-          const choices = [];
-          for (const node of route.node.children) {
-            const text = await node.describe();
-            if (text !== undefined) choices.push({ id: node.id, text, node });
-          }
+          const choices = (
+            await Promise.all(
+              route.node.children.map(async (node) => {
+                const text = await node.describe();
+                return text === undefined ? [] : [{ id: node.id, text, node }];
+              }),
+            )
+          ).flat();
           if (choices.length) prepared.push({ route, choices });
         }
         if (!prepared.length) break;
@@ -104,11 +107,14 @@ export function createTraversal<T>(
         const dispatch = async () => {
           const menus = [];
           for (const menu of pending) {
-            const choices = [];
-            for (const choice of menu.choices) {
-              const text = await choice.node.describe();
-              if (text !== undefined) choices.push({ ...choice, text });
-            }
+            const choices = (
+              await Promise.all(
+                menu.choices.map(async (choice) => {
+                  const text = await choice.node.describe();
+                  return text === undefined ? [] : [{ ...choice, text }];
+                }),
+              )
+            ).flat();
             menu.choices = choices;
             if (choices.length > 1)
               menus.push({ id: menu.route.node.id, choices });
@@ -135,13 +141,16 @@ export function createTraversal<T>(
         for (const { route, choices } of prepared) {
           const decision = choices.length > 1;
           const distribution = distributions.get(route.node.id);
-          for (const choice of choices) {
+          const descriptions = await Promise.all(
+            choices.map((choice) => choice.node.describe()),
+          );
+          for (const [index, choice] of choices.entries()) {
             const probability = decision ? distribution![choice.id] : 1;
             const rejected =
               probability <= 0 ||
               (decision && probability <= distribution!.none);
             if (rejected && !recoverRoutes) continue;
-            if ((await choice.node.describe()) === undefined) continue;
+            if (descriptions[index] === undefined) continue;
             const next = extendRoute(
               route,
               choice.node,

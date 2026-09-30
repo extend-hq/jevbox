@@ -1,4 +1,5 @@
 import { DocumentIndexTree } from "./document-index-tree";
+import { IndexStatusBadge, indexStatusDescription } from "./index-status-badge";
 import { PreviewCard } from "@base-ui/react/preview-card";
 import {
   AlertDialog,
@@ -27,12 +28,18 @@ import {
 import { ResourceThumbnail } from "./resource-thumbnail";
 import { RouteLink } from "./route-link";
 import { ScrollArea } from "@/components/coss/scroll-area";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ArrowLeft,
   ArrowUpRight,
   DownloadOutline,
-  CircleCheckFilled,
   ChevronDown,
   FileText,
   IndexTreeIcon,
@@ -45,7 +52,6 @@ import {
   Share2,
   Trash2,
   TriangleAlert,
-  TriangleWarningFilled,
 } from "@/components/icons";
 import { Button } from "@/components/coss/button";
 import { Tabs, TabsList, TabsTab, TabsPanel } from "@/components/coss/tabs";
@@ -93,6 +99,48 @@ const filingNotes: Record<string, string> = {
     "The folder hierarchy was too deep to finish selecting a placement. The document stayed in the parent reached.",
   disabled: "Automatic filing was off when this document was processed.",
 };
+function SourcePreviewLayout({
+  view,
+  onViewChange,
+  count,
+  preview,
+  blocks,
+}: {
+  view: string;
+  onViewChange: (view: string) => void;
+  count?: number;
+  preview: ReactNode;
+  blocks: ReactNode;
+}) {
+  return (
+    <section className="source-document" aria-label="Source details">
+      <Tabs
+        value={view}
+        onValueChange={(value) => onViewChange(String(value))}
+        className="source-document-tabs"
+      >
+        <div className="source-document-tabbar">
+          <TabsList size="sm" aria-label="Source preview view">
+            <TabsTab value="preview">Preview</TabsTab>
+            <TabsTab value="blocks">
+              Source blocks <span className="count">{count ?? "…"}</span>
+            </TabsTab>
+          </TabsList>
+        </div>
+        <TabsPanel
+          value="preview"
+          className="min-h-0 overflow-hidden"
+          keepMounted
+        >
+          {preview}
+        </TabsPanel>
+        <TabsPanel value="blocks" className="min-h-0 overflow-hidden">
+          {blocks}
+        </TabsPanel>
+      </Tabs>
+    </section>
+  );
+}
 export function DocumentView({
   documentId,
   initialResource,
@@ -101,6 +149,8 @@ export function DocumentView({
   initialTab,
   sharedToken,
   focusBlockIds,
+  focusPage,
+  focusRequest,
   embedded = false,
   onNavigate,
   onBack,
@@ -114,6 +164,8 @@ export function DocumentView({
   initialTab: string;
   sharedToken?: string;
   focusBlockIds?: string[];
+  focusPage?: number;
+  focusRequest?: number;
   embedded?: boolean;
   onNavigate: (node: string | undefined, tab: string) => void;
   onBack: () => void;
@@ -220,14 +272,21 @@ export function DocumentView({
     if (!doc?.parsed || (!initialNode && !embedded)) return;
     const target = flatten(doc.parsed.nodes).find((n) => n.id === initialNode);
     const allBlocks = documentBlocks(doc.parsed);
+    const candidates = focusBlockIds?.length
+      ? allBlocks.filter((block) => focusBlockIds.includes(block.id))
+      : initialNode
+        ? sectionBlocks(target, allBlocks)
+        : focusPage
+          ? allBlocks.filter((block) => block.page === focusPage)
+          : allBlocks;
     const block =
-      allBlocks.find((block) => focusBlockIds?.includes(block.id)) ??
-      (initialNode ? sectionBlocks(target, allBlocks)[0] : allBlocks[0]);
+      candidates.find((block) => blockHighlightArea(block)) ?? candidates[0];
     setActiveBlockId(block?.id);
     const area =
       block &&
       blockHighlightArea(block, pdf.current?.getPageRotation(block.page));
     if (area && block) pdf.current?.scrollToPageArea(block.page, area);
+    else if (focusPage) pdf.current?.scrollToPage(focusPage);
     else if (target) pdf.current?.scrollToPage(target.page);
     else if (!initialNode) pdf.current?.scrollToPage(1);
     if (embedded) setSourceView("preview");
@@ -237,19 +296,34 @@ export function DocumentView({
     doc?.status,
     !!doc?.parsed,
     focusBlockIds?.join(","),
+    focusPage,
+    focusRequest,
     embedded,
   ]);
   if (!doc && embedded)
     return (
-      <div className="relative h-full min-h-0">
-        {action.error ? (
-          <p className="error" role="alert">
-            {action.error}
-          </p>
-        ) : (
-          <DocumentViewerLoadingShell label="Opening source" />
-        )}
-      </div>
+      <SourcePreviewLayout
+        view={sourceView}
+        onViewChange={setSourceView}
+        preview={
+          action.error ? (
+            <p className="error" role="alert">
+              {action.error}
+            </p>
+          ) : (
+            <DocumentViewerLoadingShell
+              label="Opening source"
+              showToolbar={false}
+            />
+          )
+        }
+        blocks={
+          <DocumentViewerLoadingShell
+            label="Opening source"
+            showToolbar={false}
+          />
+        }
+      />
     );
   if (!doc)
     return (
@@ -412,16 +486,7 @@ export function DocumentView({
       pdf.current?.scrollToPageArea(firstBlock.page, area);
     else pdf.current?.scrollToPage(n.page);
   };
-  const statusLabel =
-    doc.status === "ready" ? "Indexed" : doc.status.replaceAll("_", " ");
-  const statusDescription =
-    doc.status === "ready"
-      ? "Index: complete. This document is ready for search and citations."
-      : doc.status === "stored"
-        ? "Index: unavailable for this format. The original is available for viewing and download."
-        : indexIssue
-          ? `Index: ${statusLabel}. ${doc.error || (doc.status === "awaiting_key" ? "Connect Extend to index this document." : "Indexing failed. Open Index to retry.")}`
-          : `Index: ${statusLabel}. Parsed output and the index will appear when processing finishes.`;
+  const statusDescription = indexStatusDescription(doc.status, doc.error);
   const reindex = () =>
     void action.run(async () => {
       await api(`/documents/${doc.id}/retry`, { method: "POST" });
@@ -505,152 +570,140 @@ export function DocumentView({
       selected || focusBlockIds?.length ? selectedBlocks : blocks;
     const sourceIds = sourceBlocks.map((block) => block.id);
     const focusPdf = () => {
-      const block = sourceBlocks[0];
+      const block =
+        sourceBlocks.find((block) => blockHighlightArea(block)) ??
+        sourceBlocks[0];
       const area =
         block &&
         blockHighlightArea(block, pdf.current?.getPageRotation(block.page));
       if (area && block) pdf.current?.scrollToPageArea(block.page, area);
+      else if (focusPage) pdf.current?.scrollToPage(focusPage);
       else if (node) pdf.current?.scrollToPage(node.page);
     };
     return (
-      <section className="source-document" aria-label="Source details">
-        <Tabs
-          value={sourceView}
-          onValueChange={(value) => setSourceView(String(value))}
-          className="source-document-tabs"
-        >
-          <div className="source-document-tabbar">
-            <TabsList size="sm" aria-label="Source preview view">
-              <TabsTab value="preview">Preview</TabsTab>
-              <TabsTab value="blocks">
-                Source blocks{" "}
-                <span className="count">{sourceBlocks.length}</span>
-              </TabsTab>
-            </TabsList>
-          </div>
-          <TabsPanel
-            value="preview"
-            className="min-h-0 overflow-hidden"
-            keepMounted
+      <SourcePreviewLayout
+        view={sourceView}
+        onViewChange={setSourceView}
+        count={sourceBlocks.length}
+        preview={
+          <DocumentNavigationContext.Provider
+            value={{
+              ...navigation,
+              index: null,
+              toolbarHost: null,
+              onToggleInspector: undefined,
+              initiallyOpen: false,
+              navigationOpen: undefined,
+              onNavigationOpenChange: undefined,
+            }}
           >
-            <DocumentNavigationContext.Provider
-              value={{
-                ...navigation,
-                index: null,
-                toolbarHost: null,
-                onToggleInspector: undefined,
-                initiallyOpen: false,
-                navigationOpen: undefined,
-                onNavigationOpenChange: undefined,
-              }}
+            <Suspense
+              fallback={
+                <DocumentViewerLoadingShell
+                  extension={ext}
+                  label="Loading source"
+                  showToolbar={false}
+                />
+              }
             >
-              <Suspense
-                fallback={
-                  <DocumentViewerLoadingShell
-                    extension={ext}
-                    label="Loading source"
-                  />
-                }
-              >
-                {ext === "pdf" ? (
-                  <PDFViewer
-                    ref={pdf}
-                    src={src}
-                    fileName={doc.name}
-                    showToolbar={false}
-                    showUpload={false}
-                    defaultZoom="fit-width"
-                    className="h-full"
-                    onDocumentLoadSuccess={focusPdf}
-                    renderPageOverlay={({
-                      pageNumber,
-                      pageWidth,
-                      pageHeight,
-                      sourceRotation,
-                    }) => (
-                      <ParsedBlockOverlay
-                        blocks={sourceBlocks}
-                        page={pageNumber}
-                        selectedIds={sourceIds}
-                        activeId={activeBlockId}
-                        width={pageWidth}
-                        height={pageHeight}
-                        sourceRotation={sourceRotation}
-                      />
-                    )}
-                  />
-                ) : ext === "docx" ? (
-                  <DocxViewer
-                    src={src}
-                    fileName={doc.name}
-                    isDark={viewerDark}
-                    onIsDarkChange={setViewerDark}
-                    showToolbar={false}
-                    showUpload={false}
-                    defaultZoom="fit-width"
-                    className="h-full"
-                  />
-                ) : ext === "pptx" ? (
-                  <PptxViewer
-                    src={src}
-                    fileName={doc.name}
-                    initialSlide={node?.page}
-                    showToolbar={false}
-                    showUpload={false}
-                    defaultZoom="fit-width"
-                    className="h-full"
-                  />
-                ) : ext === "xlsx" ? (
-                  <XlsxViewer
-                    src={src}
-                    fileName={doc.name}
-                    isDark={viewerDark}
-                    onIsDarkChange={setViewerDark}
-                    showToolbar={false}
-                    showUpload={false}
-                    className="h-full"
-                  />
-                ) : (
-                  <OtherViewer
-                    doc={doc}
-                    src={src}
-                    imageOverlay={(width, height) => (
-                      <ParsedBlockOverlay
-                        blocks={sourceBlocks}
-                        page={1}
-                        selectedIds={sourceIds}
-                        width={width}
-                        height={height}
-                      />
-                    )}
-                  />
-                )}
-              </Suspense>
-            </DocumentNavigationContext.Provider>
-          </TabsPanel>
-          <TabsPanel value="blocks" className="min-h-0 overflow-hidden">
-            <ScrollArea scrollFade>
-              <div className="p-4">
-                {sourceBlocks.length ? (
-                  <ParsedBlocks
-                    blocks={sourceBlocks}
-                    selectedIds={sourceIds}
-                    activeId={activeBlockId}
-                    onSelect={(block) => {
-                      setSourceView("preview");
-                      requestAnimationFrame(() => selectBlock(block));
-                    }}
-                  />
-                ) : (
-                  <Markdown allowHtml>
-                    {sectionContent ?? "No parsed source content is available."}
-                  </Markdown>
-                )}
-              </div>
-            </ScrollArea>
-          </TabsPanel>
-        </Tabs>
-      </section>
+              {ext === "pdf" ? (
+                <PDFViewer
+                  ref={pdf}
+                  src={src}
+                  fileName={doc.name}
+                  showToolbar={false}
+                  showUpload={false}
+                  defaultZoom="fit-width"
+                  className="h-full"
+                  onDocumentLoadSuccess={focusPdf}
+                  renderPageOverlay={({
+                    pageNumber,
+                    pageWidth,
+                    pageHeight,
+                    sourceRotation,
+                  }) => (
+                    <ParsedBlockOverlay
+                      blocks={sourceBlocks}
+                      page={pageNumber}
+                      selectedIds={sourceIds}
+                      activeId={activeBlockId}
+                      width={pageWidth}
+                      height={pageHeight}
+                      sourceRotation={sourceRotation}
+                    />
+                  )}
+                />
+              ) : ext === "docx" ? (
+                <DocxViewer
+                  src={src}
+                  fileName={doc.name}
+                  isDark={viewerDark}
+                  onIsDarkChange={setViewerDark}
+                  showToolbar={false}
+                  showUpload={false}
+                  defaultZoom="fit-width"
+                  className="h-full"
+                />
+              ) : ext === "pptx" ? (
+                <PptxViewer
+                  src={src}
+                  fileName={doc.name}
+                  initialSlide={node?.page}
+                  showToolbar={false}
+                  showUpload={false}
+                  defaultZoom="fit-width"
+                  className="h-full"
+                />
+              ) : ext === "xlsx" ? (
+                <XlsxViewer
+                  src={src}
+                  fileName={doc.name}
+                  isDark={viewerDark}
+                  onIsDarkChange={setViewerDark}
+                  showToolbar={false}
+                  showUpload={false}
+                  className="h-full"
+                />
+              ) : (
+                <OtherViewer
+                  doc={doc}
+                  src={src}
+                  imageOverlay={(width, height) => (
+                    <ParsedBlockOverlay
+                      blocks={sourceBlocks}
+                      page={1}
+                      selectedIds={sourceIds}
+                      width={width}
+                      height={height}
+                    />
+                  )}
+                />
+              )}
+            </Suspense>
+          </DocumentNavigationContext.Provider>
+        }
+        blocks={
+          <ScrollArea scrollFade>
+            <div className="p-4">
+              {sourceBlocks.length ? (
+                <ParsedBlocks
+                  blocks={sourceBlocks}
+                  selectedIds={sourceIds}
+                  activeId={activeBlockId}
+                  onSelect={(block) => {
+                    setSourceView("preview");
+                    requestAnimationFrame(() => selectBlock(block));
+                  }}
+                />
+              ) : (
+                <Markdown allowHtml>
+                  {sectionContent ?? "No parsed source content is available."}
+                </Markdown>
+              )}
+            </div>
+          </ScrollArea>
+        }
+      />
     );
   }
   return (
@@ -704,20 +757,13 @@ export function DocumentView({
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <span
+                    <IndexStatusBadge
+                      status={doc.status}
+                      error={doc.error}
                       tabIndex={0}
-                      className={`status-chip ${doc.status}`}
-                      aria-label={statusDescription}
                     />
                   }
-                >
-                  {doc.status === "ready" ? (
-                    <CircleCheckFilled className="size-3.5" />
-                  ) : indexIssue ? (
-                    <TriangleWarningFilled className="size-4 micro-alert-icon" />
-                  ) : null}
-                  {statusLabel}
-                </TooltipTrigger>
+                />
                 <TooltipPopup className="max-w-72">
                   {statusDescription}
                 </TooltipPopup>

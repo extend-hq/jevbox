@@ -1,4 +1,5 @@
 import { BoxLoader } from "@/components/box-loader";
+import { IndexStatusBadge } from "@/components/index-status-badge";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import {
   ContextMenu,
@@ -16,6 +17,7 @@ import {
   Info,
   Share2,
   FolderBolt,
+  FolderTree,
   Folder,
   Trash2,
   ArrowUpDown,
@@ -27,7 +29,6 @@ import {
   ChevronUp,
   Columns3,
   Cube,
-  List,
   FileArchiveIcon,
   Filter,
   GalleryThumbnails,
@@ -110,9 +111,6 @@ function GridViewGlyph(props: InlineRegistryIconProps) {
 }
 function LayoutThreeColumnGlyph(props: InlineRegistryIconProps) {
   return <Columns3 {...props} />;
-}
-function LeftToRightListBulletGlyph(props: InlineRegistryIconProps) {
-  return <List {...props} />;
 }
 const LazySpatialView = React.lazy(() =>
   import("@/components/library-spatial-view").then((mod) => ({
@@ -1366,7 +1364,7 @@ const VIEW_OPTIONS: Array<{
   value: FileSystemView;
 }> = [
   { icon: GridViewGlyph, label: "Grid", value: "icons" },
-  { icon: LeftToRightListBulletGlyph, label: "List", value: "list" },
+  { icon: FolderTree, label: "List", value: "list" },
   { icon: LayoutThreeColumnGlyph, label: "Columns", value: "columns" },
   { icon: GalleryThumbnailsGlyph, label: "Gallery", value: "gallery" },
   { icon: Cube, label: "3D", value: "spatial" },
@@ -2862,10 +2860,7 @@ function FileSystemFilterPill({
   return (
     <div className="flex items-center text-xs">
       <span
-        className={cn(
-          FILTER_PILL_SEGMENT_CLASSNAME,
-          "rounded-l-md border-l text-primary",
-        )}
+        className={cn(FILTER_PILL_SEGMENT_CLASSNAME, "rounded-l-md border-l")}
       >
         {filter.type === "fileType" ? (
           <File01Glyph className="size-3" />
@@ -2877,10 +2872,7 @@ function FileSystemFilterPill({
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
-            <button
-              type="button"
-              className={cn(FILTER_PILL_BUTTON_CLASSNAME, "text-primary")}
-            >
+            <button type="button" className={FILTER_PILL_BUTTON_CLASSNAME}>
               {FILTER_OPERATOR_LABELS[filter.operator]}
             </button>
           }
@@ -3895,6 +3887,8 @@ function FileSystemListView({
   currentPath,
   fileFilter,
   index,
+  loadPreviewImageUrl,
+  pageUrlCache,
   onOpen,
   onSelect,
   onSortColumnClick,
@@ -3965,6 +3959,8 @@ function FileSystemListView({
         currentPath={currentPath}
         hasActiveFilters={fileFilter !== null}
         index={index}
+        loadPreviewImageUrl={loadPreviewImageUrl}
+        pageUrlCache={pageUrlCache}
         initialSelectedPath={
           selectedPath?.startsWith(currentPath)
             ? selectedPath.slice(currentPath.length).replace(/\/$/, "")
@@ -3987,6 +3983,8 @@ function FileSystemPierreTree({
   currentPath,
   hasActiveFilters,
   index,
+  loadPreviewImageUrl,
+  pageUrlCache,
   initialSelectedPath,
   onOpen,
   onSelect,
@@ -4000,6 +3998,8 @@ function FileSystemPierreTree({
   currentPath: string;
   hasActiveFilters: boolean;
   index: FileSystemIndex;
+  loadPreviewImageUrl: FileSystemViewProps["loadPreviewImageUrl"];
+  pageUrlCache: Map<string, string>;
   initialSelectedPath: string | null;
   onOpen: (entry: FileSystemEntry) => void;
   onSelect: (
@@ -4019,6 +4019,9 @@ function FileSystemPierreTree({
 }) {
   const indexFiles = index.files;
   const indexFolders = index.folders;
+  const treeId = React.useId();
+  const [covers, setCovers] = React.useState<Record<string, string>>({});
+  const requestedCovers = React.useRef(new Set<string>());
   const sortComparator = React.useMemo<
     "default" | FileTreeSortComparator
   >(() => {
@@ -4075,7 +4078,11 @@ function FileSystemPierreTree({
     let thumbnailCount = 0;
     for (const relativePath of relativePaths) {
       const file = index.files.get(`${currentPath}${relativePath}`);
-      const coverUrl = file ? filePreviewUrls(file)[0] : undefined;
+      const coverUrl = file
+        ? (filePreviewUrls(file)[0] ??
+          covers[file.path] ??
+          pageUrlCache.get(`${file.path}#0`))
+        : undefined;
       if (!file) continue;
       const baseName = file.name.toLowerCase();
       if (byFileName[baseName]) continue;
@@ -4112,7 +4119,7 @@ function FileSystemPierreTree({
       set: "complete" as const,
       spriteSheet: `<svg data-icon-sprite aria-hidden="true" width="0" height="0">${symbols.join("")}</svg>`,
     };
-  }, [currentPath, index, relativePaths]);
+  }, [currentPath, index, relativePaths, covers, pageUrlCache]);
   const syncingSelection = React.useRef(false);
   const { model } = useFileTree({
     flattenEmptyDirectories: false,
@@ -4211,6 +4218,74 @@ function FileSystemPierreTree({
       );
     },
   });
+  React.useEffect(() => {
+    const container =
+      model.getFileTreeContainer() ?? document.getElementById(treeId);
+    const shadow = container?.shadowRoot;
+    if (!container || !shadow || !loadPreviewImageUrl) return;
+    let active = true;
+    const loadCover = (row: Element) => {
+      const path = row.getAttribute("data-item-path");
+      if (!path) return;
+      const file = indexFiles.get(`${currentPath}${path}`);
+      if (
+        !file ||
+        !file.previewPageCount ||
+        filePreviewUrls(file)[0] ||
+        pageUrlCache.has(`${file.path}#0`) ||
+        requestedCovers.current.has(file.path) ||
+        requestedCovers.current.size >= TREE_THUMBNAIL_SPRITE_LIMIT
+      )
+        return;
+      requestedCovers.current.add(file.path);
+      void loadPreviewImageUrl(file, 0)
+        .then((url) => {
+          if (!url) return;
+          pageUrlCache.set(`${file.path}#0`, url);
+          if (active)
+            setCovers((current) => ({ ...current, [file.path]: url }));
+        })
+        .catch(() => {});
+    };
+    const observed = new WeakSet<Element>();
+    const visible = new WeakSet<Element>();
+    const observer =
+      typeof IntersectionObserver === "undefined"
+        ? null
+        : new IntersectionObserver(
+            (entries) => {
+              for (const entry of entries) {
+                if (entry.isIntersecting) {
+                  visible.add(entry.target);
+                  loadCover(entry.target);
+                } else visible.delete(entry.target);
+              }
+            },
+            { root: container },
+          );
+    const scan = () => {
+      for (const row of shadow.querySelectorAll("[data-item-path]")) {
+        if (!observer || visible.has(row)) loadCover(row);
+        if (observer && !observed.has(row)) {
+          observed.add(row);
+          observer.observe(row);
+        }
+      }
+    };
+    const mutations = new MutationObserver(scan);
+    mutations.observe(shadow, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-item-path"],
+    });
+    scan();
+    return () => {
+      active = false;
+      mutations.disconnect();
+      observer?.disconnect();
+    };
+  }, [currentPath, indexFiles, loadPreviewImageUrl, model, pageUrlCache, treeId]);
   React.useEffect(() => {
     model.setIcons(icons);
   }, [icons, model]);
@@ -4358,6 +4433,7 @@ function FileSystemPierreTree({
   const typeAhead = useEntryTypeAhead();
   return (
     <PierreFileTree
+      id={treeId}
       model={model}
       className="block min-h-0 flex-1"
       onDoubleClick={(event) => {
@@ -4552,6 +4628,8 @@ function FileSystemColumnsView(props: FileSystemViewProps) {
             key={columnPath || "(root)"}
             entries={index.children.get(columnPath) ?? []}
             index={index}
+            loadPreviewImageUrl={loadPreviewImageUrl}
+            pageUrlCache={pageUrlCache}
             isLoading={loadingFolders.has(columnPath)}
             onOpen={onOpen}
             onSelect={onSelect}
@@ -4621,6 +4699,8 @@ const COLUMN_ROW_STRIDE = COLUMN_ROW_HEIGHT + COLUMN_ROW_GAP;
 const FileSystemColumn = React.memo(function FileSystemColumn({
   entries,
   index,
+  loadPreviewImageUrl,
+  pageUrlCache,
   isLoading,
   onOpen,
   onSelect,
@@ -4632,6 +4712,8 @@ const FileSystemColumn = React.memo(function FileSystemColumn({
 }: {
   entries: FileSystemEntry[];
   index: FileSystemIndex;
+  loadPreviewImageUrl: FileSystemViewProps["loadPreviewImageUrl"];
+  pageUrlCache: Map<string, string>;
   isLoading: boolean;
   onOpen: (entry: FileSystemEntry) => void;
   onSelect: (
@@ -4692,8 +4774,6 @@ const FileSystemColumn = React.memo(function FileSystemColumn({
               const isSelected = selectedPaths.has(entry.path);
               const isOnTrail =
                 entry.kind === "folder" && entry.path === trailChildPath;
-              const coverUrl =
-                entry.kind === "file" ? filePreviewUrls(entry)[0] : undefined;
               return (
                 <button
                   key={entry.path}
@@ -4726,18 +4806,20 @@ const FileSystemColumn = React.memo(function FileSystemColumn({
                 >
                   {entry.kind === "folder" ? (
                     <Folder className="size-3.5 shrink-0" />
-                  ) : coverUrl ? (
-                    <img
-                      src={coverUrl}
-                      alt=""
-                      draggable={false}
-                      className="size-4 shrink-0 rounded-[3px] bg-muted object-cover"
-                    />
                   ) : (
-                    <FileTypeIcon
-                      fileName={entry.name}
-                      className="size-4 shrink-0"
-                      selected={isSelected}
+                    <FileVisual
+                      file={entry}
+                      className="size-4 shrink-0 rounded-[3px]"
+                      previewClassName="size-full"
+                      loadPreviewImageUrl={loadPreviewImageUrl}
+                      pageUrlCache={pageUrlCache}
+                      renderFilePreview={() => (
+                        <FileTypeIcon
+                          fileName={entry.name}
+                          className="size-full"
+                          selected={isSelected}
+                        />
+                      )}
                     />
                   )}
                   <span className="min-w-0 flex-1 truncate">{entry.name}</span>
@@ -4777,13 +4859,7 @@ function FileSystemInformation({
     for (const [label, value] of Object.entries(entry.metadata ?? {}))
       rows.push([
         label,
-        label === "Index" ? (
-          <span className={`status-chip ${value.replaceAll(" ", "_")}`}>
-            {value}
-          </span>
-        ) : (
-          value
-        ),
+        label === "Index" ? <IndexStatusBadge status={value} /> : value,
       ]);
   } else {
     const childCount = index.children.get(entry.path)?.length;
@@ -4832,48 +4908,52 @@ function FileSystemInformationSidebar({
   const file = entry.kind === "file" ? entry : null;
   const fileSize = file ? formatByteSize(file.size) : null;
   return (
-    <InlineScrollArea2
-      orientation="vertical"
-      className="h-full"
-      contentProps={{
-        className: "flex min-h-full flex-col gap-6 p-5",
-        style: { display: "flex" },
-      }}
-    >
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center gap-3">
-          {file ? (
-            <FileVisual
-              file={file}
-              className={cn(
-                "shrink-0 rounded-sm",
-                (file.previewAspectRatio ?? 0.78) > 1.2 ? "w-16" : "w-9",
-              )}
-              previewAspectRatio={0.78}
-              renderFilePreview={renderFilePreview}
-              loadPreviewImageUrl={loadPreviewImageUrl}
-            />
-          ) : (
-            <FileSystemFolderGlyph className="h-8 w-auto shrink-0" />
-          )}
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold break-words">
-              {entry.name}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {file ? fileKindLabel(file) : "Folder"}
-              {fileSize ? ` - ${fileSize}` : null}
+    <div className="flex h-full min-h-0 flex-col">
+      <InlineScrollArea2
+        orientation="vertical"
+        className="min-h-0 flex-1"
+        contentProps={{
+          className: "flex min-h-full flex-col gap-6 p-5",
+          style: { display: "flex" },
+        }}
+      >
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-3">
+            {file ? (
+              <FileVisual
+                file={file}
+                className={cn(
+                  "shrink-0 rounded-sm",
+                  (file.previewAspectRatio ?? 0.78) > 1.2 ? "w-16" : "w-9",
+                )}
+                previewAspectRatio={0.78}
+                renderFilePreview={renderFilePreview}
+                loadPreviewImageUrl={loadPreviewImageUrl}
+              />
+            ) : (
+              <FileSystemFolderGlyph className="h-8 w-auto shrink-0" />
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold break-words">
+                {entry.name}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {file ? fileKindLabel(file) : "Folder"}
+                {fileSize ? ` - ${fileSize}` : null}
+              </div>
             </div>
           </div>
         </div>
+        {children}
+        <FileSystemInformation entry={entry} index={index} />
+      </InlineScrollArea2>
+      <div className="shrink-0 p-5">
         <Button className="w-full" onClick={() => onOpen(entry)}>
           {file ? "Open document" : "Open folder"}
           <ArrowRight />
         </Button>
       </div>
-      {children}
-      <FileSystemInformation entry={entry} index={index} />
-    </InlineScrollArea2>
+    </div>
   );
 }
 function FileSystemStructureSummary({

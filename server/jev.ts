@@ -13,6 +13,7 @@ export const retrievalLimits = {
   minimumUsefulResults: 3,
   minimumScore: 1.5,
   evidenceConcurrency: 16,
+  authorizationConcurrency: 8,
 } as const;
 
 const probability = z.number().finite().min(0).max(1);

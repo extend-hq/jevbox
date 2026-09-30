@@ -304,7 +304,7 @@ export default function App() {
           path: pathFor(r),
           contentType: r.mime,
           size: r.size,
-          metadata: { Index: r.status.replaceAll("_", " ") },
+          metadata: { Index: r.status },
           createdAt: r.created,
           updatedAt: r.created,
           url: `/api/documents/${r.id}/content`,
@@ -336,15 +336,20 @@ export default function App() {
         pageIndex,
       );
       if (thumbnail && file.key)
-        setPreviews((current) => ({
-          ...current,
-          [file.key!]: {
-            ...current[file.key!],
-            pageCount: thumbnail.pageCount,
-            aspectRatio:
-              "aspectRatio" in thumbnail ? thumbnail.aspectRatio : undefined,
-          },
-        }));
+        setPreviews((current) => {
+          const urls = [...(current[file.key!]?.urls ?? [])];
+          urls[pageIndex] = thumbnail.url;
+          return {
+            ...current,
+            [file.key!]: {
+              ...current[file.key!],
+              urls,
+              pageCount: thumbnail.pageCount,
+              aspectRatio:
+                "aspectRatio" in thumbnail ? thumbnail.aspectRatio : undefined,
+            },
+          };
+        });
       return thumbnail?.url ?? null;
     },
     [],

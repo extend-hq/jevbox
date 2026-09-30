@@ -450,6 +450,53 @@ test("category routes stay visible beside grouped top-level documents", async ()
   assert.equal(rootChecked, true);
 });
 
+test("sibling authorization runs concurrently within its bound and preserves menu order", async () => {
+  const resources = Array.from({ length: 32 }, (_, i) =>
+    document(`doc-${i}`, "# Section\nEvidence"),
+  );
+  const { store } = storeFor(resources);
+  let active = 0;
+  let peak = 0;
+  let checks = 0;
+  store.permission = async () => {
+    checks++;
+    peak = Math.max(peak, ++active);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    active--;
+    return true;
+  };
+  let checked = false;
+  const result = await retrieveDocuments(
+    store,
+    actor,
+    "question",
+    "key",
+    async (url, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (!body.questions.usefulness) {
+        for (const question of Object.values(body.questions) as any[]) {
+          const choices = Object.keys(question.criteria);
+          if (choices.includes("document:doc-0")) {
+            assert.deepEqual(
+              choices.filter((id) => id !== "none"),
+              resources
+                .slice(0, 16)
+                .map((resource) => `document:${resource.id}`),
+            );
+            checked = true;
+          }
+        }
+      }
+      return jevFetch(url, init);
+    },
+  );
+  assert.ok(checked);
+  assert.ok(peak > 1);
+  assert.ok(peak <= retrievalLimits.authorizationConcurrency);
+  assert.ok(checks > resources.length);
+  assert.ok(result.results.length > 0);
+});
+
 test("widening keeps unrelated passages out and respects the passage budget", async () => {
   const resources = Array.from({ length: 8 }, (_, i) =>
     document(`doc-${i}`, "# Outline\nBackground only."),

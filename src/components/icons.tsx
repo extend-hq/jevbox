@@ -40,6 +40,20 @@ export const Compose2 = icon(
     />
   </>,
 );
+export const FolderTree = icon(
+  <g
+    fill="currentColor"
+    stroke="currentColor"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    strokeWidth="2"
+  >
+    <polyline fill="none" points="4 3 4 6 7 6" />
+    <path d="m4,6v7c0,1.105.895,2,2,2h1" fill="none" />
+    <path d="m12.75,4.5l-1-1.5h-1.25c-.276,0-.5.224-.5.5v3.5c0,.552.448,1,1,1h4c.552,0,1-.448,1-1v-2c0-.276-.224-.5-.5-.5h-2.75Z" />
+    <path d="m12.75,13.5l-1-1.5h-1.25c-.276,0-.5.224-.5.5v3.5c0,.552.448,1,1,1h4c.552,0,1-.448,1-1v-2c0-.276-.224-.5-.5-.5h-2.75Z" />
+  </g>,
+);
 export const Cube = icon(
   <g
     fill="none"

@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { ScrollArea } from "./coss/scroll-area";
+import { Spinner } from "./coss/spinner";
 import { Check, ShapeTriangle } from "./icons";
 import type { ChatTurn } from "../../shared/chat";
 
@@ -86,7 +87,7 @@ export function ChatThinking({ status }: { status: ChatTurn["status"] }) {
                 {index < steps.length - 1 ? (
                   <Check size={12} />
                 ) : (
-                  <span className="chat-step-dot" />
+                  <Spinner className="chat-step-spinner" aria-hidden="true" />
                 )}
                 {stageLabel(step)}
               </li>

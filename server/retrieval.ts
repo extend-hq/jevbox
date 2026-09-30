@@ -30,6 +30,9 @@ type Value = {
   sources: Omit<RetrievedSource, "score" | "routeScore">[];
 };
 const evidenceSlot = createLimiter(retrievalLimits.evidenceConcurrency);
+const authorizationSlot = createLimiter(
+  retrievalLimits.authorizationConcurrency,
+);
 
 export async function retrieveDocuments(
   store: Store,
@@ -68,7 +71,11 @@ export async function retrieveDocuments(
       resource.parsed &&
       (!documentIds.length || documentIds.includes(resource.id)),
   );
-  const canRead = (id: string) => resourceAccess(store, actor, id);
+  const canRead = (id: string) =>
+    authorizationSlot(async () => {
+      signal?.throwIfAborted();
+      return resourceAccess(store, actor, id);
+    });
 
   function bounded(
     nodes: RouteNode<Value>[],
@@ -102,11 +109,11 @@ export async function retrieveDocuments(
         id: `${parent}:group:${start}`,
         children,
         describe: async () => {
-          const descriptions: string[] = [];
-          for (const child of children) {
-            const description = await child.describe();
-            if (description !== undefined) descriptions.push(description);
-          }
+          const descriptions = (
+            await Promise.all(children.map((child) => child.describe()))
+          ).filter(
+            (description): description is string => description !== undefined,
+          );
           const length = Math.floor(1200 / Math.max(1, descriptions.length));
           return descriptions.length
             ? `Source group: ${descriptions.map((description) => description.slice(0, length)).join("\n")}`

@@ -4433,10 +4433,6 @@ label.share-access-card {
   content-visibility: auto;
   contain-intrinsic-size: auto 150px;
 }
-.parsed-block[data-selected] {
-  border-color: var(--block-color);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--block-color) 20%, transparent);
-}
 .parsed-block-trigger {
   width: 100%;
   display: flex;
@@ -4450,9 +4446,16 @@ label.share-access-card {
 }
 .parsed-block .parsed-block-type {
   --badge-border-tone: var(--block-badge-tone);
-  background: var(--block-badge-background);
+  border: 1px solid color-mix(in oklch, var(--block-badge-tone) 55%, transparent);
+  background: color-mix(in oklch, var(--block-badge-tone) 15%, transparent);
   color: var(--block-badge-foreground);
+  font-weight: 600;
   text-transform: capitalize;
+}
+.parsed-block[data-selected] .parsed-block-type,
+.parsed-block-trigger[aria-pressed="true"] .parsed-block-type {
+  border-color: var(--block-badge-tone);
+  background: color-mix(in oklch, var(--block-badge-tone) 24%, transparent);
 }
 .parsed-block .page-pill {
   font-size: 11px;
@@ -5508,12 +5511,10 @@ details[open] > .triangle-summary .disclosure-triangle {
 .chat-thinking-steps li[aria-current] {
   color: var(--foreground);
 }
-.chat-step-dot {
-  width: 5px;
-  height: 5px;
-  margin-inline: 3.5px;
-  background: currentColor;
-  border-radius: 50%;
+.chat-step-spinner {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
 }
 .chat-stream-cursor {
   display: inline-block;

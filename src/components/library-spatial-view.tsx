@@ -101,7 +101,7 @@ const DEPTH_OF_FIELD_SHADER = {
     focus: { value: 20 },
     aperture: { value: 8 },
     band: { value: 0.012 },
-    nearScale: { value: 0.3 },
+    nearScale: { value: 0.6 },
     maxBlur: { value: 14 },
     cameraNear: { value: 0.1 },
     cameraFar: { value: 2000 },
@@ -128,13 +128,12 @@ const DEPTH_OF_FIELD_SHADER = {
     float distanceAt(vec2 uv) {
       return -perspectiveDepthToViewZ(texture2D(tDepth, uv).x, cameraNear, cameraFar);
     }
-    // A band around the focal plane stays sharp, and things nearer than it
-    // blur far less than things beyond it, so what's close stays readable.
     float blurSize(float depth) {
       float inverse = 1.0 / focus - 1.0 / depth;
       float amount = max(abs(inverse) - band, 0.0) * aperture;
       if (inverse < 0.0) amount *= nearScale;
-      return clamp(amount, 0.0, 1.0) * maxBlur;
+      float closeBlur = 1.0 - smoothstep(0.4, 3.0, depth);
+      return max(clamp(amount, 0.0, 1.0), closeBlur) * maxBlur;
     }
     void main() {
       float centerDepth = distanceAt(vUv);
@@ -439,9 +438,7 @@ export function LibrarySpatialView(props: Props) {
     scene.background = new THREE.Color(palette.haze);
     const fog = new THREE.FogExp2(palette.haze, 0.015);
     scene.fog = fog;
-    // A generous near plane keeps depth precision high enough that sheets and
-    // their backing never z-fight while orbiting.
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.4, 2000);
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 2000);
     scene.add(camera);
 
     const geometries = new Set<THREE.BufferGeometry>();
@@ -614,7 +611,6 @@ export function LibrarySpatialView(props: Props) {
       base: THREE.Vector3;
       calm: number;
       hover: number;
-      yielding: number;
       scale: number;
       height: number;
       width: number;
@@ -691,7 +687,6 @@ export function LibrarySpatialView(props: Props) {
         base: new THREE.Vector3(...node.position),
         calm: 0,
         hover: 0,
-        yielding: 0,
         scale: 1,
         width: SHEET_WIDTH,
         height: SHEET_HEIGHT,
@@ -1260,60 +1255,19 @@ export function LibrarySpatialView(props: Props) {
       }, 180);
     }
 
-    /** Screen rectangle covered by the document being read and its tree. */
-    function measureReading() {
-      const reading = floaters.get(
-        treePath ?? latest.current.selectedPath ?? "\0",
-      );
-      if (!reading || reading.node.kind !== "file") return null;
-      const w = width();
-      const h = height();
-      cameraUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
-      cameraRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
-      const tree = trees.get(reading.node.path);
-      const reveal = tree && tree.path === treePath ? tree.reveal : 0;
-      const right =
-        reading.width / 2 + (tree ? (TREE_GAP + tree.width) * reveal : 0);
-      const bottom = Math.max(reading.height, tree ? tree.height * reveal : 0);
-      const box = {
-        left: Infinity,
-        right: -Infinity,
-        top: Infinity,
-        bottom: -Infinity,
-      };
-      for (const [x, y] of [
-        [-reading.width / 2, reading.height / 2],
-        [right, reading.height / 2],
-        [-reading.width / 2, reading.height / 2 - bottom],
-        [right, reading.height / 2 - bottom],
-      ]) {
-        projected
-          .copy(reading.group.position)
-          .addScaledVector(cameraRight, x)
-          .addScaledVector(cameraUp, y)
-          .project(camera);
-        if (projected.z >= 1) return null;
-        const sx = (projected.x * 0.5 + 0.5) * w;
-        const sy = (-projected.y * 0.5 + 0.5) * h;
-        box.left = Math.min(box.left, sx);
-        box.right = Math.max(box.right, sx);
-        box.top = Math.min(box.top, sy);
-        box.bottom = Math.max(box.bottom, sy);
-      }
-      return {
-        box,
-        path: reading.node.path,
-        distance: camera.position.distanceTo(reading.group.position),
-      };
-    }
-
     function pickTreeDocument() {
       const selected = floaters.get(latest.current.selectedPath ?? "\0");
-      if (
-        selected?.node.kind === "file" &&
-        camera.position.distanceTo(selected.group.position) < 45
-      )
-        return selected.node.path;
+      if (selected?.node.kind === "file") {
+        projected.copy(selected.group.position).project(camera);
+        if (
+          projected.z > -1 &&
+          projected.z < 1 &&
+          Math.abs(projected.x) < 1.2 &&
+          Math.abs(projected.y) < 1.2 &&
+          camera.position.distanceTo(selected.group.position) < 45
+        )
+          return selected.node.path;
+      }
       let best: string | null = null;
       let bestDistance = TREE_REVEAL_DISTANCE;
       for (const floater of floaters.values()) {
@@ -1322,6 +1276,7 @@ export function LibrarySpatialView(props: Props) {
         if (distance >= bestDistance) continue;
         projected.copy(floater.group.position).project(camera);
         if (
+          projected.z > -1 &&
           projected.z < 1 &&
           Math.abs(projected.x) < 0.6 &&
           Math.abs(projected.y) < 0.65
@@ -1412,37 +1367,14 @@ export function LibrarySpatialView(props: Props) {
         tree.group.position.x = floater.width / 2 + TREE_GAP * reveal;
       }
 
-      const reading = measureReading();
       for (const floater of floaters.values()) {
         const { node, group, body, base } = floater;
         const focused = node.path === selectedPath || node.path === treePath;
-        // Anything floating between the camera and the document being read
-        // shrinks out of the way so the sheet and its structure stay legible.
-        let blocking = false;
-        if (reading && node.path !== reading.path) {
-          const distance = camera.position.distanceTo(group.position);
-          if (distance < reading.distance + 0.5) {
-            projected.copy(group.position).project(camera);
-            const sx = (projected.x * 0.5 + 0.5) * width();
-            const sy = (-projected.y * 0.5 + 0.5) * height();
-            const margin =
-              (floater.height * floater.scale * height()) /
-              Math.max(1, distance);
-            blocking =
-              projected.z < 1 &&
-              sx > reading.box.left - margin &&
-              sx < reading.box.right + margin &&
-              sy > reading.box.top - margin &&
-              sy < reading.box.bottom + margin;
-          }
-        }
-        floater.yielding +=
-          ((blocking ? 1 : 0) - floater.yielding) * Math.min(1, delta * 5);
         floater.calm +=
           ((focused ? 1 : 0) - floater.calm) * Math.min(1, delta * 3);
         floater.hover +=
           ((node.path === hovered ? 1 : 0) - floater.hover) *
-          Math.min(1, delta * 10);
+          (reducedMotion ? 1 : Math.min(1, delta * 10));
         const drift = 1 - floater.calm;
         const phase = node.seed * Math.PI * 2;
         group.position.set(
@@ -1458,10 +1390,10 @@ export function LibrarySpatialView(props: Props) {
         group.quaternion
           .copy(camera.quaternion)
           .multiply(sway.setFromEuler(euler));
-        group.scale.setScalar(
-          Math.max(0.001, (1 + floater.hover * 0.06) * (1 - floater.yielding)),
-        );
-        group.visible = floater.yielding < 0.98;
+        if (floater.cover) {
+          floater.cover.material.emissive.set("#3265ed");
+          floater.cover.material.emissiveIntensity = floater.hover * 0.12;
+        }
         if (floater.frame) floater.frame.visible = node.path === selectedPath;
         body.scale.setScalar(floater.scale);
       }
@@ -1470,14 +1402,14 @@ export function LibrarySpatialView(props: Props) {
       // child, easing through the level between them.
       cameraUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
       scene.updateMatrixWorld(true);
+      if (pointerInside && !moving) {
+        raycaster.setFromCamera(pointer, camera);
+        updateHover(hoverHit());
+      }
       links.forEach(([parent, child], i) => {
         parent.body.localToWorld(linkFrom.set(0, -parent.height / 2, 0));
         child.body.localToWorld(linkTo.set(0, child.height / 2, 0));
-        linkVisibility.fill(
-          Math.min(1 - parent.yielding, 1 - child.yielding),
-          i * LINK_SEGMENTS,
-          (i + 1) * LINK_SEGMENTS,
-        );
+        linkVisibility.fill(1, i * LINK_SEGMENTS, (i + 1) * LINK_SEGMENTS);
         const bend = Math.max(1, Math.abs(linkFrom.y - linkTo.y) * 0.55);
         bezier.v0.copy(linkFrom);
         bezier.v1.copy(linkFrom).addScaledVector(cameraUp, -bend);
@@ -1512,10 +1444,11 @@ export function LibrarySpatialView(props: Props) {
       centerRay.setFromCamera(center, camera);
       const hit = centerRay.intersectObjects(focusTargets, false)[0];
       const selected = floaters.get(selectedPath ?? "\0");
-      if (hit) focusGoal = hit.distance;
+      if (hit && hit.distance >= 3) focusGoal = hit.distance;
       else if (selected) {
         projected.copy(selected.group.position).project(camera);
         if (
+          projected.z > -1 &&
           projected.z < 1 &&
           Math.abs(projected.x) < 0.75 &&
           Math.abs(projected.y) < 0.75
@@ -1737,22 +1670,70 @@ export function LibrarySpatialView(props: Props) {
       raycaster.setFromCamera(pointer, camera);
       return raycaster;
     }
-    function hit(event: PointerEvent | MouseEvent) {
+    let pointerInside = false;
+    const hoverRay = new THREE.Ray();
+    const hoverInverse = new THREE.Matrix4();
+    const hoverPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    const hoverPoint = new THREE.Vector3();
+    function rayHit() {
       let object: THREE.Object3D | null =
-        pointerRay(event).intersectObjects(pickables, false)[0]?.object ?? null;
+        raycaster.intersectObjects(pickables, false)[0]?.object ?? null;
       while (object && object.userData.path === undefined)
         object = object.parent;
       return object?.userData.path as string | undefined;
+    }
+    function hit(event: PointerEvent | MouseEvent) {
+      pointerRay(event);
+      return rayHit();
+    }
+    function hoverHit() {
+      const next = rayHit();
+      if (next || !hovered) return next;
+      const floater = floaters.get(hovered);
+      if (!floater) return next;
+      projected
+        .copy(floater.group.position)
+        .applyMatrix4(camera.matrixWorldInverse);
+      const depth = -projected.z;
+      if (depth <= camera.near) return next;
+      hoverRay
+        .copy(raycaster.ray)
+        .applyMatrix4(hoverInverse.copy(floater.group.matrixWorld).invert());
+      if (!hoverRay.intersectPlane(hoverPlane, hoverPoint)) return next;
+      const margin =
+        (8 * (2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)))) /
+        height();
+      return Math.abs(hoverPoint.x) <
+        (floater.width * floater.scale) / 2 + margin &&
+        Math.abs(hoverPoint.y) < (floater.height * floater.scale) / 2 + margin
+        ? hovered
+        : next;
+    }
+    function updateHover(next: string | undefined) {
+      if (next !== hovered) {
+        hovered = next;
+        const surface = renderer.domElement.parentElement;
+        if (surface && hovered) surface.dataset.entryPath = hovered;
+        else if (surface) delete surface.dataset.entryPath;
+        invalidate();
+      }
+      renderer.domElement.style.cursor = moving
+        ? "grabbing"
+        : hovered
+          ? "pointer"
+          : "grab";
     }
     function pointerDown(event: PointerEvent) {
       down = { x: event.clientX, y: event.clientY };
       flight = null;
       interacted = true;
       moving = true;
+      updateHover(undefined);
       invalidate();
     }
     function pointerUp(event: PointerEvent) {
       moving = false;
+      invalidate();
       if (
         !down ||
         Math.hypot(event.clientX - down.x, event.clientY - down.y) > 5 ||
@@ -1767,24 +1748,14 @@ export function LibrarySpatialView(props: Props) {
       invalidate();
     }
     function pointerMove(event: PointerEvent) {
-      const next = event.buttons ? hovered : hit(event);
-      if (next !== hovered) {
-        hovered = next;
-        // Lets the Finder's context menu resolve what's under the pointer.
-        const surface = renderer.domElement.parentElement;
-        if (surface && hovered) surface.dataset.entryPath = hovered;
-        else if (surface) delete surface.dataset.entryPath;
-        invalidate();
-      }
-      renderer.domElement.style.cursor = event.buttons
-        ? "grabbing"
-        : hovered !== undefined
-          ? "pointer"
-          : "grab";
+      pointerInside = true;
+      pointerRay(event);
+      if (!event.buttons) updateHover(hoverHit());
     }
     function pointerLeave() {
-      hovered = undefined;
+      pointerInside = false;
       moving = false;
+      updateHover(undefined);
       invalidate();
     }
     function doubleClick(event: MouseEvent) {
