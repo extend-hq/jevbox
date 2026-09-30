@@ -7,7 +7,7 @@
     "dev": "tsx --env-file-if-exists=.env server/index.ts",
     "build": "tsc --noEmit && vite build",
     "start": "NODE_ENV=production tsx --env-file-if-exists=.env server/index.ts",
-    "test": "tsx --env-file-if-exists=.env --test tests/*.test.ts tests/*.test.tsx",
+    "test": "tsx --env-file-if-exists=.env --test --test-concurrency=2 tests/*.test.ts tests/*.test.tsx",
     "test:forms": "node --import tsx --test tests/forms.test.tsx",
     "check": "tsc --noEmit",
     "services:up": "docker compose up -d postgres spicedb mailpit && pnpm services:wait",

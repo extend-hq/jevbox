@@ -13,6 +13,8 @@ export function ChatMessagePresentation({
   const [text, setText] = useState(content);
   const shown = useRef(content);
   const target = useRef(content);
+  const committed = useRef(0);
+  const credit = useRef(0);
   target.current = content;
   useEffect(() => {
     if (
@@ -20,24 +22,23 @@ export function ChatMessagePresentation({
       window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
       !content.startsWith(shown.current)
     ) {
+      credit.current = 0;
       shown.current = content;
       setText(content);
       return;
     }
     let frame = 0;
     let previous: number | null = null;
-    let credit = 0;
-    let committed = 0;
     const tick = (now: number) => {
       const remaining = target.current.length - shown.current.length;
       const elapsed =
         previous === null ? 16 : Math.max(0, Math.min(now - previous, 32));
-      credit += elapsed * Math.max(0.12, remaining / 120);
+      credit.current += elapsed * Math.max(0.12, remaining / 120);
       previous = now;
-      const count = Math.floor(credit);
-      if (count > 0 && now - committed >= 50) {
-        committed = now;
-        credit -= count;
+      const count = Math.floor(credit.current);
+      if (count > 0 && now - committed.current >= 80) {
+        committed.current = now;
+        credit.current -= count;
         let end = Math.min(target.current.length, shown.current.length + count);
         if (
           end < target.current.length &&

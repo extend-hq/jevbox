@@ -76,7 +76,7 @@ export function ChatTranscript({
       ),
     [messages],
   );
-  const firstPosition = messages[0]?.position ?? 0;
+  const firstPosition = outlined ? 0 : (messages[0]?.position ?? 0);
   const getItemKey = useCallback(
     (index: number) =>
       index < header
@@ -131,21 +131,21 @@ export function ChatTranscript({
     start: number;
     offset: number;
   } | null>(null);
+  const visibleAnchor =
+    virtualItems.find(
+      (item) =>
+        item.end > (virtualizer.scrollOffset ?? 0) &&
+        (!outlined || lookup.has(item.index)),
+    ) ?? firstVisible;
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item) =>
-    item.index < (anchor.current?.position ?? firstVisible?.index ?? 0);
+    item.index < (visibleAnchor?.index ?? 0);
   const pinned = useRef(true);
   const previousOutline = useRef(outlined);
   useLayoutEffect(() => {
     if (outlined && !previousOutline.current && pinned.current)
       virtualizer.scrollToEnd();
     previousOutline.current = outlined;
-    const item = virtualizer
-      .getVirtualItems()
-      .find(
-        (item) =>
-          item.end > (virtualizer.scrollOffset ?? 0) &&
-          (!outlined || lookup.has(item.index)),
-      );
+    const item = visibleAnchor;
     if (item) {
       const current = {
         position: item.index,
