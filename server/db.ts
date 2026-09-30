@@ -16,6 +16,7 @@ import {
 } from "node:crypto";
 import { createAuthorization, type Relationship } from "./authorization";
 import { HttpError } from "./errors";
+import { createJobs, type Jobs } from "./jobs";
 export { HttpError } from "./errors";
 pgTypes.setTypeParser(20, (value) => {
   const n = Number(value);
@@ -50,7 +51,7 @@ export async function createStore(
   if (key.length !== 32) throw new Error("Invalid encryption key");
   const db = new Pool({
     connectionString: databaseUrl,
-    max: 12,
+    max: 6,
     connectionTimeoutMillis: 5000,
   });
   const snapshotDb = new Pool({
@@ -65,7 +66,9 @@ export async function createStore(
   });
   for (const pool of [db, snapshotDb, authDb])
     pool.on("error", () => console.error("An idle database connection closed"));
+  let jobs: Jobs | undefined;
   const close = async () => {
+    await jobs?.close();
     await Promise.all([db.end(), snapshotDb.end(), authDb.end()]);
   };
   const context = new AsyncLocalStorage<PoolClient>();
@@ -320,6 +323,22 @@ export async function createStore(
       cipher.final(),
     ]).toString();
   }
+  try {
+    jobs = await createJobs({
+      databaseUrl,
+      schema: (await db.query("SELECT current_schema() AS schema")).rows[0]
+        .schema,
+      db: {
+        executeSql: (sql, values) =>
+          (context.getStore() ?? db).query(sql, values),
+      },
+      transaction,
+      encrypt,
+    });
+  } catch (error) {
+    await close();
+    throw error;
+  }
   return {
     db,
     authDb,
@@ -329,6 +348,7 @@ export async function createStore(
     transaction,
     encrypt,
     decrypt,
+    jobs,
     authorization,
     permission,
     cleanupPermissions,
@@ -356,6 +376,8 @@ export type Resource = {
   status: string;
   error: string | null;
   parse_run: string | null;
+  parse_requested: boolean;
+  index_job_id: string | null;
   parsed: string | null;
   created: string;
 };

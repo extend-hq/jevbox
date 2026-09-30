@@ -172,30 +172,37 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
                         return;
                       }
                       try {
-                        await api(
-                          `/auth/${register ? "register" : "sign-in/email"}`,
-                          {
-                            method: "POST",
-                            body: JSON.stringify({
-                              email,
-                              password: data.get("password"),
-                              ...(register
-                                ? {
-                                    name: data.get("name"),
-                                    ...(!invite
-                                      ? {
-                                          organization:
-                                            data.get("organization"),
-                                          bootstrapToken:
-                                            data.get("bootstrapToken") ||
-                                            undefined,
-                                        }
-                                      : { invite }),
-                                  }
-                                : {}),
-                            }),
-                          },
-                        );
+                        const signedIn = await api<{
+                          redirect?: boolean;
+                          url?: string;
+                        }>(`/auth/${register ? "register" : "sign-in/email"}`, {
+                          method: "POST",
+                          body: JSON.stringify({
+                            email,
+                            password: data.get("password"),
+                            ...(!register &&
+                            location.pathname === "/oauth/sign-in"
+                              ? { oauth_query: location.search.slice(1) }
+                              : {}),
+                            ...(register
+                              ? {
+                                  name: data.get("name"),
+                                  ...(!invite
+                                    ? {
+                                        organization: data.get("organization"),
+                                        bootstrapToken:
+                                          data.get("bootstrapToken") ||
+                                          undefined,
+                                      }
+                                    : { invite }),
+                                }
+                              : {}),
+                          }),
+                        });
+                        if (!register && signedIn.redirect && signedIn.url) {
+                          location.assign(signedIn.url);
+                          return;
+                        }
                       } catch (error) {
                         if (
                           !register &&

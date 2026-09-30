@@ -1,6 +1,14 @@
 import { createChatRuntime } from "./chat";
 import { createLinkSharingRouter } from "./link-sharing";
-import { createOrganization } from "./organization";
+import { createExternalAccess } from "./external-access";
+import { createMcpRouter } from "./mcp";
+import { createKeyManagement } from "./api-key-management";
+import { apiScopes } from "../shared/api-access";
+import { oauthProviderAuthServerMetadata } from "@better-auth/oauth-provider";
+import { enqueueIndex } from "./indexing-jobs";
+import { createWorkers } from "./workers";
+import { queues, type QueueName } from "./jobs";
+import { authenticateToken as sessionActor } from "./sessions";
 import { asyncFilter, asyncEvery } from "./async";
 import { fileMime, supportsIndex, extension } from "../shared/file-types";
 import { availableChatModels, validateProviderURL } from "./ai";
@@ -69,6 +77,7 @@ export async function createApp(options: {
   fetcher?: Fetch;
   rateLimits?: boolean;
   sendAuthEmail?: SendAuthEmail;
+  workers?: QueueName[];
 }) {
   const store = await createStore(options.directory, options.databaseUrl);
   let authentication: ReturnType<typeof createAuthentication>;
@@ -80,7 +89,14 @@ export async function createApp(options: {
   }
   const { auth, consume } = authentication;
   const providers = createProviders(store, options.fetcher);
-  const organization = createOrganization(store, options.fetcher);
+  const external = createExternalAccess(
+    store,
+    auth,
+    providers,
+    options.origin,
+    consume,
+    options.rateLimits,
+  );
   const app = express();
   app.disable("x-powered-by");
   const trustedProxies = process.env.TRUST_PROXY_CIDRS?.split(",")
@@ -92,6 +108,7 @@ export async function createApp(options: {
     try {
       await store.one("SELECT 1");
       await store.authorization.ready();
+      await store.jobs.ready();
       res.json({ ok: true });
     } catch {
       res.status(503).json({ ok: false });
@@ -105,8 +122,27 @@ export async function createApp(options: {
       "Referrer-Policy": "no-referrer",
       "X-Frame-Options": "SAMEORIGIN",
     });
+    const externalRequest =
+      req.path === "/mcp" ||
+      req.path === "/mcp/" ||
+      req.path.startsWith("/api/v1/") ||
+      req.path === "/api/v1";
+    const oauthProtocol = ["token", "register", "introspect", "revoke"].some(
+      (endpoint) => req.path === `/api/auth/oauth2/${endpoint}`,
+    );
+    if (
+      externalRequest &&
+      req.headers.origin &&
+      req.headers.origin !== options.origin &&
+      !process.env.MCP_ALLOWED_ORIGINS?.split(",")
+        .map((value) => value.trim())
+        .includes(req.headers.origin)
+    )
+      return res.status(403).json({ error: "Request origin rejected" });
     if (
       !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
+      !externalRequest &&
+      !oauthProtocol &&
       (req.headers.origin !== options.origin ||
         req.headers["x-jevbox-request"] !== "1")
     )
@@ -115,7 +151,7 @@ export async function createApp(options: {
   });
   if (options.rateLimits !== false)
     app.use(
-      "/api",
+      ["/api", "/mcp"],
       rateLimit({
         windowMs: 60000,
         limit: 180,
@@ -149,25 +185,24 @@ export async function createApp(options: {
       throw new HttpError(401, "Please sign in");
     return authenticateToken(current.session.id);
   }
-  async function authenticateToken(token: string): Promise<Actor> {
-    const current = await store.one<{
-      user_id: string;
-      org_id: string;
-      role: string;
-    }>(
-      "SELECT s.user_id,s.org_id,m.role FROM auth_sessions s JOIN users u ON u.id=s.user_id JOIN members m ON m.org_id=s.org_id AND m.user_id=s.user_id WHERE s.id=? AND s.expires_at>now() AND u.email_verified=true",
-      token,
+  const authenticateToken = (token: string) => sessionActor(store, token);
+  async function enqueueFiling(resourceId: string) {
+    const previous = await store.one<{ job_id: string | null }>(
+      "SELECT job_id FROM document_filing WHERE resource_id=?",
+      resourceId,
     );
-    if (!current) throw new HttpError(401, "Please sign in");
-    const a = {
-      userId: current.user_id,
-      orgId: current.org_id,
-      role: current.role,
-      token,
-    };
-    if (!(await store.permission(a, "organization", a.orgId, "active_member")))
-      throw new HttpError(401, "Please sign in");
-    return a;
+    if (previous?.job_id)
+      await store.jobs.cancel(queues.filing, previous.job_id);
+    const jobId = await store.jobs.send(
+      queues.filing,
+      { resourceId },
+      resourceId,
+    );
+    await store.run(
+      "UPDATE document_filing SET job_id=? WHERE resource_id=?",
+      jobId,
+      resourceId,
+    );
   }
   function mutation(
     handler: (
@@ -285,6 +320,29 @@ export async function createApp(options: {
     },
   );
   const authHandler = toNodeHandler(auth);
+  const authMetadata = oauthProviderAuthServerMetadata(auth);
+  app.get(
+    "/.well-known/oauth-authorization-server/api/auth",
+    async (req, res) => {
+      const response = await authMetadata(
+        new globalThis.Request(new URL(req.originalUrl, options.origin)),
+      );
+      res
+        .status(response.status)
+        .type("json")
+        .send(await response.text());
+    },
+  );
+  for (const resource of ["mcp", "api/v1"])
+    app.get(`/.well-known/oauth-protected-resource/${resource}`, (_req, res) =>
+      res.json({
+        resource: `${options.origin}/${resource}`,
+        authorization_servers: [`${options.origin}/api/auth`],
+        scopes_supported: [...apiScopes],
+        bearer_methods_supported: ["header"],
+        resource_name: "Jevbox",
+      }),
+    );
   app.all("/api/auth/{*path}", (req, res) => {
     const aliases: Record<string, string> = {
       "/api/auth/login": "/api/auth/sign-in/email",
@@ -297,6 +355,8 @@ export async function createApp(options: {
     return authHandler(req, res);
   });
   app.use(express.json({ limit: "1mb" }));
+  app.use("/api/v1", external.router);
+  app.use("/mcp", createMcpRouter(external));
   app.use("/api/shared", createLinkSharingRouter(store));
   app.use("/api", async (req, _res, next) => {
     try {
@@ -307,6 +367,10 @@ export async function createApp(options: {
     }
   });
   const actor = (req: Request) => (req as AuthedRequest).actor;
+  app.use(
+    "/api",
+    createKeyManagement(store, authentication, external, authenticate, audit),
+  );
   async function admin(req: Request) {
     const a = await authenticate(req);
     if (!(await store.permission(a, "organization", a.orgId, "manage")))
@@ -735,6 +799,18 @@ export async function createApp(options: {
         store.encrypt(JSON.stringify(s)),
         a.orgId,
       );
+      const awaitingDocuments = await store.all<{ id: string }>(
+        "SELECT id FROM resources WHERE org_id=? AND status='awaiting_key'",
+        a.orgId,
+      );
+      const awaitingFiling = await store.all<{ resource_id: string }>(
+        "SELECT resource_id FROM document_filing WHERE state='awaiting_key' AND resource_id IN (SELECT id FROM resources WHERE org_id=?)",
+        a.orgId,
+      );
+      const awaitingReviews = await store.all<{ id: string }>(
+        "SELECT id FROM organization_reviews WHERE state='awaiting_key' AND org_id=?",
+        a.orgId,
+      );
       await store.run(
         "UPDATE resources SET status='queued',error=NULL WHERE org_id=? AND status='awaiting_key'",
         a.orgId,
@@ -747,6 +823,22 @@ export async function createApp(options: {
         "UPDATE organization_reviews SET state='pending',error=NULL WHERE state='awaiting_key' AND org_id=?",
         a.orgId,
       );
+      for (const document of awaitingDocuments)
+        await enqueueIndex(store, document.id);
+      for (const filing of awaitingFiling)
+        await enqueueFiling(filing.resource_id);
+      for (const review of awaitingReviews) {
+        const jobId = await store.jobs.send(
+          queues.review,
+          { reviewId: review.id },
+          review.id,
+        );
+        await store.run(
+          "UPDATE organization_reviews SET job_id=? WHERE id=?",
+          jobId,
+          review.id,
+        );
+      }
       await audit(a, "settings.update");
       return {
         status: 200,
@@ -860,6 +952,7 @@ export async function createApp(options: {
             rid,
             parentId,
           );
+        if (supportsIndex(filename)) await enqueueIndex(store, rid);
         await audit(a, "document.upload", rid);
       });
       return {
@@ -920,11 +1013,12 @@ export async function createApp(options: {
       if (r.kind !== "document" || r.status !== "ready")
         throw new HttpError(409, "Wait for indexing before retrying filing.");
       await store.run(
-        "INSERT INTO document_filing(resource_id,scope_id,outcome) VALUES(?,?,?) ON CONFLICT(resource_id) DO UPDATE SET scope_id=excluded.scope_id,state='pending',is_review=false,outcome=excluded.outcome,error=NULL,lease_id=NULL,lease_until=NULL",
+        "INSERT INTO document_filing(resource_id,scope_id,outcome) VALUES(?,?,?) ON CONFLICT(resource_id) DO UPDATE SET scope_id=excluded.scope_id,state='pending',is_review=false,outcome=excluded.outcome,error=NULL,attempt_id=NULL",
         r.id,
         r.parent_id,
         JSON.stringify({ requested: true }),
       );
+      await enqueueFiling(r.id);
       return { status: 200, body: { ok: true } };
     }),
   );
@@ -964,19 +1058,18 @@ export async function createApp(options: {
         );
       const claims = [];
       for (const document of documents) {
-        const leaseId = randomUUID();
         await store.run(
-          "INSERT INTO document_filing(resource_id,scope_id,state,outcome,lease_id,lease_until) VALUES(?,NULL,'working',?,?,now()+interval '5 minutes') ON CONFLICT(resource_id) DO UPDATE SET scope_id=NULL,state='working',is_review=false,outcome=excluded.outcome,error=NULL,lease_id=excluded.lease_id,lease_until=excluded.lease_until",
+          "INSERT INTO document_filing(resource_id,scope_id,state,outcome) VALUES(?,NULL,'pending',?) ON CONFLICT(resource_id) DO UPDATE SET scope_id=NULL,state='pending',is_review=false,outcome=excluded.outcome,error=NULL,attempt_id=NULL",
           document.id,
           JSON.stringify({ requested: true }),
-          leaseId,
         );
+        await enqueueFiling(document.id);
         await audit(a, "document.organize", document.id);
-        claims.push({ document, leaseId });
+        claims.push(document.id);
       }
       return claims;
     });
-    res.json(await organization.organize(claims));
+    res.status(202).json({ count: claims.length });
   });
   app.post(
     "/api/documents/:id/retry",
@@ -995,9 +1088,10 @@ export async function createApp(options: {
       if (r.kind !== "document" || ["queued", "processing"].includes(r.status))
         throw new HttpError(409, "Document is already processing");
       await store.run(
-        "UPDATE resources SET status='queued',error=NULL,parse_run=NULL WHERE id=?",
+        "UPDATE resources SET status='queued',error=NULL,parse_requested=(parse_run IS NOT NULL) WHERE id=?",
         r.id,
       );
+      await enqueueIndex(store, r.id);
       return {
         status: 200,
         body: { ok: true },
@@ -1045,7 +1139,7 @@ export async function createApp(options: {
         .strict()
         .parse(req.body);
       await store.run(
-        "UPDATE document_filing SET state='completed',outcome=?,lease_id=NULL,lease_until=NULL,error=NULL WHERE resource_id=?",
+        "UPDATE document_filing SET state='completed',outcome=?,attempt_id=NULL,error=NULL WHERE resource_id=?",
         JSON.stringify({ reason: "manual", parentId }),
         resource.id,
       );
@@ -1277,49 +1371,24 @@ export async function createApp(options: {
         .json({ error: "The request could not be completed. Please retry." });
     },
   );
-  let working = false;
-  async function tick() {
-    if (working) return;
-    working = true;
-    try {
-      const docs = await store.all<Resource>(
-        "SELECT * FROM resources WHERE status IN ('queued','processing') ORDER BY created LIMIT 5",
-      );
-      for (const doc of docs) {
-        try {
-          await store.run(
-            "UPDATE resources SET status='processing' WHERE id=?",
-            doc.id,
-          );
-          const parsed = await providers.processDocument(doc);
-          if (parsed)
-            await store.run(
-              "UPDATE resources SET parsed=?,status='ready',error=NULL WHERE id=?",
-              JSON.stringify(parsed),
-              doc.id,
-            );
-        } catch (error) {
-          await store.run(
-            "UPDATE resources SET status='failed',error=? WHERE id=?",
-            error instanceof HttpError
-              ? error.message
-              : "Could not index this document. Verify the format and retry.",
-            doc.id,
-          );
-        }
-      }
-      await organization.tick();
-    } finally {
-      working = false;
-    }
+  const workers = createWorkers(store, { ...options, chats });
+  try {
+    await workers.start(options.workers ?? []);
+  } catch (error) {
+    await workers.close();
+    await store.close();
+    throw error;
   }
   return {
     app,
     store,
     auth,
-    tick,
     providers,
-    tickChats: chats.tick,
+    workers,
     closeChats: chats.close,
+    async close() {
+      await workers.close();
+      await store.close();
+    },
   };
 }

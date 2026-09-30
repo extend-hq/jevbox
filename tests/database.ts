@@ -24,6 +24,7 @@ export async function testDatabase() {
             await store.authorization.removeSnapshot(version);
           await store.close();
         }
+        await admin.query(`DROP SCHEMA IF EXISTS "${schema}_jobs" CASCADE`);
         await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
       } finally {
         await admin.end();

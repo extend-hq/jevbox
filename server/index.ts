@@ -1,11 +1,13 @@
 import { createApp } from "./app";
 import { resolve } from "node:path";
 import express from "express";
+import { queues } from "./jobs";
 const port = Number(process.env.PORT ?? 4310);
 const origin = process.env.APP_ORIGIN ?? `http://localhost:${port}`;
 const runtime = await createApp({
   directory: resolve(process.env.DATA_DIR ?? ".data"),
   origin,
+  workers: process.env.NODE_ENV === "production" ? [] : Object.values(queues),
 });
 if (process.env.NODE_ENV === "production") {
   runtime.app.use(express.static(resolve("dist"), { index: false }));
@@ -24,37 +26,22 @@ if (process.env.NODE_ENV === "production") {
 const server = runtime.app.listen(port, process.env.HOST ?? "127.0.0.1", () =>
   console.log(`Jevbox is running at ${origin}`),
 );
-const tick = () =>
-  runtime
-    .tick()
-    .catch(() => console.error("Indexing worker is temporarily unavailable"));
-const interval = setInterval(() => void tick(), 3000);
-const chatInterval = setInterval(
-  () => void runtime.tickChats().catch(() => {}),
-  1000,
-);
-void runtime.tickChats();
-const cleanup = setInterval(
-  () =>
-    void runtime.store
-      .cleanupPermissions()
-      .catch(() =>
-        console.error("Permission cleanup is temporarily unavailable"),
-      ),
-  60000,
-);
-void tick();
 let stopping = false;
 for (const signal of ["SIGTERM", "SIGINT"])
   process.on(signal, () => {
     if (stopping) return;
     stopping = true;
-    clearInterval(interval);
-    clearInterval(chatInterval);
-    clearInterval(cleanup);
-    void runtime.closeChats().then(() => {
-      server.close(
-        () => void runtime.store.close().then(() => process.exit(0)),
+    const timeout = setTimeout(() => process.exit(1), 40_000);
+    timeout.unref();
+    void (async () => {
+      await runtime.closeChats();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
       );
+      await runtime.close();
+      process.exit(0);
+    })().catch(() => {
+      console.error("Application shutdown failed");
+      process.exit(1);
     });
   });

@@ -1,3 +1,4 @@
+import { queues, type BackgroundJob } from "./jobs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { createJev, retrievalLimits } from "./jev";
@@ -259,16 +260,16 @@ export function createOrganization(
   store: Store,
   fetcher: typeof fetch = fetch,
 ) {
-  let working = false;
   const reorganization = createReorganization(store, fetcher, (document) =>
     documentState(document, JSON.parse(document.parsed!)),
   );
   async function file(
     document: Resource,
     scopeId: string | null,
-    leaseId: string,
+    attemptId: string,
     isReview = false,
     requested = false,
+    job: BackgroundJob,
   ) {
     const settings = await getSettings(store, document.org_id);
     const finish = async (
@@ -276,14 +277,16 @@ export function createOrganization(
       outcome: Record<string, unknown>,
       error: string | null = null,
     ) =>
-      store.run(
-        "UPDATE document_filing SET state=?,outcome=?,error=?,lease_id=NULL,lease_until=NULL WHERE resource_id=? AND lease_id=? AND state='working'",
-        state,
-        JSON.stringify({ ...outcome, requested }),
-        error,
-        document.id,
-        leaseId,
-      );
+      store.jobs.complete(job, async () => {
+        await store.run(
+          "UPDATE document_filing SET state=?,outcome=?,error=?,attempt_id=NULL WHERE resource_id=? AND attempt_id=? AND state='working'",
+          state,
+          JSON.stringify({ ...outcome, requested }),
+          error,
+          document.id,
+          attemptId,
+        );
+      });
     if (!requested && settings.organization?.enabled === false) {
       await finish("disabled", { reason: "disabled" });
       return;
@@ -308,7 +311,7 @@ export function createOrganization(
       role: member.role,
       token: "",
     };
-    const signal = AbortSignal.timeout(90000);
+    const signal = AbortSignal.any([job.signal, AbortSignal.timeout(90000)]);
     async function check() {
       signal.throwIfAborted();
       const current = await store.one<Resource>(
@@ -316,8 +319,8 @@ export function createOrganization(
         document.id,
         actor.orgId,
       );
-      const job = await store.one<{ state: string; lease_id: string }>(
-        "SELECT state,lease_id FROM document_filing WHERE resource_id=?",
+      const job = await store.one<{ state: string; attempt_id: string }>(
+        "SELECT state,attempt_id FROM document_filing WHERE resource_id=?",
         document.id,
       );
       if (
@@ -327,7 +330,7 @@ export function createOrganization(
         current.name !== document.name ||
         current.parsed !== document.parsed ||
         job?.state !== "working" ||
-        job.lease_id !== leaseId ||
+        job.attempt_id !== attemptId ||
         !(await resourceAccess(store, actor, document.id, "share"))
       )
         throw new HttpError(
@@ -455,12 +458,7 @@ export function createOrganization(
       );
     if (requested && plan.parentId === null && !plan.branch.length) {
       await check();
-      await finish("completed", {
-        ...plan,
-        reason: "unassigned",
-        parentId: document.parent_id,
-      });
-      return;
+      throw new HttpError(409, "No confident folder match was found. The document was left in its original location.");
     }
     if (isReview) {
       if (
@@ -592,120 +590,37 @@ export function createOrganization(
       );
     });
   }
-  async function tick() {
-    if (working) return;
-    working = true;
-    try {
-      await store.run(
-        "UPDATE document_filing SET state='pending',lease_id=NULL,lease_until=NULL WHERE state='working' AND lease_until < now()",
-      );
-      const docs = await store.all<
+  async function process(job: BackgroundJob) {
+    const claim = await store.jobs.guard(job, async () => {
+      const document = await store.one<
         Resource & {
           scope_id: string | null;
           is_review: boolean;
           requested: boolean;
         }
       >(
-        "SELECT r.*,f.scope_id,f.is_review,COALESCE((f.outcome->>'requested')::boolean,false) AS requested FROM resources r JOIN document_filing f ON f.resource_id=r.id WHERE r.status='ready' AND f.state='pending' ORDER BY COALESCE((f.outcome->>'requested')::boolean,false) DESC,f.is_review,r.created LIMIT 3",
+        "SELECT r.*,f.scope_id,f.is_review,COALESCE((f.outcome->>'requested')::boolean,false) AS requested FROM resources r JOIN document_filing f ON f.resource_id=r.id WHERE r.id=? AND r.status='ready' AND f.job_id=? AND f.state IN ('pending','working')",
+        job.data.resourceId,
+        job.id,
       );
-      for (const doc of docs) {
-        const leaseId = randomUUID();
-        if (
-          !(
-            await store.run(
-              "UPDATE document_filing SET state='working',lease_id=?,lease_until=now()+interval '5 minutes',error=NULL WHERE resource_id=? AND state='pending'",
-              leaseId,
-              doc.id,
-            )
-          ).changes
-        )
-          continue;
-        try {
-          await file(doc, doc.scope_id, leaseId, doc.is_review, doc.requested);
-        } catch (error) {
-          await store.run(
-            "UPDATE document_filing SET state='failed',error=?,lease_id=NULL,lease_until=NULL WHERE resource_id=? AND lease_id=? AND state='working'",
-            error instanceof HttpError
-              ? error.message
-              : "Automatic filing failed. The document is still indexed; retry filing.",
-            doc.id,
-            leaseId,
-          );
-        }
-      }
-      await reorganization.tick();
-    } finally {
-      working = false;
-    }
-  }
-  async function organize(claims: { document: Resource; leaseId: string }[]) {
-    const results: { id: string; error?: string }[] = [];
-    for (let offset = 0; offset < claims.length; offset += 3) {
-      await store.transaction(async () => {
-        for (const { document, leaseId } of claims.slice(offset))
-          await store.run(
-            "UPDATE document_filing SET lease_until=now()+interval '5 minutes' WHERE resource_id=? AND lease_id=? AND state='working'",
-            document.id,
-            leaseId,
-          );
-      });
-      results.push(
-        ...(await Promise.all(
-          claims
-            .slice(offset, offset + 3)
-            .map(async ({ document, leaseId }) => {
-              try {
-                await file(document, null, leaseId, false, true);
-                const job = await store.one<{
-                  state: string;
-                  outcome: {
-                    requested?: boolean;
-                    reason?: string;
-                    parentId?: string | null;
-                  };
-                  error: string | null;
-                }>(
-                  "SELECT state,outcome,error FROM document_filing WHERE resource_id=?",
-                  document.id,
-                );
-                if (job?.state !== "completed" || !job.outcome.requested)
-                  throw new HttpError(
-                    409,
-                    job?.error ||
-                      "Organization was interrupted. Retry the document.",
-                  );
-                if (
-                  job.outcome.reason === "unassigned" ||
-                  !job.outcome.parentId
-                )
-                  throw new HttpError(
-                    409,
-                    "No confident folder match was found. The document was left in its original location.",
-                  );
-                return { id: document.id };
-              } catch (error) {
-                const message =
-                  error instanceof HttpError
-                    ? error.message
-                    : "Organization failed. Retry the document.";
-                await store.run(
-                  "UPDATE document_filing SET state='failed',error=?,lease_id=NULL,lease_until=NULL WHERE resource_id=? AND lease_id=? AND state='working'",
-                  message,
-                  document.id,
-                  leaseId,
-                );
-                return { id: document.id, error: message };
-              }
-            }),
-        )),
+      if (!document) return;
+      const attemptId = randomUUID();
+      await store.run(
+        "UPDATE document_filing SET state='working',attempt_id=?,error=NULL WHERE resource_id=?",
+        attemptId,
+        document.id,
       );
-    }
-    const failed = results.filter((result) => result.error);
-    return {
-      count: claims.length,
-      completed: claims.length - failed.length,
-      failed,
-    };
+      return { document, attemptId };
+    });
+    if (!claim) return;
+    await file(
+      claim.document,
+      claim.document.scope_id,
+      claim.attemptId,
+      claim.document.is_review,
+      claim.document.requested,
+      job,
+    );
   }
-  return { tick, organize };
+  return { process, review: reorganization.process };
 }

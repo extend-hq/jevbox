@@ -2,22 +2,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "jevbox.name" . }}
+  name: {{ include "jevbox.name" . }}-worker
   labels:
     {{- include "jevbox.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.worker.replicas }}
   strategy:
-    type: Recreate
+    type: RollingUpdate
   selector:
     matchLabels:
       {{- include "jevbox.labels" . | nindent 6 }}
-      app.kubernetes.io/component: web
+      app.kubernetes.io/component: worker
   template:
     metadata:
       labels:
         {{- include "jevbox.labels" . | nindent 8 }}
-        app.kubernetes.io/component: web
+        app.kubernetes.io/component: worker
     spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 120
@@ -42,12 +42,10 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: app
+        - name: worker
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          ports:
-            - name: http
-              containerPort: 4310
+          command: [node, --import, tsx, server/worker.ts]
           env:
             - name: APP_ORIGIN
               value: {{ .Values.appOrigin | quote }}
@@ -107,22 +105,8 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
-          startupProbe:
-            httpGet:
-              path: /health/ready
-              port: http
-            failureThreshold: 30
-            periodSeconds: 5
-          readinessProbe:
-            httpGet:
-              path: /health/ready
-              port: http
-          livenessProbe:
-            httpGet:
-              path: /health/live
-              port: http
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            {{- toYaml .Values.worker.resources | nindent 12 }}
           volumeMounts:
             {{- if .Values.postgres.caSecret }}
             - name: postgres-ca

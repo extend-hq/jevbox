@@ -1,3 +1,4 @@
+import { runJobs, waitForJobs } from "./jobs";
 import { before, after, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -25,17 +26,20 @@ const headers = {
   "Content-Type": "application/json",
 };
 async function request(path: string, body?: unknown, cookie = "") {
-  return fetch(base + "/api" + path, {
+  const response = await fetch(base + "/api" + path, {
     method: body === undefined ? "GET" : "POST",
     headers: { ...headers, Cookie: cookie },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     redirect: "manual",
   });
+  await waitForJobs(runtime, ["auth-email"]);
+  return response;
 }
 before(async () => {
   database = await testDatabase();
   directory = mkdtempSync(join(tmpdir(), "jevbox-auth-"));
   runtime = await createApp({
+    workers: ["auth-email", "chat-answer"],
     directory,
     databaseUrl: database.url,
     origin,
@@ -414,6 +418,7 @@ test("migration preserves user IDs and passwords, requires verification, and inv
   let migrated: typeof runtime | undefined;
   try {
     migrated = await createApp({
+    workers: ["auth-email", "chat-answer"],
       directory: localDirectory,
       databaseUrl: isolated.url,
       origin,

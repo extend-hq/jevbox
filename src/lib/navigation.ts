@@ -10,7 +10,7 @@ export type AppRoute = {
   tab: string;
   chatId: string | null;
   query: string;
-  settingsSection: "people" | "connections";
+  settingsSection: "people" | "connections" | "api-keys";
 };
 
 export const paths = {
@@ -43,7 +43,11 @@ export const paths = {
   search: (query = "") =>
     query ? `/search?${new URLSearchParams({ q: query })}` : "/search",
   settings: (section = "people") =>
-    section === "connections" ? "/settings/connections" : "/settings/members",
+    section === "api-keys"
+      ? "/settings/api-keys"
+      : section === "connections"
+        ? "/settings/connections"
+        : "/settings/members",
 };
 
 export function readRoute(url: URL): AppRoute {
@@ -96,7 +100,12 @@ export function readRoute(url: URL): AppRoute {
           : "original",
     chatId: segments[0] === "chats" ? decode(segments[1]) : null,
     query: url.searchParams.get("q") ?? "",
-    settingsSection: segments[1] === "connections" ? "connections" : "people",
+    settingsSection:
+      segments[1] === "api-keys"
+        ? "api-keys"
+        : segments[1] === "connections"
+          ? "connections"
+          : "people",
   };
 }
 

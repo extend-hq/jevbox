@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { HttpError } from "./errors";
-import { jsonRequest } from "./provider-http";
+import { jsonRequest, ProviderResponseError } from "./provider-http";
 
 export const retrievalLimits = {
   menuSize: 16,
@@ -49,7 +49,7 @@ export function createJev(
       .object({ answers: z.record(z.string(), z.unknown()) })
       .safeParse(response);
     if (!parsed.success)
-      throw new HttpError(502, "JEV returned an invalid response. Try again.");
+      throw new ProviderResponseError("JEV returned an invalid response. Try again.");
     return parsed.data.answers;
   }
 
@@ -74,8 +74,7 @@ export function createJev(
         !parsed.success ||
         keys.some((id) => parsed.data.probabilities[id] === undefined)
       )
-        throw new HttpError(
-          502,
+        throw new ProviderResponseError(
           "JEV returned an invalid placement distribution. Retry filing.",
         );
       const distribution = parsed.data.probabilities;
@@ -83,8 +82,7 @@ export function createJev(
         Object.keys(distribution).some((id) => !keys.includes(id)) ||
         Math.abs(keys.reduce((sum, id) => sum + distribution[id], 0) - 1) > 0.02
       )
-        throw new HttpError(
-          502,
+        throw new ProviderResponseError(
           "JEV returned an invalid placement distribution. Retry filing.",
         );
       return distribution;
@@ -120,8 +118,7 @@ export function createJev(
             !parsed.success ||
             keys.some((id) => parsed.data.probabilities[id] === undefined)
           )
-            throw new HttpError(
-              502,
+            throw new ProviderResponseError(
               "JEV returned an invalid routing distribution. Try again.",
             );
           const distribution = parsed.data.probabilities;
@@ -130,8 +127,7 @@ export function createJev(
             Math.abs(total - 1) > 0.02 ||
             Object.keys(distribution).some((id) => !keys.includes(id))
           )
-            throw new HttpError(
-              502,
+            throw new ProviderResponseError(
               "JEV returned an invalid routing distribution. Try again.",
             );
           return [menu.id, distribution];
@@ -156,8 +152,7 @@ export function createJev(
       });
       const parsed = scoreSchema.safeParse(answers.usefulness);
       if (!parsed.success)
-        throw new HttpError(
-          502,
+        throw new ProviderResponseError(
           "The context filter returned an invalid score. Try again.",
         );
       return parsed.data.score;

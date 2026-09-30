@@ -1,3 +1,4 @@
+import { runJobs, waitForJobs } from "./jobs";
 import { authMailbox } from "./auth-mailbox";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -5,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createApp } from "../server/app";
-import { planFiling, createOrganization } from "../server/organization";
+import { planFiling } from "../server/organization";
 import { testDatabase } from "./database";
 import { textResponse, choiceResponse } from "./model-tools";
 
@@ -272,6 +273,15 @@ async function req(path: string, cookie = "", method = "GET", body?: unknown) {
     cookie: response.headers.get("set-cookie")?.split(";")[0] ?? "",
   };
 }
+async function organizeAndWait(cookie: string, body: { ids: readonly string[] }) {
+  const response = await req("/documents/organize", cookie, "POST", body);
+  if (response.status !== 202) return response;
+  await runJobs(runtime);
+  const outcomes = await Promise.all([...new Set(body.ids)].map(async (id) => ({ id, job: await job(id) })));
+  response.data.completed = outcomes.filter(({ job }) => job.state === "completed").length;
+  response.data.failed = outcomes.filter(({ job }) => job.state !== "completed").map(({ id, job }) => ({ id, error: job.error ?? "Organization did not complete" }));
+  return response;
+}
 let users = 0;
 async function account() {
   const email = `organizer-${++users}@local.test`;
@@ -344,6 +354,7 @@ before(async () => {
   database = await testDatabase();
   directory = mkdtempSync(join(tmpdir(), "jevbox-filing-"));
   runtime = await createApp({
+    workers: ["auth-email", "chat-answer"],
     directory,
     databaseUrl: database.url,
     origin,
@@ -375,7 +386,7 @@ test("incoming documents reuse a nested path and never generate folder names whe
     );
   const id = await upload(cookie);
   calls.length = 0;
-  await runtime.tick();
+  await runJobs(runtime);
   assert.equal((await row(id)).parent_id, child);
   assert.equal((await row(id)).access, "restricted");
   assert.equal((await job(id)).state, "completed");
@@ -395,16 +406,11 @@ test("new branches use the selected naming model, are validated, and concurrent 
   generation = proposal;
   const a = await upload(cookie),
     b = await upload(cookie);
-  await runtime.store.run(
-    "UPDATE resources SET parsed=?,status='ready' WHERE id IN (?,?)",
-    JSON.stringify((await runtime.providers.processDocument((await row(a))!))!),
-    a,
-    b,
-  );
+  await runJobs(runtime, ["document-index"]);
   calls.length = 0;
   await Promise.all([
-    createOrganization(runtime.store, fetcher).tick(),
-    createOrganization(runtime.store, fetcher).tick(),
+    runJobs(runtime),
+    runJobs(runtime),
   ]);
   const first = await row(a),
     second = await row(b);
@@ -458,7 +464,7 @@ test("a chosen upload folder constrains filing and inaccessible folder labels ne
     );
   const id = await upload(cookie, scope);
   calls.length = 0;
-  await runtime.tick();
+  await runJobs(runtime);
   let parent = await row((await row(id)).parent_id);
   parent = await row(parent.parent_id);
   assert.equal(parent.parent_id, scope);
@@ -466,7 +472,7 @@ test("a chosen upload folder constrains filing and inaccessible folder labels ne
   assert.equal(JSON.stringify(calls).includes("Hidden category"), false);
   const rootUpload = await upload(cookie);
   calls.length = 0;
-  await runtime.tick();
+  await runJobs(runtime);
   assert.equal((await job(rootUpload)).state, "completed");
   assert.equal(JSON.stringify(calls).includes("Hidden category"), false);
 });
@@ -492,7 +498,7 @@ test("renaming a selected folder during generation prevents committing a stale p
     );
   };
   try {
-    await runtime.tick();
+    await runJobs(runtime);
   } finally {
     duringGeneration = undefined;
   }
@@ -510,7 +516,7 @@ test("renaming a selected folder during generation prevents committing a stale p
   );
 });
 
-test("disabled filing makes no provider calls and expired worker leases are recoverable", async () => {
+test("disabled filing makes no provider calls and recovered jobs replace stale attempt tokens", async () => {
   const cookie = await account();
   assert.equal(
     (
@@ -523,7 +529,7 @@ test("disabled filing makes no provider calls and expired worker leases are reco
   );
   const id = await upload(cookie);
   calls.length = 0;
-  await runtime.tick();
+  await runJobs(runtime);
   assert.equal((await job(id)).state, "disabled");
   assert.equal((await row(id)).status, "ready");
   assert.equal(calls.length, 0);
@@ -536,13 +542,14 @@ test("disabled filing makes no provider calls and expired worker leases are reco
     200,
   );
   await runtime.store.run(
-    "UPDATE document_filing SET state='working',lease_id='expired',lease_until=now()-interval '1 minute' WHERE resource_id=?",
+    "UPDATE document_filing SET state='working',attempt_id='expired' WHERE resource_id=?",
     id,
   );
-  choose = (choices) => winner(choices, "here");
-  await runtime.tick();
+  const destination = await folder(cookie, "Destination");
+  choose = (choices) => winner(choices, choices.some(({ id }) => id === destination) ? destination : "here");
+  await runJobs(runtime);
   assert.equal((await job(id)).state, "completed");
-  assert.equal((await job(id)).lease_id, null);
+  assert.equal((await job(id)).attempt_id, null);
 });
 
 test("manual placement wins over an in-flight proposal and leaves no generated folders", async () => {
@@ -565,7 +572,7 @@ test("manual placement wins over an in-flight proposal and leaves no generated f
     );
   };
   try {
-    await runtime.tick();
+    await runJobs(runtime);
   } finally {
     duringGeneration = undefined;
   }
@@ -598,7 +605,7 @@ test("sharing changes block filing without affecting the parsed index, and retry
     );
   };
   try {
-    await runtime.tick();
+    await runJobs(runtime);
   } finally {
     duringGeneration = undefined;
   }
@@ -624,19 +631,19 @@ test("rejected proposals and missing connections keep documents in place", async
       choices,
       choices.some(({ id }) => id === "proposed") ? "here" : "none",
     );
-  await runtime.tick();
+  await runJobs(runtime);
   assert.equal((await job(id)).outcome.reason, "proposal_rejected");
   assert.equal((await row(id)).parent_id, null);
   await req("/settings", cookie, "PUT", { jevKey: "", chatProviders: [] });
   const waiting = await upload(cookie);
   calls.length = 0;
-  await runtime.tick();
+  await runJobs(runtime);
   assert.equal((await job(waiting)).state, "awaiting_key");
   assert.equal(calls.length, 0);
   await req("/settings", cookie, "PUT", { jevKey: "key", chatProviders: [] });
   assert.equal((await job(waiting)).state, "pending");
   choose = (choices) => winner(choices, "here");
-  await runtime.tick();
+  await runJobs(runtime);
 });
 
 test("uploads selectively review older documents, preserve manual placements, and reuse parsed content", async () => {
@@ -654,7 +661,7 @@ test("uploads selectively review older documents, preserve manual placements, an
   const existing = await upload(cookie, undefined, "existing.md");
   const unrelated = await upload(cookie, undefined, "unrelated.md");
   const manual = await upload(cookie, undefined, "manual.md");
-  await runtime.tick();
+  await runJobs(runtime);
   const parsed = (await row(existing)).parsed;
   assert.equal(
     (await req(`/resources/${manual}/move`, cookie, "POST", { parentId: null }))
@@ -703,16 +710,16 @@ test("uploads selectively review older documents, preserve manual placements, an
   };
   const incoming = await upload(cookie);
   const secondIncoming = await upload(cookie);
-  await runtime.tick();
+  await runJobs(runtime);
   assert.equal(
     (await row(secondIncoming)).parent_id,
     (await row(incoming)).parent_id,
   );
-  assert.equal((await job(existing)).state, "pending");
+  assert.equal((await job(existing)).state, "completed");
   assert.equal((await job(existing)).is_review, true);
   assert.equal((await job(unrelated)).state, "completed");
   assert.equal((await job(manual)).outcome.reason, "manual");
-  await runtime.tick();
+  await runJobs(runtime);
   assert.equal(
     (await row(existing)).parent_id,
     (await row(incoming)).parent_id,
@@ -756,7 +763,7 @@ test("a review keeps an existing placement when the proposed move is not clearly
   await folder(cookie, "General records");
   choose = (choices) => winner(choices, "here");
   const existing = await upload(cookie);
-  await runtime.tick();
+  await runJobs(runtime);
   choose = (choices) => {
     if (choices.some(({ id }) => id === "review"))
       return winner(choices, "review");
@@ -771,8 +778,8 @@ test("a review keeps an existing placement when the proposed move is not clearly
     );
   };
   await upload(cookie);
-  await runtime.tick();
-  await runtime.tick();
+  await runJobs(runtime);
+  await runJobs(runtime);
   assert.equal((await row(existing)).parent_id, null);
   assert.equal((await job(existing)).outcome.reason, "review_kept");
 });
@@ -784,7 +791,7 @@ test("explicit batch organization reconsiders manual placements across paths wit
   choose = (choices) => winner(choices, "here");
   const a = await upload(cookie, original),
     b = await upload(cookie, original);
-  await runtime.tick();
+  await runJobs(runtime);
   await req(`/resources/${a}/move`, cookie, "POST", { parentId: original });
   const parsed = (await row(a)).parsed;
   await req("/settings", cookie, "PUT", {
@@ -797,10 +804,10 @@ test("explicit batch organization reconsiders manual placements across paths wit
       choices.some(({ id }) => id === destination) ? destination : "here",
     );
   calls.length = 0;
-  const organized = await req("/documents/organize", cookie, "POST", {
+  const organized = await organizeAndWait(cookie, {
     ids: [a, a, b],
   });
-  assert.equal(organized.status, 200);
+  assert.equal(organized.status, 202);
   assert.equal(organized.data.count, 2);
   assert.equal(organized.data.completed, 2);
   assert.deepEqual(organized.data.failed, []);
@@ -821,15 +828,15 @@ test("explicit batch organization creates a validated branch when no existing pa
   const original = await folder(cookie, "Original category");
   choose = (choices) => winner(choices, "here");
   const id = await upload(cookie, original);
-  await runtime.tick();
+  await runJobs(runtime);
   choose = (choices) =>
     winner(
       choices,
       choices.some(({ id }) => id === "proposed") ? "proposed" : "none",
     );
   assert.equal(
-    (await req("/documents/organize", cookie, "POST", { ids: [id] })).status,
-    200,
+    (await organizeAndWait(cookie, { ids: [id] })).status,
+    202,
   );
   const parent = await row((await row(id)).parent_id);
   assert.equal(parent.name, "Invoices");
@@ -845,7 +852,7 @@ test("invalid selections reject organization atomically before claiming jobs or 
   choose = (choices) => winner(choices, "here");
   const owned = await upload(cookie, scope),
     shared = await upload(cookie, scope);
-  await runtime.tick();
+  await runJobs(runtime);
   await req(`/resources/${shared}/access`, cookie, "PUT", {
     access: "organization",
     grants: [],
@@ -863,7 +870,7 @@ test("invalid selections reject organization atomically before claiming jobs or 
     [[], 400],
   ] as const) {
     assert.equal(
-      (await req("/documents/organize", cookie, "POST", { ids })).status,
+      (await organizeAndWait(cookie, { ids })).status,
       expected,
     );
     assert.deepEqual(await job(owned), before);
@@ -871,15 +878,15 @@ test("invalid selections reject organization atomically before claiming jobs or 
   assert.equal(calls.length, 0);
 });
 
-test("synchronous organization waits for bounded batches without holding the database transaction", async () => {
+test("queued organization processes bounded batches without holding the database transaction", async () => {
   const cookie = await account();
   const destination = await folder(cookie, "Target");
   await disableAutomatic(cookie);
   const ids = [];
   for (let i = 0; i < 7; i++)
     ids.push(await upload(cookie, undefined, `document-${i}.md`));
-  await runtime.tick();
-  await runtime.tick();
+  await runJobs(runtime);
+  await runJobs(runtime);
   let release!: () => void, entered!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -903,7 +910,7 @@ test("synchronous organization waits for bounded batches without holding the dat
       choices,
       choices.some(({ id }) => id === destination) ? destination : "here",
     );
-  const request = req("/documents/organize", cookie, "POST", { ids }).then(
+  const request = organizeAndWait(cookie, { ids }).then(
     (response) => {
       finished = true;
       return response;
@@ -929,7 +936,7 @@ test("synchronous organization waits for bounded batches without holding the dat
     await folder(cookie, "Concurrent category");
     release();
     const response = await request;
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 202);
     assert.equal(response.data.completed, 7);
     assert.deepEqual(response.data.failed, []);
     assert.equal(maximum, 3);
@@ -944,13 +951,13 @@ test("synchronous organization waits for bounded batches without holding the dat
   }
 });
 
-test("synchronous organization reports individual failures and preserves successful placements", async () => {
+test("queued organization records individual failures and preserves successful placements", async () => {
   const cookie = await account();
   const destination = await folder(cookie, "Target");
   await disableAutomatic(cookie);
   const a = await upload(cookie, undefined, "valid.md"),
     b = await upload(cookie, undefined, "invalid.md");
-  await runtime.tick();
+  await runJobs(runtime);
   choose = (choices, state) =>
     JSON.stringify(state).includes("invalid.md")
       ? {}
@@ -958,10 +965,10 @@ test("synchronous organization reports individual failures and preserves success
           choices,
           choices.some(({ id }) => id === destination) ? destination : "here",
         );
-  const response = await req("/documents/organize", cookie, "POST", {
+  const response = await organizeAndWait(cookie, {
     ids: [a, b],
   });
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 202);
   assert.equal(response.data.completed, 1);
   assert.equal(response.data.failed.length, 1);
   assert.equal(response.data.failed[0].id, b);
@@ -976,7 +983,7 @@ test("the root has no keep-here category and a missing fit creates a validated n
   await folder(cookie, "Unrelated topic");
   await disableAutomatic(cookie);
   const id = await upload(cookie);
-  await runtime.tick();
+  await runJobs(runtime);
   choose = (choices) => {
     assert.equal(
       choices.some(({ id }) => id === "here"),
@@ -987,7 +994,7 @@ test("the root has no keep-here category and a missing fit creates a validated n
       choices.some(({ id }) => id === "proposed") ? "proposed" : "none",
     );
   };
-  const response = await req("/documents/organize", cookie, "POST", {
+  const response = await organizeAndWait(cookie, {
     ids: [id],
   });
   assert.equal(response.data.completed, 1);
@@ -1002,16 +1009,16 @@ test("an uncertain root match organizes documents into a validated new branch", 
   await disableAutomatic(cookie);
   const root = await upload(cookie),
     nested = await upload(cookie, original);
-  await runtime.tick();
+  await runJobs(runtime);
   generation = proposal;
   choose = (choices) =>
     choices.some(({ id }) => id === "proposed")
       ? winner(choices, "proposed")
       : Object.fromEntries(choices.map(({ id }) => [id, 1 / choices.length]));
-  const response = await req("/documents/organize", cookie, "POST", {
+  const response = await organizeAndWait(cookie, {
     ids: [root, nested],
   });
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 202);
   assert.equal(response.data.completed, 2, JSON.stringify(response.data));
   assert.deepEqual(response.data.failed, []);
   const destination = (await row(root)).parent_id;
@@ -1030,10 +1037,10 @@ test("unresolved root classification is not counted as organized and preserves t
   await disableAutomatic(cookie);
   const root = await upload(cookie),
     nested = await upload(cookie, original);
-  await runtime.tick();
+  await runJobs(runtime);
   choose = (choices) =>
     Object.fromEntries(choices.map(({ id }) => [id, 1 / choices.length]));
-  const response = await req("/documents/organize", cookie, "POST", {
+  const response = await organizeAndWait(cookie, {
     ids: [root, nested],
   });
   assert.equal(response.data.completed, 0, JSON.stringify(response.data));

@@ -38,6 +38,8 @@ function document(
     status: "ready",
     error: null,
     parse_run: null,
+    parse_requested: false,
+    index_job_id: null,
     parsed: JSON.stringify(buildIndex([{ content }], "text")),
     created: "2026-09-29",
   };

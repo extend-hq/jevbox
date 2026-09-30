@@ -1,0 +1,14 @@
+ALTER TABLE resources ADD COLUMN index_job_id UUID;
+ALTER TABLE resources ADD COLUMN parse_requested BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE document_filing ADD COLUMN job_id UUID;
+ALTER TABLE document_filing RENAME COLUMN lease_id TO attempt_id;
+ALTER TABLE document_filing DROP COLUMN lease_until;
+ALTER TABLE organization_reviews ADD COLUMN job_id UUID;
+ALTER TABLE organization_reviews RENAME COLUMN lease_id TO attempt_id;
+ALTER TABLE organization_reviews DROP COLUMN lease_until;
+ALTER TABLE chat_turns ADD COLUMN job_id UUID;
+ALTER TABLE chat_turns RENAME COLUMN lease_id TO attempt_id;
+ALTER TABLE chat_turns DROP COLUMN lease_until;
+DROP INDEX document_filing_queue;
+DROP INDEX organization_reviews_queue;
+CREATE INDEX organization_reviews_pending ON organization_reviews(org_id,owner_id,created) WHERE state='pending';

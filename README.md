@@ -15,7 +15,7 @@ pnpm services:up
 pnpm dev
 ```
 
-`pnpm setup:local` creates `.env` and a stable encryption key. `pnpm services:up` starts PostgreSQL and SpiceDB in Docker and waits for both to be ready. `pnpm dev` then starts the app server, Vite frontend, and indexing loop in your terminal. **`pnpm dev` does not start PostgreSQL or SpiceDB.** Keep that terminal open while using the app.
+`pnpm setup:local` creates `.env` and a stable encryption key. `pnpm services:up` starts PostgreSQL and SpiceDB in Docker and waits for both to be ready. `pnpm dev` then starts the app server, Vite frontend, and pg-boss consumers in your terminal. **`pnpm dev` does not start PostgreSQL or SpiceDB.** Keep that terminal open while using the app.
 
 On later days, start Docker and run `pnpm services:up` followed by `pnpm dev`. Open http://localhost:4310, create an organization, and configure **Organization settings → Connections**:
 
@@ -43,10 +43,12 @@ PostgreSQL stores accounts, sessions, document bytes, parsed output, and chats. 
 
 ## Capabilities
 
+- Personal API keys in **Organization → API keys**, a versioned read-only search/document API, and a permission-aware MCP server with API-key or OAuth authentication. See [API and MCP access](docs/api-access.md).
+
 - Better Auth email/password authentication with mailbox verification, password recovery, and signed HttpOnly session cookies.
 - Separate organizations, invitation links, admin/member role management, member removal, organization switching, and admin-only settings.
 - Nested categories and uploads up to 30 MB, durable indexing jobs, retries, and persistent document content.
-- Select documents and choose **Organize** to classify them immediately in batches, with a loading toast that changes to success or explains failures. Existing paths are preferred; new branches are proposed and validated when needed.
+- Select documents and choose **Organize** to queue classification, with durable progress and failures visible in the library. Existing paths are preferred; new branches are proposed and validated when needed.
 - Automatic filing of new uploads: JEV walks existing folders, keeps uncertain documents in a suitable parent, and validates occasional model-proposed branches. Uploads also trigger bounded reviews of related documents using their cached indexes; manual placements remain fixed. Administrators can disable filing or select an inexpensive naming model in Connections. See [automatic filing](docs/organization.md).
 - Fixed icon rail, Jevbox identity, Nucleo icons, compact breadcrumbs, and light/dark themes with Retina hairlines.
 - Extend UI Finder and PDF, DOCX, XLSX, and PPTX viewers, with Base UI and coss primitives.
@@ -56,7 +58,11 @@ PostgreSQL stores accounts, sessions, document bytes, parsed output, and chats. 
 - Permission-filtered JEV beam search, usefulness thresholds, private saved chats, source citations, and retrieval paths. Weak first-pass evidence widens exploration into alternate routes. Revoked sources block the entire dependent conversation. See [retrieval architecture](docs/retrieval.md).
 - Streamed answers with Stop, a persistent per-chat message queue, editing, removing, and drag reordering queued messages, selected-model regeneration, and branching from any saved message into a separate private chat. Message controls appear on hover or keyboard focus, and remain available on touch screens.
 
-Queued messages survive navigation, reloads, and server restarts. Stopped or failed turns pause the queue until retried or removed. Interrupted work is marked failed after its worker lease expires; retry is explicit to avoid silently repeating a model request. Branches copy history through the selected message and retain the same source permission checks.
+Queued messages survive navigation, reloads, and server restarts. Stopped or failed turns pause the queue until retried or removed. pg-boss recovers interrupted delivery; an answer interrupted after generation starts requires explicit retry to avoid silently repeating a model request. Branches copy history through the selected message and retain the same source permission checks.
+
+## Background jobs
+
+[pg-boss jobs](docs/jobs.md) handle indexing, filing, upload-driven reviews, chat, authentication email, and permission cleanup in PostgreSQL. Production runs the web service with `pnpm start` and a separate background service with `pnpm worker`, using the same image and shared configuration. Local `pnpm dev` embeds consumers for convenience; do not also start `pnpm dev:worker` unless you are testing multiple consumers. Docker Compose starts both services.
 
 ## Providers
 
@@ -68,7 +74,7 @@ AI Gateway offers its model catalog; OpenAI-compatible endpoints support additio
 
 [Deployment guide](docs/deployment.md) includes Docker, cloud-neutral Helm, and AWS/EKS Terraform. Deployment requires an explicit target account, region, namespace, image, domain, and secret.
 
-The Helm chart runs one app replica and a private SpiceDB container. Supply two dedicated PostgreSQL databases and credentials through a Kubernetes Secret. The app has no persistent filesystem requirement. Permission updates publish complete versioned relationship snapshots before committing metadata; unavailable SpiceDB fails closed. The current snapshot rebuild, in-process job scheduling, and rate limiting keep this a single-app-replica baseline, not a highly available deployment.
+The Helm chart runs one web replica, a separate pg-boss worker Deployment, and a private SpiceDB container. Supply two dedicated PostgreSQL databases and credentials through a Kubernetes Secret. The app has no persistent filesystem requirement. Permission updates publish complete versioned relationship snapshots before committing metadata; unavailable SpiceDB fails closed. Workers can scale independently. The current snapshot rebuild and in-process API rate limiting keep the web service at a single replica.
 
 ## Security and verification
 

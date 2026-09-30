@@ -6,6 +6,7 @@ import {
 } from "./ai";
 import type { ModelMessage } from "ai";
 import { type Store, type Actor, type Resource, HttpError } from "./db";
+import { PermanentJobError } from "./jobs";
 import { buildIndex } from "./indexing";
 import { retrieveDocuments } from "./retrieval";
 import { jsonRequest } from "./provider-http";
@@ -41,7 +42,33 @@ export async function getSettings(
   return JSON.parse(store.decrypt(row.settings));
 }
 export function createProviders(store: Store, fetcher: Fetch = fetch) {
-  async function processDocument(document: Resource) {
+  async function processDocument(
+    document: Resource,
+    execution?: {
+      signal: AbortSignal;
+      check: () => Promise<void>;
+      checkpoint: (sql: string, ...values: any[]) => Promise<void>;
+    },
+  ) {
+    const checkpoint =
+      execution?.checkpoint ??
+      (async (sql: string, ...values: any[]) => {
+        await store.run(sql, ...values);
+      });
+    const request: Fetch = async (input, init) => {
+      await execution?.check();
+      return fetcher(input, {
+        ...init,
+        ...(execution
+          ? {
+              signal: AbortSignal.any([
+                execution.signal,
+                ...(init?.signal ? [init.signal] : []),
+              ]),
+            }
+          : {}),
+      });
+    };
     const settings = await getSettings(store, document.org_id);
     const body = (
       await store.one<{
@@ -63,7 +90,7 @@ export function createProviders(store: Store, fetcher: Fetch = fetch) {
       );
     }
     if (!settings.extendKey) {
-      await store.run(
+      await checkpoint(
         "UPDATE resources SET status='awaiting_key' WHERE id=?",
         document.id,
       );
@@ -82,14 +109,18 @@ export function createProviders(store: Store, fetcher: Fetch = fetch) {
         document.name,
       );
       const file = z.object({ id: z.string() }).parse(
-        await jsonRequest(fetcher, "https://api.extend.ai/files/upload", {
+        await jsonRequest(request, "https://api.extend.ai/files/upload", {
           method: "POST",
           headers,
           body: form,
         }),
       );
+      await checkpoint(
+        "UPDATE resources SET parse_requested=true WHERE id=?",
+        document.id,
+      );
       const run = z.object({ id: z.string() }).parse(
-        await jsonRequest(fetcher, "https://api.extend.ai/parse_runs", {
+        await jsonRequest(request, "https://api.extend.ai/parse_runs", {
           method: "POST",
           headers: { ...headers, "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -99,7 +130,7 @@ export function createProviders(store: Store, fetcher: Fetch = fetch) {
         }),
       );
       runId = run.id;
-      await store.run(
+      await checkpoint(
         "UPDATE resources SET parse_run=?,status='processing' WHERE id=?",
         runId,
         document.id,
@@ -118,13 +149,20 @@ export function createProviders(store: Store, fetcher: Fetch = fetch) {
       })
       .parse(
         await jsonRequest(
-          fetcher,
+          request,
           `https://api.extend.ai/parse_runs/${encodeURIComponent(runId)}`,
           { headers },
         ),
       );
-    if (run.status === "FAILED")
-      throw new Error("Parsing failed. Check the document and retry.");
+    if (run.status === "FAILED") {
+      await checkpoint(
+        "UPDATE resources SET parse_run=NULL,parse_requested=false WHERE id=?",
+        document.id,
+      );
+      throw new PermanentJobError(
+        "Parsing failed. Check the document and retry.",
+      );
+    }
     if (run.status !== "PROCESSED") return null;
     return buildIndex(run.output?.chunks, "extend", run.output?.metadata);
   }

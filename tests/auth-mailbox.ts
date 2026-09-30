@@ -19,6 +19,9 @@ export function authMailbox(origin: string) {
       password = "a-secure-password-123!",
       invite?: string,
     ) {
+      const deadline = Date.now() + 5000;
+      while (!messages.some((message) => message.to === email && message.kind === "verification") && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 10));
       const verification = messages.findLast(
         (message) => message.to === email && message.kind === "verification",
       );

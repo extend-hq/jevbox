@@ -1,3 +1,4 @@
+import { queues } from "../server/jobs";
 import { hashPassword } from "../server/auth-passwords";
 import { testDatabase } from "../tests/database";
 import { createApp } from "../server/app";
@@ -93,6 +94,7 @@ const fetcher: typeof fetch = async (url, init) => {
 };
 const database = await testDatabase();
 const runtime = await createApp({
+  workers: Object.values(queues),
   databaseUrl: database.url,
   directory: mkdtempSync(join(tmpdir(), "jevbox-browser-")),
   origin,
@@ -320,17 +322,6 @@ const vite = await createServer({
   appType: "spa",
 });
 runtime.app.use(vite.middlewares);
-const interval = setInterval(
-  () =>
-    void runtime
-      .tick()
-      .catch(() => console.error("Indexing is temporarily unavailable")),
-  1500,
-);
-const chatInterval = setInterval(
-  () => void runtime.tickChats().catch(() => {}),
-  1000,
-);
 const server = runtime.app.listen(port, "127.0.0.1", () =>
   console.log(
     `Verification workspace: ${origin} · review@jevbox.test · Local-verification-2026!`,
@@ -342,14 +333,13 @@ for (const signal of ["SIGTERM", "SIGINT"])
   process.on(signal, () => {
     if (stopping) return;
     stopping = true;
-    clearInterval(interval);
-    clearInterval(chatInterval);
     void runtime.closeChats();
     server.close(
       () =>
         void (async () => {
           await vite.close();
-          await database.cleanup(runtime.store);
+          await runtime.close();
+          await database.cleanup();
           process.exit(0);
         })(),
     );

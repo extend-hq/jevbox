@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
 
 export type AuthEmail = {
+  id?: string;
   to: string;
   kind: "verification" | "password-reset";
   url: string;
@@ -38,10 +39,11 @@ export function createAuthEmailSender(localDevelopment = false): SendAuthEmail {
     greetingTimeout: 10000,
     socketTimeout: 15000,
   });
-  return async ({ to, kind, url }) => {
+  return async ({ to, kind, url, id }) => {
     await transport.sendMail({
       from,
       to,
+      ...(id ? { messageId: `<${id}@jevbox.auth>` } : {}),
       subject:
         kind === "verification"
           ? "Verify your email address"

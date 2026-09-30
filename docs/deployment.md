@@ -34,6 +34,14 @@ Required runtime settings:
 
 Generate secrets with `openssl rand -hex 32`. Store them in your cloud secret manager or Kubernetes Secret, not Git or image build arguments. Provider keys are configured afterward through the application. The image runs as UID/GID 1000; its scratch directory must be writable by that user. PostgreSQL and SpiceDB are required; startup fails when either is unavailable.
 
+## Web and background services
+
+Run two processes from the same image: `node --import tsx server/index.ts` for the public web service and `node --import tsx server/worker.ts` for the background service. Production web processes enqueue jobs without running consumers. Both processes need the same `DATABASE_URL`, `SPICEDB_*`, `ENCRYPTION_KEY`, `APP_ORIGIN`, and SMTP configuration. The worker needs no public port; disable the image's HTTP health check when running it with Docker (`--no-healthcheck`). Compose does this automatically.
+
+On Render, use a Docker Web Service and a Docker Background Worker with the worker command above, sharing the application database and encryption key. Keep SpiceDB private. Start one of each, then scale the worker independently. Give workers at least 45 seconds to terminate: pg-boss drains for 30 seconds, then aborts unfinished attempts. The process has a 40-second shutdown cap.
+
+The queue installation owns its `pgboss` schema and uses the pinned library's migrations. The database role must be able to create that schema and its tables, functions, and indexes. Use a direct or session-pooled connection for LISTEN/NOTIFY; transaction-pooled connections fall back to polling. Per-process pool ceilings are 12 application, 4 auth, 1 permission snapshot, and 5 pg-boss connections, with a dedicated notification session. Budget database connections across both web and worker replicas; auth connections are opened lazily and unused by background-only processes.
+
 ## Any Kubernetes cluster
 
 Prerequisites: PostgreSQL 17 or a compatible supported version, two dedicated databases with separate login roles, a TLS ingress controller, DNS, a TLS certificate, and a CNI enforcing NetworkPolicy. The chart starts the pinned SpiceDB container and runs its datastore migrations in an init container; it does not provision a managed PostgreSQL service. Use RDS, Cloud SQL, Azure Database for PostgreSQL, or your own PostgreSQL operator. Use a dedicated namespace and verify your Kubernetes context before every write.
@@ -62,9 +70,9 @@ kubectl --namespace jevbox-sandbox rollout status deployment/sandbox-jevbox
 
 5. Open the HTTPS origin, create the first organization using **Deployment setup token**, verify the account through its email link, sign in, and configure connections, then invite other members. Verify upload → index → search → cited chat with your provider credentials. Test a restricted document from a second account before onboarding users.
 
-The chart uses one app replica and one SpiceDB replica with `Recreate`; upgrades can have a short outage. Document data and permissions persist in PostgreSQL, so app and SpiceDB containers have no durable local volume. Keep one app replica until job scheduling, distributed rate limits, and snapshot rebuild throughput have been addressed. A permission mutation currently rebuilds its organization’s graph and database writes serialize under an advisory lock. This prioritizes atomic permission changes over large-organization write throughput.
+The chart uses one web replica and one SpiceDB replica with `Recreate`; upgrades can have a short outage. The worker uses a separate rolling Deployment; set `worker.replicas` to scale consumers. Document data and permissions persist in PostgreSQL, so app and SpiceDB containers have no durable local volume. Keep one web replica until distributed API rate limits and snapshot rebuild throughput have been addressed. A permission mutation currently rebuilds its organization’s graph and database writes serialize under an advisory lock. This prioritizes atomic permission changes over large-organization write throughput.
 
-Health probes are `/health/live` and `/health/ready`. Readiness queries PostgreSQL and SpiceDB. SpiceDB uses a gRPC readiness probe; its HTTP API is accessible only to the app through a private Service. The application installs the permission schema at startup, so use a dedicated SpiceDB datastore for this deployment.
+Health probes are `/health/live` and `/health/ready`. Web readiness queries PostgreSQL, the pg-boss queue installation, and SpiceDB. Worker startup logs readiness after registering all consumers. SpiceDB uses a gRPC readiness probe; its HTTP API is accessible only to the app through a private Service. The application installs the permission schema at startup, so use a dedicated SpiceDB datastore for this deployment.
 
 For an existing installation, create a fresh PostgreSQL-backed deployment. This revision intentionally does not import SQLite. Keep any old volume until its data has been deliberately discarded or exported; this chart no longer creates an application PVC.
 

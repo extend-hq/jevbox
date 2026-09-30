@@ -5406,3 +5406,154 @@ export const FolderBolt = icon(
     <polyline fill="none" points="14 14 14.5 10 12 14 17 14 14.5 18 15 14" />
   </g>,
 );
+
+export const Code = icon(
+  <g>
+    <polyline
+      points="7 6 3 10 7 14"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    ></polyline>
+    <polyline
+      points="13 14 17 10 13 6"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></polyline>
+  </g>,
+);
+
+export const PlugFilled = icon(
+  <g>
+    <line
+      x1="7"
+      y1="7"
+      x2="7"
+      y2="3"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></line>
+    <line
+      x1="13"
+      y1="7"
+      x2="13"
+      y2="3"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></line>
+    <line
+      x1="10"
+      y1="17"
+      x2="10"
+      y2="15"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></line>
+    <path
+      d="m5,7h10c.5519,0,1,.4481,1,1v1c0,3.3115-2.6885,6-6,6h0c-3.3115,0-6-2.6885-6-6v-1c0-.5519.4481-1,1-1Z"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      fill="currentColor"
+    ></path>
+  </g>,
+);
+
+export const LayersFilled = icon(
+  <g>
+    <path
+      d="m3.034,12.231c-.111.475.072,1.01.555,1.286l5.83,3.332c.36.206.801.206,1.161,0l5.83-3.332c.483-.276.667-.811.555-1.286"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></path>
+    <path
+      d="m10.58,3.154l5.83,3.332c.786.449.786,1.582,0,2.031l-5.83,3.332c-.36.205-.801.205-1.161,0l-5.83-3.332c-.786-.449-.786-1.582,0-2.031l5.83-3.332c.36-.205.801-.205,1.161,0Z"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      fill="currentColor"
+    ></path>
+  </g>,
+);
+
+export const UserKey = icon(
+  <g>
+    <circle
+      cx="9"
+      cy="6"
+      r="3"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    ></circle>
+    <circle
+      cx="10"
+      cy="15"
+      r="2"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></circle>
+    <line
+      x1="17"
+      y1="15"
+      x2="12"
+      y2="15"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></line>
+    <path
+      d="m5.434,12.98c-.997.592-1.837,1.42-2.435,2.412"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    ></path>
+    <line
+      x1="15"
+      y1="17"
+      x2="15"
+      y2="15"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      data-color="color-2"
+    ></line>
+  </g>,
+);

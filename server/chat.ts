@@ -1,3 +1,4 @@
+import { queues, type BackgroundJob } from "./jobs";
 import { Router, type Request } from "express";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -45,7 +46,7 @@ type Turn = {
   dependencies: string[];
   error: string | null;
   error_status: number | null;
-  lease_id: string | null;
+  attempt_id: string | null;
   stream: boolean;
   regenerate_base: string | null;
 };
@@ -77,7 +78,6 @@ export function createChatRuntime(
     string,
     { controller: AbortController; work: Promise<void> }
   >();
-  let claiming = false;
   let closed = false;
   const streams = new Set<() => void>();
   async function chatFor(a: Actor, chatId: string) {
@@ -250,17 +250,22 @@ export function createChatRuntime(
         stream,
         regenerateBase ?? null,
       );
+      await wake(chatId);
       return turnId;
     });
   }
-  async function execute(turn: Turn, controller: AbortController) {
+  async function execute(
+    turn: Turn,
+    controller: AbortController,
+    job: BackgroundJob,
+  ) {
     let deps = [...turn.document_ids];
     const check = async () => {
       controller.signal.throwIfAborted();
       const lease = await store.one<Turn>(
-        "SELECT * FROM chat_turns WHERE id=? AND lease_id=?",
+        "SELECT * FROM chat_turns WHERE id=? AND attempt_id=?",
         turn.id,
-        turn.lease_id,
+        turn.attempt_id,
       );
       if (!lease || !["retrieving", "generating"].includes(lease.status)) {
         controller.abort();
@@ -277,11 +282,6 @@ export function createChatRuntime(
       heartbeatBusy = true;
       void (async () => {
         await check();
-        await store.run(
-          "UPDATE chat_turns SET lease_until=now()+interval '30 seconds' WHERE id=? AND lease_id=? AND status IN ('retrieving','generating')",
-          turn.id,
-          turn.lease_id,
-        );
       })()
         .catch((error) => controller.abort(error))
         .finally(() => {
@@ -314,9 +314,9 @@ export function createChatRuntime(
       const runSearch = async (query: string, signal?: AbortSignal) => {
         const { a: currentActor } = await check();
         await store.run(
-          "UPDATE chat_turns SET status='retrieving' WHERE id=? AND lease_id=? AND status='generating'",
+          "UPDATE chat_turns SET status='retrieving' WHERE id=? AND attempt_id=? AND status='generating'",
           turn.id,
-          turn.lease_id,
+          turn.attempt_id,
         );
         const found = await providers.retrieve(
           currentActor,
@@ -350,10 +350,10 @@ export function createChatRuntime(
         ];
         await check();
         await store.run(
-          "UPDATE chat_turns SET status='generating',dependencies=?::jsonb WHERE id=? AND lease_id=? AND status='retrieving'",
+          "UPDATE chat_turns SET status='generating',dependencies=?::jsonb WHERE id=? AND attempt_id=? AND status='retrieving'",
           JSON.stringify(deps),
           turn.id,
-          turn.lease_id,
+          turn.attempt_id,
         );
         return {
           sources: found.results.map((source) => ({
@@ -380,10 +380,10 @@ export function createChatRuntime(
         return result;
       };
       await store.run(
-        "UPDATE chat_turns SET status='generating',dependencies=?::jsonb WHERE id=? AND lease_id=? AND status='retrieving'",
+        "UPDATE chat_turns SET status='generating',dependencies=?::jsonb WHERE id=? AND attempt_id=? AND status='retrieving'",
         JSON.stringify(deps),
         turn.id,
-        turn.lease_id,
+        turn.attempt_id,
       );
       const history: Message[] = JSON.parse(chat.messages);
       const context = turn.regenerate_base ? history.slice(0, -2) : history;
@@ -394,10 +394,10 @@ export function createChatRuntime(
         lastWrite = Date.now();
         await check();
         await store.run(
-          "UPDATE chat_turns SET partial_text=? WHERE id=? AND lease_id=? AND status='generating'",
+          "UPDATE chat_turns SET partial_text=? WHERE id=? AND attempt_id=? AND status='generating'",
           text,
           turn.id,
-          turn.lease_id,
+          turn.attempt_id,
         );
       };
       const answer = await providers.answer(
@@ -415,7 +415,7 @@ export function createChatRuntime(
           ...(turn.stream ? { onText } : {}),
         },
       );
-      await store.transaction(async () => {
+      await store.jobs.complete(job, async () => {
         const { chat: current } = await check();
         if (current.messages !== chat.messages)
           throw new HttpError(409, "The conversation changed. Please retry.");
@@ -445,11 +445,17 @@ export function createChatRuntime(
           chat.id,
         );
         await store.run(
-          "UPDATE chat_turns SET status='completed',partial_text=?,lease_id=NULL,lease_until=NULL WHERE id=? AND lease_id=?",
+          "UPDATE chat_turns SET status='completed',partial_text=?,attempt_id=NULL WHERE id=? AND attempt_id=?",
           answer,
           turn.id,
-          turn.lease_id,
+          turn.attempt_id,
         );
+        const next = await store.one<Turn>(
+          "SELECT * FROM chat_turns WHERE chat_id=? AND status=ANY(?::text[]) ORDER BY position LIMIT 1",
+          chat.id,
+          pendingStatuses,
+        );
+        if (next?.status === "queued") await wake(chat.id);
       });
     } catch (error) {
       const reason =
@@ -457,7 +463,7 @@ export function createChatRuntime(
           ? controller.signal.reason
           : error;
       await store.run(
-        "UPDATE chat_turns SET status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE 'failed' END,error=?,error_status=?,lease_id=NULL,lease_until=NULL WHERE id=? AND lease_id=? AND status IN ('retrieving','generating','cancelling')",
+        "UPDATE chat_turns SET status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE 'failed' END,error=?,error_status=?,attempt_id=NULL WHERE id=? AND attempt_id=? AND status IN ('retrieving','generating','cancelling')",
         reason instanceof HttpError
           ? reason.message
           : controller.signal.aborted
@@ -465,51 +471,51 @@ export function createChatRuntime(
             : "The answer could not be completed. Please retry.",
         reason instanceof HttpError ? reason.status : 502,
         turn.id,
-        turn.lease_id,
+        turn.attempt_id,
       );
     } finally {
       clearInterval(heartbeat);
     }
   }
-  async function tick() {
-    if (claiming || closed) return;
-    claiming = true;
-    try {
-      await store.run(
-        "UPDATE chat_turns SET status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE 'failed' END,error='The answer was interrupted. Retry when you are ready.',error_status=503,lease_id=NULL,lease_until=NULL WHERE status IN ('retrieving','generating','cancelling') AND lease_until < now()",
-      );
-      while (running.size < 3 && !closed) {
-        const turn = await store.transaction(async () => {
-          const candidate = await store.one<Turn>(
-            "SELECT t.* FROM chat_turns t WHERE t.status='queued' AND NOT EXISTS (SELECT 1 FROM chat_turns p WHERE p.chat_id=t.chat_id AND p.status=ANY(?::text[]) AND (p.position<t.position OR p.status=ANY(?::text[]))) ORDER BY t.position LIMIT 1",
-            pendingStatuses,
-            activeStatuses,
-          );
-          if (!candidate) return;
-          const lease = randomUUID();
-          await store.run(
-            "UPDATE chat_turns SET status='retrieving',lease_id=?,lease_until=now()+interval '30 seconds',error=NULL,error_status=NULL,partial_text='' WHERE id=?",
-            lease,
-            candidate.id,
-          );
-          return { ...candidate, status: "retrieving", lease_id: lease };
-        });
-        if (!turn) break;
-        const controller = new AbortController();
-        const work = execute(turn, controller)
-          .catch(() => {})
-          .finally(() => {
-            running.delete(turn.id);
-            kick();
-          });
-        running.set(turn.id, { controller, work });
-      }
-    } finally {
-      claiming = false;
-    }
+  async function wake(chatId: string) {
+    await store.jobs.send(queues.chat, { chatId }, chatId);
   }
-  function kick() {
-    void tick().catch(() => {});
+  async function process(job: BackgroundJob) {
+    if (closed) throw new Error("Chat worker is stopping");
+    const turn = await store.jobs.guard(job, async () => {
+      const candidate = await store.one<Turn>(
+        "SELECT * FROM chat_turns WHERE chat_id=? AND status=ANY(?::text[]) ORDER BY position LIMIT 1",
+        job.data.chatId,
+        pendingStatuses,
+      );
+      if (!candidate) return;
+      if (activeStatuses.includes(candidate.status)) {
+        await store.run(
+          "UPDATE chat_turns SET status=CASE WHEN status='cancelling' THEN 'cancelled' ELSE 'failed' END,error='The answer was interrupted. Retry when you are ready.',error_status=503,attempt_id=NULL WHERE id=?",
+          candidate.id,
+        );
+        return;
+      }
+      if (candidate.status !== "queued") return;
+      const attempt = randomUUID();
+      await store.run(
+        "UPDATE chat_turns SET status='retrieving',attempt_id=?,job_id=?,error=NULL,error_status=NULL,partial_text='' WHERE id=?",
+        attempt,
+        job.id,
+        candidate.id,
+      );
+      return { ...candidate, status: "retrieving", attempt_id: attempt };
+    });
+    if (!turn) return;
+    const controller = new AbortController();
+    const abort = () => controller.abort(job.signal.reason);
+    job.signal.addEventListener("abort", abort, { once: true });
+    const work = execute(turn, controller, job).finally(() => {
+      running.delete(turn.id);
+      job.signal.removeEventListener("abort", abort);
+    });
+    running.set(turn.id, { controller, work });
+    await work;
   }
 
   router.get("/", async (req, res) => {
@@ -632,7 +638,6 @@ export function createChatRuntime(
       true,
     );
     res.status(202).json({ id: turnId });
-    kick();
   });
   router.post("/:id/regenerate", async (req, res) => {
     const a = await authenticate(req);
@@ -655,7 +660,6 @@ export function createChatRuntime(
       hash(chat.messages),
     );
     res.status(202).json({ id: turnId });
-    kick();
   });
   router.post("/:id/branch", async (req, res) => {
     const result = await store.transaction(async () => {
@@ -739,9 +743,9 @@ export function createChatRuntime(
           positions[index],
           rows[index].id,
         );
+      await wake(chat.id);
     });
     res.json({ ok: true });
-    kick();
   });
   router.patch("/:id/turns/:turnId", async (req, res) => {
     await store.transaction(async () => {
@@ -811,9 +815,9 @@ export function createChatRuntime(
           neighbor.id,
         );
       }
+      await wake(chat.id);
     });
     res.json({ ok: true });
-    kick();
   });
   router.delete("/:id/turns/:turnId", async (req, res) => {
     const turnId = uuid.parse(req.params.turnId);
@@ -827,10 +831,10 @@ export function createChatRuntime(
         turnId,
         chat.id,
       );
+      await wake(chat.id);
     });
     running.get(turnId)?.controller.abort();
     res.json({ ok: true });
-    kick();
   });
   router.post("/:id/messages", async (req, res) => {
     const chatId = uuid.parse(req.params.id);
@@ -840,7 +844,7 @@ export function createChatRuntime(
       req.body,
       false,
     );
-    kick();
+
     for (;;) {
       const turn = await store.one<Turn>(
         "SELECT * FROM chat_turns WHERE id=?",
@@ -871,7 +875,7 @@ export function createChatRuntime(
   });
   return {
     router,
-    tick,
+    process,
     snapshot,
     async close() {
       closed = true;

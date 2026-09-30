@@ -3,6 +3,9 @@ import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { betterAuth } from "better-auth";
+import { jwt } from "better-auth/plugins";
+import { oauthProvider } from "@better-auth/oauth-provider";
+import { apiScopes } from "../shared/api-access";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { hashPassword, verifyPassword } from "./auth-passwords";
 import { createAuthEmailSender, type SendAuthEmail } from "./auth-email";
@@ -48,15 +51,8 @@ export function createAuthentication(
   }
   if (secret.length < 32)
     throw new Error("BETTER_AUTH_SECRET must contain at least 32 characters");
-  const sender =
-    options.sendAuthEmail ?? createAuthEmailSender(localDevelopment);
-  const sendEmail: SendAuthEmail = async (message) => {
-    try {
-      await sender(message);
-    } catch {
-      console.error("Authentication email delivery failed");
-    }
-  };
+  if (!options.sendAuthEmail) createAuthEmailSender(localDevelopment);
+  const sendEmail: SendAuthEmail = (message) => store.jobs.email(message);
   async function consume(key: string, rule: { window: number; max: number }) {
     const now = Date.now();
     const result = await store.authDb.query<{
@@ -87,6 +83,51 @@ export function createAuthentication(
     database: store.authDb,
     trustedOrigins: [options.origin],
     logger: { disabled: true },
+    disabledPaths: [
+      "/token",
+      "/oauth2/update-consent",
+      "/oauth2/delete-consent",
+    ],
+    plugins: [
+      jwt(),
+      oauthProvider({
+        loginPage: "/oauth/sign-in",
+        consentPage: "/oauth/consent",
+        scopes: [...apiScopes, "offline_access"],
+        grantTypes: ["authorization_code", "refresh_token"],
+        allowDynamicClientRegistration: true,
+        allowUnauthenticatedClientRegistration: true,
+        allowPublicClientPrelogin: true,
+        clientPrivileges: () => false,
+        resourcePrivileges: () => false,
+        resources: [
+          {
+            identifier: `${options.origin}/mcp`,
+            allowedScopes: [...apiScopes, "offline_access"],
+            accessTokenTtl: 300,
+          },
+          {
+            identifier: `${options.origin}/api/v1`,
+            allowedScopes: [...apiScopes, "offline_access"],
+            accessTokenTtl: 300,
+          },
+        ],
+        clientRegistrationDefaultResources: [
+          `${options.origin}/mcp`,
+          `${options.origin}/api/v1`,
+        ],
+        clientRegistrationDefaultScopes: [...apiScopes, "offline_access"],
+        accessTokenExpiresIn: 300,
+        codeExpiresIn: 300,
+        customAccessTokenClaims: async ({ user }) => {
+          if (!user?.emailVerified)
+            throw new APIError("FORBIDDEN", {
+              message: "Verified account required",
+            });
+          return { jevbox_issued_at: Date.now() };
+        },
+      }),
+    ],
     user: {
       modelName: "users",
       fields: {
@@ -177,7 +218,6 @@ export function createAuthentication(
         sendEmail({ to: user.email, kind: "verification", url }),
     },
     advanced: {
-      backgroundTasks: { handler: (task) => void task.catch(() => {}) },
       database: { generateId: () => randomUUID() },
       useSecureCookies: options.origin.startsWith("https://"),
       cookiePrefix: "jevbox",

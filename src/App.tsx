@@ -51,6 +51,9 @@ import {
   Moon,
   Sun,
   KeyRound,
+  UserKey,
+  LayersFilled,
+  TriangleWarningFilled,
   Users,
 } from "@/components/icons";
 import { useTheme } from "@/components/theme";
@@ -87,6 +90,8 @@ import { Auth } from "@/components/auth";
 import { Brand, Loading, useAction } from "@/components/common";
 import { Sharing } from "@/components/sharing";
 import { SettingsView } from "@/components/settings";
+import { ApiKeysView } from "@/components/api-keys";
+import { OAuthConsent, OAuthResume } from "@/components/oauth-consent";
 import { SearchView, ChatView } from "@/components/discovery";
 import { DocumentView } from "@/components/document";
 import {
@@ -408,6 +413,8 @@ export default function App() {
   if (loading) return <Loading fullScreen />;
   if (!me || location.pathname === "/reset-password")
     return <Auth onLogin={() => void loadMe()} />;
+  if (location.pathname === "/oauth/consent") return <OAuthConsent me={me} />;
+  if (location.pathname === "/oauth/sign-in") return <OAuthResume />;
   const currentDocument = resources.find((r) => r.id === documentId);
   const ancestors: Resource[] = [];
   let parentId = currentDocument?.parent_id ?? directory;
@@ -432,7 +439,11 @@ export default function App() {
             { label: "Organization", href: paths.settings() },
             {
               label:
-                settingsSection === "connections" ? "Connections" : "Members",
+                settingsSection === "api-keys"
+                  ? "API keys"
+                  : settingsSection === "connections"
+                    ? "Connections"
+                    : "Members",
               href: paths.settings(settingsSection),
             },
           ]
@@ -591,13 +602,17 @@ export default function App() {
                       aria-label={`${connection.label}: ${!connection.connected ? "not connected" : connection.issue ? "indexing needs attention" : "connected"}`}
                       href={paths.settings("connections")}
                     >
-                      <ProviderLogo
-                        provider={connection.provider}
-                        size={connection.size}
-                      />
+                      {connection.provider === "extend" ? (
+                        <LayersFilled size={24} />
+                      ) : (
+                        <ProviderLogo
+                          provider={connection.provider}
+                          size={connection.size}
+                        />
+                      )}
                       {(!connection.connected || connection.issue) && (
-                        <TriangleAlert
-                          className="rail-alert-action rail-connection-warning micro-alert-icon"
+                        <TriangleWarningFilled
+                          className="rail-alert-action rail-connection-warning"
                           size={11}
                         />
                       )}
@@ -667,19 +682,6 @@ export default function App() {
                 <DropdownMenuItem
                   onClick={() =>
                     void action.run(async () => {
-                      await api("/auth/revoke-other-sessions", {
-                        method: "POST",
-                        body: JSON.stringify({}),
-                      });
-                    })
-                  }
-                >
-                  <LogOut size={15} />
-                  Sign out other devices
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() =>
-                    void action.run(async () => {
                       await api("/auth/logout", { method: "POST" });
                       location.replace("/");
                     })
@@ -716,6 +718,7 @@ export default function App() {
             ? [
                 { id: "people", title: "Members", icon: Users },
                 { id: "connections", title: "Connections", icon: KeyRound },
+                { id: "api-keys", title: "API keys", icon: UserKey },
               ]
             : [
                 { id: "library", title: "Library", icon: Library },
@@ -826,11 +829,15 @@ export default function App() {
             />
           ) : page === "settings" ? (
             <ScrollArea scrollFade>
-              <SettingsView
-                me={me}
-                section={settingsSection}
-                onSaved={() => void loadMe()}
-              />
+              {settingsSection === "api-keys" ? (
+                <ApiKeysView key={me.user.id} me={me} />
+              ) : (
+                <SettingsView
+                  me={me}
+                  section={settingsSection}
+                  onSaved={() => void loadMe()}
+                />
+              )}
             </ScrollArea>
           ) : page === "search" ? (
             <ScrollArea scrollFade>
@@ -858,8 +865,8 @@ export default function App() {
               {(!me.semanticEnabled || !me.extendEnabled) && (
                 <div className="library-connection-prompt">
                   <span className="provider-logo-stack" aria-hidden="true">
-                    <span>
-                      <ProviderLogo provider="extend" size={24} />
+                    <span data-provider="extend">
+                      <ProviderLogo provider="extend" size={34} />
                     </span>
                     <span>
                       <ProviderLogo provider="typesafe" size={22} />
@@ -970,31 +977,25 @@ export default function App() {
                             (async () => {
                               const result = await api<{
                                 count: number;
-                                completed: number;
-                                failed: { id: string; error: string }[];
                               }>("/documents/organize", {
                                 method: "POST",
                                 body: JSON.stringify({ ids }),
                               });
                               await refresh();
-                              if (result.failed.length)
-                                throw new Error(
-                                  `${result.completed} of ${result.count} documents organized. ${result.failed[0].error}`,
-                                );
                               return result;
                             })(),
                             {
                               loading: {
                                 title:
                                   ids.length === 1
-                                    ? "Organizing document…"
-                                    : `Organizing ${ids.length} documents…`,
+                                    ? "Queueing document…"
+                                    : `Queueing ${ids.length} documents…`,
                               },
                               success: (result) => ({
                                 title:
                                   result.count === 1
-                                    ? "Document organized"
-                                    : `${result.count} documents organized`,
+                                    ? "Document queued for organization"
+                                    : `${result.count} documents queued for organization`,
                               }),
                               error: (error) => ({
                                 title: "Couldn't organize documents",

@@ -1,3 +1,4 @@
+import { runJobs, waitForJobs } from "./jobs";
 import { authMailbox } from "./auth-mailbox";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -156,6 +157,7 @@ before(async () => {
   database = await testDatabase();
   directory = mkdtempSync(join(tmpdir(), "jevbox-chat-"));
   runtime = await createApp({
+    workers: ["auth-email", "chat-answer"],
     directory,
     databaseUrl: database.url,
     origin,
@@ -211,7 +213,7 @@ before(async () => {
     "notes.md",
   );
   documentId = (await req("/documents", "POST", form)).data.id;
-  await runtime.tick();
+  await runJobs(runtime);
 });
 after(async () => {
   for (const call of calls) call.release();
@@ -394,6 +396,7 @@ test("queued messages survive runtime replacement and an interrupted answer requ
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await runtime.store.close();
   runtime = await createApp({
+    workers: ["auth-email", "chat-answer"],
     directory,
     databaseUrl: database.url,
     origin,
@@ -406,7 +409,7 @@ test("queued messages survive runtime replacement and an interrupted answer requ
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   base = `http://127.0.0.1:${address.port}`;
-  await runtime.tickChats();
+  await waitForJobs(runtime, ["chat-answer"]);
   const saved = await state(chat);
   assert.deepEqual(
     saved.turns.map((t: any) => [t.id, t.status]),

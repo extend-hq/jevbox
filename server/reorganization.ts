@@ -1,3 +1,4 @@
+import { queues, type BackgroundJob } from "./jobs";
 import { randomUUID } from "node:crypto";
 import { createJev } from "./jev";
 import { getSettings } from "./providers";
@@ -23,29 +24,38 @@ export async function enqueueReorganization(
   actor: Actor,
   folderId: string,
 ) {
-  const pending = await store.one<Review>(
-    "SELECT * FROM organization_reviews WHERE org_id=? AND owner_id=? AND state='pending' ORDER BY created LIMIT 1",
-    actor.orgId,
-    actor.userId,
-  );
-  const folders = [...new Set([...(pending?.folder_ids ?? []), folderId])];
-  if (pending && folders.length <= 16) {
-    await store.run(
-      "UPDATE organization_reviews SET folder_ids=?,created=? WHERE id=?",
-      JSON.stringify(folders),
-      new Date().toISOString(),
-      pending.id,
-    );
-  } else {
-    await store.run(
-      "INSERT INTO organization_reviews(id,org_id,owner_id,folder_ids,created) VALUES(?,?,?,?,?)",
-      randomUUID(),
+  return store.transaction(async () => {
+    const pending = await store.one<Review>(
+      "SELECT * FROM organization_reviews WHERE org_id=? AND owner_id=? AND state='pending' ORDER BY created LIMIT 1",
       actor.orgId,
       actor.userId,
-      JSON.stringify([folderId]),
-      new Date().toISOString(),
     );
-  }
+    const folders = [...new Set([...(pending?.folder_ids ?? []), folderId])];
+    if (pending && folders.length <= 16) {
+      await store.run(
+        "UPDATE organization_reviews SET folder_ids=?,created=? WHERE id=?",
+        JSON.stringify(folders),
+        new Date().toISOString(),
+        pending.id,
+      );
+    } else {
+      const id = randomUUID();
+      await store.run(
+        "INSERT INTO organization_reviews(id,org_id,owner_id,folder_ids,created) VALUES(?,?,?,?,?)",
+        id,
+        actor.orgId,
+        actor.userId,
+        JSON.stringify([folderId]),
+        new Date().toISOString(),
+      );
+      const jobId = await store.jobs.send(queues.review, { reviewId: id }, id);
+      await store.run(
+        "UPDATE organization_reviews SET job_id=? WHERE id=?",
+        jobId,
+        id,
+      );
+    }
+  });
 }
 
 export function createReorganization(
@@ -53,16 +63,18 @@ export function createReorganization(
   fetcher: typeof fetch,
   evidence: (document: Resource) => unknown,
 ) {
-  async function review(event: Review, leaseId: string) {
+  async function review(event: Review, attemptId: string, job: BackgroundJob) {
     const settings = await getSettings(store, event.org_id);
     async function finish(state: string, error: string | null = null) {
-      await store.run(
-        "UPDATE organization_reviews SET state=?,error=?,lease_id=NULL,lease_until=NULL WHERE id=? AND lease_id=? AND state='working'",
-        state,
-        error,
-        event.id,
-        leaseId,
-      );
+      await store.jobs.complete(job, async () => {
+        await store.run(
+          "UPDATE organization_reviews SET state=?,error=?,attempt_id=NULL WHERE id=? AND attempt_id=? AND state='working'",
+          state,
+          error,
+          event.id,
+          attemptId,
+        );
+      });
     }
     if (settings.organization?.enabled === false) return finish("disabled");
     if (!settings.jevKey) return finish("awaiting_key");
@@ -78,7 +90,7 @@ export function createReorganization(
       role: member.role,
       token: "",
     };
-    const signal = AbortSignal.timeout(90000);
+    const signal = AbortSignal.any([job.signal, AbortSignal.timeout(90000)]);
     const folders: Resource[] = [];
     for (const folder of await store.all<Resource>(
       "SELECT * FROM resources WHERE org_id=? AND kind='folder'",
@@ -105,13 +117,13 @@ export function createReorganization(
     if (!focus.length) return finish("completed");
     async function checkFocus() {
       signal.throwIfAborted();
-      const job = await store.one<{ lease_id: string; state: string }>(
-        "SELECT lease_id,state FROM organization_reviews WHERE id=?",
+      const job = await store.one<{ attempt_id: string; state: string }>(
+        "SELECT attempt_id,state FROM organization_reviews WHERE id=?",
         event.id,
       );
       if (
         job?.state !== "working" ||
-        job.lease_id !== leaseId ||
+        job.attempt_id !== attemptId ||
         (await getSettings(store, actor.orgId)).organization?.enabled === false
       )
         throw new HttpError(409, "The organization review changed.");
@@ -207,11 +219,11 @@ export function createReorganization(
         ];
         async function check() {
           signal.throwIfAborted();
-          const job = await store.one<{ lease_id: string; state: string }>(
-            "SELECT lease_id,state FROM organization_reviews WHERE id=?",
+          const job = await store.one<{ attempt_id: string; state: string }>(
+            "SELECT attempt_id,state FROM organization_reviews WHERE id=?",
             event.id,
           );
-          if (job?.state !== "working" || job.lease_id !== leaseId)
+          if (job?.state !== "working" || job.attempt_id !== attemptId)
             throw new HttpError(409, "The organization review changed.");
           if (
             (await getSettings(store, actor.orgId)).organization?.enabled ===
@@ -283,47 +295,47 @@ export function createReorganization(
           );
           if (probabilities.review >= 0.8)
             await store.transaction(async () => {
-              if (await check())
-                await store.run(
-                  "UPDATE document_filing SET state='pending',is_review=true,error=NULL,lease_id=NULL,lease_until=NULL WHERE resource_id=? AND state='completed' AND outcome->>'reason' IS DISTINCT FROM 'manual'",
-                  document.id,
-                );
+              if (await check()) {
+                await store.jobs.guard(job, async () => {
+                  await store.run(
+                    "UPDATE document_filing SET state='pending',is_review=true,error=NULL,attempt_id=NULL WHERE resource_id=? AND state='completed' AND outcome->>'reason' IS DISTINCT FROM 'manual'",
+                    document.id,
+                  );
+                  const filingId = await store.jobs.send(
+                    queues.filing,
+                    { resourceId: document.id },
+                    document.id,
+                  );
+                  await store.run(
+                    "UPDATE document_filing SET job_id=? WHERE resource_id=?",
+                    filingId,
+                    document.id,
+                  );
+                });
+              }
             });
         }
       }
     }
     await finish("completed");
   }
-  async function tick() {
-    await store.run(
-      "UPDATE organization_reviews SET state='pending',lease_id=NULL,lease_until=NULL WHERE state='working' AND lease_until<now()",
-    );
-    const events = await store.all<Review>(
-      "SELECT * FROM organization_reviews WHERE state='pending' ORDER BY created LIMIT 2",
-    );
-    for (const event of events) {
-      const leaseId = randomUUID();
-      if (
-        !(
-          await store.run(
-            "UPDATE organization_reviews SET state='working',lease_id=?,lease_until=now()+interval '5 minutes',error=NULL WHERE id=? AND state='pending'",
-            leaseId,
-            event.id,
-          )
-        ).changes
-      )
-        continue;
-      try {
-        await review(event, leaseId);
-      } catch {
-        await store.run(
-          "UPDATE organization_reviews SET state='failed',error=?,lease_id=NULL,lease_until=NULL WHERE id=? AND lease_id=? AND state='working'",
-          "Upload-driven organization review stopped. Documents kept their current placements.",
-          event.id,
-          leaseId,
-        );
-      }
-    }
+  async function process(job: BackgroundJob) {
+    const claim = await store.jobs.guard(job, async () => {
+      const event = await store.one<Review>(
+        "SELECT * FROM organization_reviews WHERE id=? AND job_id=? AND state IN ('pending','working')",
+        job.data.reviewId,
+        job.id,
+      );
+      if (!event) return;
+      const attemptId = randomUUID();
+      await store.run(
+        "UPDATE organization_reviews SET state='working',attempt_id=?,error=NULL WHERE id=?",
+        attemptId,
+        event.id,
+      );
+      return { event, attemptId };
+    });
+    if (claim) await review(claim.event, claim.attemptId, job);
   }
-  return { tick };
+  return { process };
 }

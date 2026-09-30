@@ -1,3 +1,4 @@
+import { runJobs, waitForJobs } from "./jobs";
 import { authMailbox } from "./auth-mailbox";
 import {
   createAuthorization,
@@ -156,7 +157,7 @@ async function upload(
   if (parentId) form.append("parentId", parentId);
   const result = await req("/documents", cookie, "POST", form);
   assert.equal(result.status, 201);
-  await runtime.tick();
+  await runJobs(runtime);
   return result.data.id as string;
 }
 let owner: string,
@@ -170,6 +171,7 @@ before(async () => {
   directory = mkdtempSync(join(tmpdir(), "jevbox-tests-"));
   database = await testDatabase();
   runtime = await createApp({
+    workers: ["auth-email", "chat-answer"],
     databaseUrl: database.url,
     directory,
     origin,
@@ -696,6 +698,7 @@ test("production bootstrap requires a token and closes after the first account",
   const isolatedDir = mkdtempSync(join(tmpdir(), "jevbox-bootstrap-"));
   const isolatedDatabase = await testDatabase();
   const isolated = await createApp({
+    workers: ["auth-email", "chat-answer"],
     databaseUrl: isolatedDatabase.url,
     directory: isolatedDir,
     origin,

@@ -46,10 +46,11 @@ services:
       - "127.0.0.1:8025:8025"
     restart: unless-stopped
   app:
+    image: jevbox:local
     build: .
     ports:
       - "127.0.0.1:4310:4310"
-    environment:
+    environment: &app-environment
       APP_ORIGIN: http://localhost:4310
       ALLOW_SIGNUP: "true"
       AUTH_LOCAL_DEVELOPMENT: "true"
@@ -69,6 +70,27 @@ services:
       mailpit:
         condition: service_started
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 45s
+  worker:
+    image: jevbox:local
+    build: .
+    command: [node, --import, tsx, server/worker.ts]
+    environment: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      spicedb:
+        condition: service_started
+      mailpit:
+        condition: service_started
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    stop_grace_period: 45s
     security_opt:
       - no-new-privileges:true
     cap_drop:
