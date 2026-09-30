@@ -147,9 +147,14 @@ export function createWorkers(
         message.to,
       );
       if (
-        (message.kind === "invitation"
-          ? !await store.one("SELECT id FROM invites WHERE id=? AND email=? AND status='pending' AND expires_at>now()", message.invitationId, message.to)
-          : !recipient || (message.kind === "verification" && recipient.email_verified))
+        message.kind === "invitation"
+          ? !(await store.one(
+              "SELECT id FROM invites WHERE id=? AND email=? AND status='pending' AND expires_at>now()",
+              message.invitationId,
+              message.to,
+            ))
+          : !recipient ||
+            (message.kind === "verification" && recipient.email_verified)
       ) {
         await store.jobs.remove(job);
         return;
@@ -212,7 +217,8 @@ export function createWorkers(
   return {
     handle,
     async start(names: QueueName[] = Object.values(queues)) {
-      if (names.includes(queues.thumbnail)) await enqueueMissingThumbnails(store);
+      if (names.includes(queues.thumbnail))
+        await enqueueMissingThumbnails(store);
       for (const name of names) {
         if (started.has(name)) continue;
         await store.jobs.boss.work<

@@ -10,7 +10,11 @@ import { mcp } from "@better-auth/mcp";
 import { cimd } from "@better-auth/cimd";
 import { fetchClientMetadataResource } from "@better-auth/cimd/node";
 import { apiScopes } from "../shared/api-access";
-import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
+import {
+  APIError,
+  createAuthMiddleware,
+  getSessionFromCtx,
+} from "better-auth/api";
 import { hashPassword, verifyPassword } from "./auth-passwords";
 import { createAuthEmailSender, type SendAuthEmail } from "./auth-email";
 import type { Store } from "./db";
@@ -79,11 +83,24 @@ export function createAuthentication(
       ),
     };
   }
-  async function keepAdministrator(member: { organizationId: string; role: string }) {
-    if (member.role === "admin" && Number((await store.one<{ count: number }>(
-      "SELECT count(*) AS count FROM members WHERE org_id=? AND role='admin'", member.organizationId,
-    ))?.count) <= 1)
-      throw new APIError("BAD_REQUEST", { message: "Keep at least one organization admin" });
+  async function keepAdministrator(member: {
+    organizationId: string;
+    role: string;
+  }) {
+    if (
+      member.role === "admin" &&
+      Number(
+        (
+          await store.one<{ count: number }>(
+            "SELECT count(*) AS count FROM members WHERE org_id=? AND role='admin'",
+            member.organizationId,
+          )
+        )?.count,
+      ) <= 1
+    )
+      throw new APIError("BAD_REQUEST", {
+        message: "Keep at least one organization admin",
+      });
   }
   const auth = betterAuth({
     appName: "Jevbox",
@@ -118,20 +135,36 @@ export function createAuthentication(
         cancelPendingInvitationsOnReInvite: true,
         schema: {
           session: { fields: { activeOrganizationId: "org_id" } },
-          organization: { modelName: "orgs", fields: { createdAt: "created_at" } },
-          member: { modelName: "members", fields: {
-            organizationId: "org_id", userId: "user_id", createdAt: "created_at",
-          } },
-          invitation: { modelName: "invites", fields: {
-            organizationId: "org_id", inviterId: "inviter_id",
-            expiresAt: "expires_at", createdAt: "created_at",
-          } },
+          organization: {
+            modelName: "orgs",
+            fields: { createdAt: "created_at" },
+          },
+          member: {
+            modelName: "members",
+            fields: {
+              organizationId: "org_id",
+              userId: "user_id",
+              createdAt: "created_at",
+            },
+          },
+          invitation: {
+            modelName: "invites",
+            fields: {
+              organizationId: "org_id",
+              inviterId: "inviter_id",
+              expiresAt: "expires_at",
+              createdAt: "created_at",
+            },
+          },
         },
-        sendInvitationEmail: async ({ id, email, organization }) => sendEmail({
-          to: email, kind: "invitation", invitationId: id,
-          organizationName: organization.name,
-          url: `${options.origin}/?invite=${encodeURIComponent(id)}`,
-        }),
+        sendInvitationEmail: async ({ id, email, organization }) =>
+          sendEmail({
+            to: email,
+            kind: "invitation",
+            invitationId: id,
+            organizationName: organization.name,
+            url: `${options.origin}/?invite=${encodeURIComponent(id)}`,
+          }),
         organizationHooks: {
           beforeUpdateMemberRole: async ({ member, newRole }) => {
             if (!["admin", "member"].includes(newRole))
@@ -140,23 +173,66 @@ export function createAuthentication(
           },
           beforeRemoveMember: async ({ member }) => keepAdministrator(member),
           afterRemoveMember: async ({ member }) => {
-            await store.run("DELETE FROM auth_sessions WHERE org_id=? AND user_id=?", member.organizationId, member.userId);
-            await store.run("DELETE FROM grants WHERE user_id=? AND resource_id IN (SELECT id FROM resources WHERE org_id=?)", member.userId, member.organizationId);
-            await store.run("UPDATE invites SET status='canceled' WHERE org_id=? AND inviter_id=? AND status='pending'", member.organizationId, member.userId);
+            await store.run(
+              "DELETE FROM auth_sessions WHERE org_id=? AND user_id=?",
+              member.organizationId,
+              member.userId,
+            );
+            await store.run(
+              "DELETE FROM grants WHERE user_id=? AND resource_id IN (SELECT id FROM resources WHERE org_id=?)",
+              member.userId,
+              member.organizationId,
+            );
+            await store.run(
+              "UPDATE invites SET status='canceled' WHERE org_id=? AND inviter_id=? AND status='pending'",
+              member.organizationId,
+              member.userId,
+            );
           },
           beforeAcceptInvitation: async ({ invitation }) => {
-            const inviter = await store.one<{ role: string }>("SELECT role FROM members WHERE org_id=? AND user_id=?", invitation.organizationId, invitation.inviterId);
-            if (!inviter || !(await store.permission({ orgId: invitation.organizationId, userId: invitation.inviterId, role: inviter.role, token: "invitation" }, "organization", invitation.organizationId, "manage")))
-              throw new APIError("FORBIDDEN", { message: "Invitation is no longer authorized" });
+            const inviter = await store.one<{ role: string }>(
+              "SELECT role FROM members WHERE org_id=? AND user_id=?",
+              invitation.organizationId,
+              invitation.inviterId,
+            );
+            if (
+              !inviter ||
+              !(await store.permission(
+                {
+                  orgId: invitation.organizationId,
+                  userId: invitation.inviterId,
+                  role: inviter.role,
+                  token: "invitation",
+                },
+                "organization",
+                invitation.organizationId,
+                "manage",
+              ))
+            )
+              throw new APIError("FORBIDDEN", {
+                message: "Invitation is no longer authorized",
+              });
           },
         },
       }),
       apiKey({
-        defaultPrefix: "jev_key_", requireName: true, maximumNameLength: 80,
+        defaultPrefix: "jev_key_",
+        requireName: true,
+        maximumNameLength: 80,
         enableSessionForAPIKeys: false,
-        keyExpiration: { defaultExpiresIn: 90 * 86400, minExpiresIn: 1, maxExpiresIn: 365 },
-        rateLimit: { enabled: options.rateLimits !== false, timeWindow: 60000, maxRequests: 180 },
-        permissions: { defaultPermissions: { documents: ["read"], search: ["read"] } },
+        keyExpiration: {
+          defaultExpiresIn: 90 * 86400,
+          minExpiresIn: 1,
+          maxExpiresIn: 365,
+        },
+        rateLimit: {
+          enabled: options.rateLimits !== false,
+          timeWindow: 60000,
+          maxRequests: 180,
+        },
+        permissions: {
+          defaultPermissions: { documents: ["read"], search: ["read"] },
+        },
       }),
       cimd({ fetchClientMetadataResource, metadataProfile: "mcp-2026-07-28" }),
       mcp({
@@ -302,21 +378,72 @@ export function createAuthentication(
           throw new APIError("FORBIDDEN", {
             message: "Use the organization registration flow",
           });
-        if (ctx.path.startsWith("/organization/") && (ctx.request || ctx.headers)) {
+        if (
+          ctx.path.startsWith("/organization/") &&
+          (ctx.request || ctx.headers)
+        ) {
           const session = await getSessionFromCtx(ctx);
           if (!session?.user.emailVerified)
-            throw new APIError("UNAUTHORIZED", { message: "Verified account required" });
-          if (!["/organization/accept-invitation", "/organization/reject-invitation", "/organization/list-user-invitations", "/organization/get-invitation"].includes(ctx.path)) {
-            let orgId = ctx.body?.organizationId ?? ctx.query?.organizationId ?? (session.session as { activeOrganizationId?: string }).activeOrganizationId;
+            throw new APIError("UNAUTHORIZED", {
+              message: "Verified account required",
+            });
+          if (
+            ![
+              "/organization/accept-invitation",
+              "/organization/reject-invitation",
+              "/organization/list-user-invitations",
+              "/organization/get-invitation",
+            ].includes(ctx.path)
+          ) {
+            let orgId =
+              ctx.body?.organizationId ??
+              ctx.query?.organizationId ??
+              (session.session as { activeOrganizationId?: string })
+                .activeOrganizationId;
             if (ctx.body?.invitationId)
-              orgId = (await store.one<{ org_id: string }>("SELECT org_id FROM invites WHERE id=?", ctx.body.invitationId))?.org_id;
+              orgId = (
+                await store.one<{ org_id: string }>(
+                  "SELECT org_id FROM invites WHERE id=?",
+                  ctx.body.invitationId,
+                )
+              )?.org_id;
             if (ctx.body?.organizationSlug ?? ctx.query?.organizationSlug)
-              orgId = (await store.one<{ id: string }>("SELECT id FROM orgs WHERE slug=?", ctx.body?.organizationSlug ?? ctx.query?.organizationSlug))?.id;
+              orgId = (
+                await store.one<{ id: string }>(
+                  "SELECT id FROM orgs WHERE slug=?",
+                  ctx.body?.organizationSlug ?? ctx.query?.organizationSlug,
+                )
+              )?.id;
             if (orgId) {
-              const member = await store.one<{ role: string }>("SELECT role FROM members WHERE org_id=? AND user_id=?", orgId, session.user.id);
-              const manages = ["/organization/invite-member", "/organization/cancel-invitation", "/organization/update-member-role", "/organization/remove-member", "/organization/update"].includes(ctx.path);
-              if (!member || !(await store.permission({ orgId, userId: session.user.id, role: member.role, token: session.session.id }, "organization", orgId, manages ? "manage" : "active_member")))
-                throw new APIError("FORBIDDEN", { message: "Organization access denied" });
+              const member = await store.one<{ role: string }>(
+                "SELECT role FROM members WHERE org_id=? AND user_id=?",
+                orgId,
+                session.user.id,
+              );
+              const manages = [
+                "/organization/invite-member",
+                "/organization/cancel-invitation",
+                "/organization/update-member-role",
+                "/organization/remove-member",
+                "/organization/update",
+              ].includes(ctx.path);
+              if (
+                !member ||
+                !(await store.permission(
+                  {
+                    orgId,
+                    userId: session.user.id,
+                    role: member.role,
+                    token: session.session.id,
+                  },
+                  "organization",
+                  orgId,
+                  manages ? "manage" : "active_member",
+                ))
+              )
+                throw new APIError("FORBIDDEN", {
+                  message: "Organization access denied",
+                });
             }
           }
           if (ctx.body?.role && !["admin", "member"].includes(ctx.body.role))
@@ -352,7 +479,12 @@ export function createAuthentication(
               "SELECT org_id FROM members WHERE user_id=? ORDER BY org_id LIMIT 1",
               session.userId,
             );
-            return { data: { ...session, activeOrganizationId: member?.org_id ?? null } };
+            return {
+              data: {
+                ...session,
+                activeOrganizationId: member?.org_id ?? null,
+              },
+            };
           },
         },
       },

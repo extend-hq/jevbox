@@ -76,12 +76,20 @@ export function createExternalAccess(
     } catch {
       throw new HttpError(401, "Invalid or expired access token");
     }
-    if (payload.cnf) throw new HttpError(401, "Sender-constrained token requires MCP authentication");
+    if (payload.cnf)
+      throw new HttpError(
+        401,
+        "Sender-constrained token requires MCP authentication",
+      );
     return principalFromClaims(payload, audience);
   }
-  async function principalFromClaims(payload: JWTPayload, audience: "/mcp" | "/api/v1"): Promise<Principal> {
+  async function principalFromClaims(
+    payload: JWTPayload,
+    audience: "/mcp" | "/api/v1",
+  ): Promise<Principal> {
     if (
-      typeof payload.exp !== "number" || payload.exp <= Date.now() / 1000 ||
+      typeof payload.exp !== "number" ||
+      payload.exp <= Date.now() / 1000 ||
       typeof payload.sub !== "string" ||
       typeof payload.azp !== "string" ||
       typeof payload.scope !== "string" ||
@@ -389,5 +397,14 @@ export function createExternalAccess(
       next(error);
     },
   );
-  return { keys, authenticate, organizations, search, read, router, challenge };
+  return {
+    keys,
+    authenticate,
+    principalFromClaims,
+    organizations,
+    search,
+    read,
+    router,
+    challenge,
+  };
 }

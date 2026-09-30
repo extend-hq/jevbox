@@ -46,7 +46,7 @@ PostgreSQL stores accounts, sessions, document bytes, parsed output, and chats. 
 - Personal API keys in **Organization → API keys**, a versioned read-only search/document API, and a permission-aware MCP server with API-key or OAuth authentication. See [API and MCP access](docs/api-access.md).
 
 - Better Auth email/password authentication with mailbox verification, password recovery, and signed HttpOnly session cookies.
-- Separate organizations, invitation links, admin/member role management, member removal, organization switching, and admin-only settings.
+- Better Auth organizations and emailed invitations, admin/member role management, member removal, organization switching, and admin-only settings. Membership acceptance requires a verified matching email and atomic SpiceDB publication.
 - Nested categories and uploads up to 30 MB, durable indexing jobs, retries, and persistent document content.
 - Select documents and choose **Organize** to queue classification, with durable progress and failures visible in the library. Existing paths are preferred; new branches are proposed and validated when needed.
 - Automatic filing of new uploads: JEV walks existing folders, keeps uncertain documents in a suitable parent, and validates occasional model-proposed branches. Uploads also trigger bounded reviews of related documents using their cached indexes; manual placements remain fixed. Administrators can disable filing or select an inexpensive naming model in Connections. See [automatic filing](docs/organization.md).
@@ -92,4 +92,4 @@ This runs on port 4311, creates an isolated PostgreSQL schema, and prints its lo
 
 UI sources are vendored so this repository builds without sibling checkouts. See [third-party notices](docs/third-party.md).
 
-Email/password sign-in uses Better Auth and requires email verification. Local verification and password-reset emails appear in [Mailpit](http://localhost:8025) after `pnpm services:up`. Run `pnpm setup:local` to generate the stable local auth secret. Deployed environments require SMTP settings and `BETTER_AUTH_SECRET`; see the deployment guide. Existing accounts keep their IDs and passwords, but must verify their email and sign in again after migration.
+Email/password sign-in uses Better Auth and requires email verification. Local invitation, verification, and password-reset emails appear in [Mailpit](http://localhost:8025) after `pnpm services:up`. Run `pnpm setup:local` to generate the stable local auth secret. Deployed environments require SMTP settings and `BETTER_AUTH_SECRET`; see the deployment guide. Existing accounts keep their IDs and passwords, but must verify their email and sign in again after migration.

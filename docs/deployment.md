@@ -204,3 +204,11 @@ Backups, ingress/controller installation, DNS, certificates, cloud quotas, and r
 The application applies the numbered PostgreSQL migrations at startup, including the link-sharing table and access constraint. Authorization startup installs the matching SpiceDB schema before serving application requests.
 
 The Better Auth migration preserves account IDs, credentials, memberships, and documents while invalidating old sessions. Existing users must verify mailbox ownership before signing in. Back up the application database and stable auth secret before upgrading. Confirm verification delivery and password reset in the deployed environment before onboarding users.
+
+### Organization and credential plugins
+
+Organizations, memberships, invitations, API keys, and MCP OAuth use Better Auth plugins. Invite emails use the same queued SMTP transport as verification and password reset, so no additional Render service or secret is required. For Resend, verify the sending domain, then set `SMTP_HOST=smtp.resend.com`, `SMTP_USER=resend`, `SMTP_PASSWORD` to the Resend API key, and `AUTH_EMAIL_FROM` to a sender on that domain. Keep port 587 and `SMTP_SECURE=false` to require STARTTLS in production.
+
+Registration through an invitation creates an unverified account without membership. The user verifies that email, signs in, and accepts the pending invitation. Membership changes commit only after SpiceDB publishes the corresponding permission snapshot. Removing a member invalidates their organization sessions and document grants immediately.
+
+The plugin migration preserves existing accounts, memberships, and documents, and invalidates the unreleased custom API keys and pending invitations. Issue fresh invitations and keys after upgrading. MCP clients must support protocol 2026-07-28; the SDK v2 client must pin that version.

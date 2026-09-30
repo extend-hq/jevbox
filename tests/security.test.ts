@@ -497,7 +497,7 @@ test("invitations are single-use, email-bound, and never allow role escalation",
   const token = new URL(invitation.url).searchParams.get("invite")!;
   assert.equal(
     (await req("/invitations/accept", outsider, "POST", { token })).status,
-    400,
+    403,
   );
   const joined = await signup("new@local.test", token);
   assert.equal((await req("/me", joined)).data.role, "member");

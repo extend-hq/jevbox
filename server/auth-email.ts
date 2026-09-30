@@ -50,14 +50,14 @@ export function createAuthEmailSender(localDevelopment = false): SendAuthEmail {
         kind === "invitation"
           ? "You are invited to Jevbox"
           : kind === "verification"
-          ? "Verify your email address"
-          : "Reset your password",
+            ? "Verify your email address"
+            : "Reset your password",
       text:
         kind === "invitation"
           ? `Join ${organizationName ?? "your organization"} on Jevbox:\n\n${url}\n\nSign in with this email address to accept. This invitation expires in seven days.`
           : kind === "verification"
-          ? `Verify your email address to sign in to Jevbox:\n\n${url}\n\nThis link expires in one hour.`
-          : `Reset your Jevbox password:\n\n${url}\n\nThis link expires in one hour. If you did not request it, you can ignore this email.`,
+            ? `Verify your email address to sign in to Jevbox:\n\n${url}\n\nThis link expires in one hour.`
+            : `Reset your Jevbox password:\n\n${url}\n\nThis link expires in one hour. If you did not request it, you can ignore this email.`,
     });
   };
 }

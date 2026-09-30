@@ -288,10 +288,13 @@ export async function createApp(options: {
           if (existing) return;
           createdId = response.user.id;
           if (!invite)
-            await auth.api.createOrganization({ body: {
-              name: input.organization ?? `${input.name}'s organization`,
-              slug: randomUUID(), userId: createdId,
-            } });
+            await auth.api.createOrganization({
+              body: {
+                name: input.organization ?? `${input.name}'s organization`,
+                slug: randomUUID(),
+                userId: createdId,
+              },
+            });
         });
       } catch (error) {
         if (createdId)
@@ -313,7 +316,10 @@ export async function createApp(options: {
     },
   );
   const authHandler = toNodeHandler(async (request) => {
-    if (!new URL(request.url).pathname.startsWith("/api/auth/organization/"))
+    if (
+      ["GET", "HEAD"].includes(request.method) ||
+      !new URL(request.url).pathname.startsWith("/api/auth/organization/")
+    )
       return auth.handler(request);
     let rejected: globalThis.Response | undefined;
     try {
@@ -343,7 +349,14 @@ export async function createApp(options: {
         .send(await response.text());
     },
   );
-  for (const resource of ["mcp", "api/v1"])
+  app.get(
+    [
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-protected-resource/mcp",
+    ],
+    authHandler,
+  );
+  for (const resource of ["api/v1"])
     app.get(`/.well-known/oauth-protected-resource/${resource}`, (_req, res) =>
       res.json({
         resource: `${options.origin}/${resource}`,
@@ -371,9 +384,15 @@ export async function createApp(options: {
   app.post("/api/invitations/accept", async (req, res) => {
     const invitationId = z.string().min(1).max(256).parse(req.body.token);
     await store.transaction(async () => {
-      const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
-      if (!session?.user.emailVerified) throw new HttpError(401, "Please verify your email and sign in");
-      await auth.api.acceptInvitation({ body: { invitationId }, headers: fromNodeHeaders(req.headers) });
+      const session = await auth.api.getSession({
+        headers: fromNodeHeaders(req.headers),
+      });
+      if (!session?.user.emailVerified)
+        throw new HttpError(401, "Please verify your email and sign in");
+      await auth.api.acceptInvitation({
+        body: { invitationId },
+        headers: fromNodeHeaders(req.headers),
+      });
     });
     res.json({ ok: true });
   });
@@ -439,7 +458,10 @@ export async function createApp(options: {
         ))
       )
         throw new HttpError(404, "Organization not found");
-      await auth.api.setActiveOrganization({ body: { organizationId: orgId }, headers: fromNodeHeaders(req.headers) });
+      await auth.api.setActiveOrganization({
+        body: { organizationId: orgId },
+        headers: fromNodeHeaders(req.headers),
+      });
       return {
         status: 200,
         body: { ok: true },
@@ -447,48 +469,118 @@ export async function createApp(options: {
     }),
   );
   app.get("/api/members", async (req, res) => {
-    const result = await auth.api.listMembers({ query: { organizationId: actor(req).orgId, limit: 100 }, headers: fromNodeHeaders(req.headers) });
-    res.json(result.members.map((member) => ({ id: member.userId, name: member.user.name, email: member.user.email, role: member.role })));
+    const result = await auth.api.listMembers({
+      query: { organizationId: actor(req).orgId, limit: 100 },
+      headers: fromNodeHeaders(req.headers),
+    });
+    res.json(
+      result.members.map((member) => ({
+        id: member.userId,
+        name: member.user.name,
+        email: member.user.email,
+        role: member.role,
+      })),
+    );
   });
   app.get("/api/invitations", async (req, res) => {
     const a = await admin(req);
-    res.json(await auth.api.listInvitations({ query: { organizationId: a.orgId }, headers: fromNodeHeaders(req.headers) }));
+    res.json(
+      await auth.api.listInvitations({
+        query: { organizationId: a.orgId },
+        headers: fromNodeHeaders(req.headers),
+      }),
+    );
   });
-  app.post("/api/invitations", mutation(async (req) => {
-    const a = await admin(req);
-    const address = email.parse(req.body.email);
-    const invite = await auth.api.createInvitation({ body: { email: address, role: "member", organizationId: a.orgId, resend: true }, headers: fromNodeHeaders(req.headers) });
-    await audit(a, "invite.create");
-    return { status: 201, body: { id: invite.id, url: `${options.origin}/?invite=${encodeURIComponent(invite.id)}`, expiresInDays: 7 } };
-  }));
-  app.delete("/api/invitations/:id", mutation(async (req) => {
-    const a = await admin(req);
-    const invitationId = id.parse(req.params.id);
-    if (!await store.one("SELECT id FROM invites WHERE id=? AND org_id=?", invitationId, a.orgId)) throw new HttpError(404, "Invitation not found");
-    await auth.api.cancelInvitation({ body: { invitationId }, headers: fromNodeHeaders(req.headers) });
-    await audit(a, "invite.cancel");
-    return { status: 200, body: { ok: true } };
-  }));
-  app.patch("/api/members/:id", mutation(async (req) => {
-    const a = await admin(req);
-    const userId = id.parse(req.params.id);
-    const { role } = z.object({ role: z.enum(["admin", "member"]) }).strict().parse(req.body);
-    const member = await store.one<{ id: string }>("SELECT id FROM members WHERE org_id=? AND user_id=?", a.orgId, userId);
-    if (!member) throw new HttpError(404, "Member not found");
-    await auth.api.updateMemberRole({ body: { memberId: member.id, role, organizationId: a.orgId }, headers: fromNodeHeaders(req.headers) });
-    await audit(a, "member.role");
-    return { status: 200, body: { ok: true } };
-  }));
-  app.delete("/api/members/:id", mutation(async (req) => {
-    const a = await admin(req);
-    const userId = id.parse(req.params.id);
-    if (userId === a.userId) throw new HttpError(400, "This membership cannot be removed");
-    const member = await store.one<{ id: string }>("SELECT id FROM members WHERE org_id=? AND user_id=?", a.orgId, userId);
-    if (!member) throw new HttpError(404, "Member not found");
-    await auth.api.removeMember({ body: { memberIdOrEmail: member.id, organizationId: a.orgId }, headers: fromNodeHeaders(req.headers) });
-    await audit(a, "member.remove");
-    return { status: 200, body: { ok: true } };
-  }));
+  app.post(
+    "/api/invitations",
+    mutation(async (req) => {
+      const a = await admin(req);
+      const address = email.parse(req.body.email);
+      const invite = await auth.api.createInvitation({
+        body: {
+          email: address,
+          role: "member",
+          organizationId: a.orgId,
+          resend: true,
+        },
+        headers: fromNodeHeaders(req.headers),
+      });
+      await audit(a, "invite.create");
+      return {
+        status: 201,
+        body: {
+          id: invite.id,
+          url: `${options.origin}/?invite=${encodeURIComponent(invite.id)}`,
+          expiresInDays: 7,
+        },
+      };
+    }),
+  );
+  app.delete(
+    "/api/invitations/:id",
+    mutation(async (req) => {
+      const a = await admin(req);
+      const invitationId = id.parse(req.params.id);
+      if (
+        !(await store.one(
+          "SELECT id FROM invites WHERE id=? AND org_id=?",
+          invitationId,
+          a.orgId,
+        ))
+      )
+        throw new HttpError(404, "Invitation not found");
+      await auth.api.cancelInvitation({
+        body: { invitationId },
+        headers: fromNodeHeaders(req.headers),
+      });
+      await audit(a, "invite.cancel");
+      return { status: 200, body: { ok: true } };
+    }),
+  );
+  app.patch(
+    "/api/members/:id",
+    mutation(async (req) => {
+      const a = await admin(req);
+      const userId = id.parse(req.params.id);
+      const { role } = z
+        .object({ role: z.enum(["admin", "member"]) })
+        .strict()
+        .parse(req.body);
+      const member = await store.one<{ id: string }>(
+        "SELECT id FROM members WHERE org_id=? AND user_id=?",
+        a.orgId,
+        userId,
+      );
+      if (!member) throw new HttpError(404, "Member not found");
+      await auth.api.updateMemberRole({
+        body: { memberId: member.id, role, organizationId: a.orgId },
+        headers: fromNodeHeaders(req.headers),
+      });
+      await audit(a, "member.role");
+      return { status: 200, body: { ok: true } };
+    }),
+  );
+  app.delete(
+    "/api/members/:id",
+    mutation(async (req) => {
+      const a = await admin(req);
+      const userId = id.parse(req.params.id);
+      if (userId === a.userId)
+        throw new HttpError(400, "This membership cannot be removed");
+      const member = await store.one<{ id: string }>(
+        "SELECT id FROM members WHERE org_id=? AND user_id=?",
+        a.orgId,
+        userId,
+      );
+      if (!member) throw new HttpError(404, "Member not found");
+      await auth.api.removeMember({
+        body: { memberIdOrEmail: member.id, organizationId: a.orgId },
+        headers: fromNodeHeaders(req.headers),
+      });
+      await audit(a, "member.remove");
+      return { status: 200, body: { ok: true } };
+    }),
+  );
   app.get("/api/settings", async (req, res) => {
     const a = await admin(req);
     const s = await getSettings(store, a.orgId);
@@ -760,7 +852,17 @@ export async function createApp(options: {
     }),
   );
   async function publicResource(r: Resource, a: Actor) {
-    const { parsed, parse_run, org_id, thumbnail_job_id, thumbnail_key, thumbnail_width, thumbnail_height, thumbnail_pages, ...rest } = r;
+    const {
+      parsed,
+      parse_run,
+      org_id,
+      thumbnail_job_id,
+      thumbnail_key,
+      thumbnail_width,
+      thumbnail_height,
+      thumbnail_pages,
+      ...rest
+    } = r;
     const filing =
       r.kind === "document"
         ? await store.one<{
@@ -887,15 +989,35 @@ export async function createApp(options: {
   app.get("/api/documents/:id/thumbnail", async (req, res) => {
     const a = actor(req);
     const resource = await requireResource(store, a, id.parse(req.params.id));
-    if (resource.kind !== "document") throw new HttpError(404, "Thumbnail unavailable");
-    const thumbnail = await store.one<{ body: Buffer; mime: string }>("SELECT body,mime FROM thumbnails WHERE resource_id=?", resource.id);
+    if (resource.kind !== "document")
+      throw new HttpError(404, "Thumbnail unavailable");
+    const thumbnail = await store.one<{ body: Buffer; mime: string }>(
+      "SELECT body,mime FROM thumbnails WHERE resource_id=?",
+      resource.id,
+    );
     if (!thumbnail || resource.thumbnail_status !== "ready") {
       res.set("Retry-After", "4");
       return res.status(204).end();
     }
     await requireResource(store, a, resource.id);
-    res.set({ "Content-Type": thumbnail.mime, "Content-Disposition": "inline", "Content-Security-Policy": "default-src 'none'; sandbox", "Cache-Control": "private, no-cache", ETag: `"${resource.thumbnail_key}"` });
-    if (req.get("If-None-Match")?.split(",").some((tag) => tag.trim().replace(/^W\//, "") === `"${resource.thumbnail_key}"` || tag.trim() === "*")) return res.status(304).end();
+    res.set({
+      "Content-Type": thumbnail.mime,
+      "Content-Disposition": "inline",
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+      "Cache-Control": "private, no-cache",
+      ETag: `"${resource.thumbnail_key}"`,
+    });
+    if (
+      req
+        .get("If-None-Match")
+        ?.split(",")
+        .some(
+          (tag) =>
+            tag.trim().replace(/^W\//, "") === `"${resource.thumbnail_key}"` ||
+            tag.trim() === "*",
+        )
+    )
+      return res.status(304).end();
     res.send(thumbnail.body);
   });
   app.get("/api/documents/:id/content", async (req, res) => {
@@ -1294,7 +1416,9 @@ export async function createApp(options: {
           .status(400)
           .json({ error: "Upload must contain one file smaller than 30 MB" });
       if (error instanceof APIError)
-        return res.status(error.statusCode).json({ error: error.body?.message ?? "Authentication request rejected" });
+        return res.status(error.statusCode).json({
+          error: error.body?.message ?? "Authentication request rejected",
+        });
       if (error instanceof HttpError)
         return res.status(error.status).json({ error: error.message });
       res

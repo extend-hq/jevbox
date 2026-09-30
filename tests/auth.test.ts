@@ -418,7 +418,10 @@ test("migration preserves user IDs and passwords, requires verification, and inv
     oldHash,
   ]);
   await pool.query("INSERT INTO orgs(id,name) VALUES($1,'Workspace')", [org]);
-  await pool.query("INSERT INTO members(org_id,user_id,role) VALUES($1,$2,'admin')", [org, id]);
+  await pool.query(
+    "INSERT INTO members(org_id,user_id,role) VALUES($1,$2,'admin')",
+    [org, id],
+  );
   await pool.query("INSERT INTO sessions VALUES('legacy',$1,$2,$3)", [
     id,
     org,
@@ -473,5 +476,233 @@ test("migration preserves user IDs and passwords, requires verification, and inv
     await pool.end();
     await isolated.cleanup(migrated?.store);
     rmSync(localDirectory, { recursive: true, force: true });
+  }
+});
+
+test("plugin invitations deliver email and grant membership only after verified acceptance", async () => {
+  const address = "organization-admin@local.test";
+  assert.equal(
+    (
+      await request("/auth/register", {
+        email: address,
+        name: "Administrator",
+        password,
+      })
+    ).status,
+    201,
+  );
+  const admin = await mailbox.signIn(base, address);
+  const orgId = (await (await request("/me", undefined, admin)).json())
+    .organization.id;
+  for (const mode of ["expired", "canceled", "accepted"] as const) {
+    const email = `invited-${mode}@local.test`;
+    const invitation = await request("/invitations", { email }, admin);
+    assert.equal(invitation.status, 201, await invitation.clone().text());
+    const { id: invitationId } = await invitation.json();
+    assert.ok(
+      mailbox.messages.some(
+        (message) =>
+          message.kind === "invitation" &&
+          message.to === email &&
+          message.invitationId === invitationId,
+      ),
+    );
+    assert.equal(
+      (
+        await request("/auth/register", {
+          email,
+          name: "Invitee",
+          password,
+          invite: invitationId,
+        })
+      ).status,
+      201,
+    );
+    assert.equal(
+      await runtime.store.one(
+        "SELECT m.id FROM members m JOIN users u ON m.user_id=u.id WHERE u.email=? AND m.org_id=?",
+        email,
+        orgId,
+      ),
+      undefined,
+    );
+    const cookie = await mailbox.signIn(base, email);
+    assert.equal((await request("/me", undefined, cookie)).status, 401);
+    if (mode === "expired")
+      await runtime.store.run(
+        "UPDATE invites SET expires_at=now()-interval '1 second' WHERE id=?",
+        invitationId,
+      );
+    if (mode === "canceled")
+      assert.equal(
+        (
+          await request(
+            "/auth/organization/cancel-invitation",
+            { invitationId },
+            admin,
+          )
+        ).status,
+        200,
+      );
+    const accept = () =>
+      request("/auth/organization/accept-invitation", { invitationId }, cookie);
+    if (mode !== "accepted") {
+      assert.equal((await accept()).status, 400);
+      assert.equal((await request("/me", undefined, cookie)).status, 401);
+      assert.equal(
+        await runtime.store.one(
+          "SELECT m.id FROM members m JOIN users u ON m.user_id=u.id WHERE u.email=? AND m.org_id=?",
+          email,
+          orgId,
+        ),
+        undefined,
+      );
+    } else {
+      const write = runtime.store.authorization.write;
+      const version = await runtime.store.one(
+        "SELECT authz_version FROM orgs WHERE id=?",
+        orgId,
+      );
+      try {
+        runtime.store.authorization.write = async () => {
+          throw new Error("Unavailable");
+        };
+        assert.equal((await accept()).status, 500);
+        assert.equal(
+          (
+            await runtime.store.one<{ status: string }>(
+              "SELECT status FROM invites WHERE id=?",
+              invitationId,
+            )
+          )?.status,
+          "pending",
+        );
+        assert.deepEqual(
+          await runtime.store.one(
+            "SELECT authz_version FROM orgs WHERE id=?",
+            orgId,
+          ),
+          version,
+        );
+        assert.equal(
+          await runtime.store.one(
+            "SELECT m.id FROM members m JOIN users u ON m.user_id=u.id WHERE u.email=? AND m.org_id=?",
+            email,
+            orgId,
+          ),
+          undefined,
+        );
+      } finally {
+        runtime.store.authorization.write = write;
+      }
+      assert.equal((await accept()).status, 200);
+      const me = await (await request("/me", undefined, cookie)).json();
+      assert.equal(me.organization.id, orgId);
+      assert.equal(me.role, "member");
+      assert.equal((await accept()).status, 400);
+      assert.equal(
+        (
+          await request(
+            "/auth/organization/invite-member",
+            {
+              organizationId: orgId,
+              email: "unauthorized@local.test",
+              role: "admin",
+            },
+            cookie,
+          )
+        ).status,
+        403,
+      );
+      const member = await runtime.store.one<{ id: string }>(
+        "SELECT id FROM members WHERE org_id=? AND user_id=?",
+        orgId,
+        me.user.id,
+      );
+      try {
+        runtime.store.authorization.write = async () => {
+          throw new Error("Unavailable");
+        };
+        assert.equal(
+          (
+            await request(
+              "/auth/organization/update-member-role",
+              { organizationId: orgId, memberId: member!.id, role: "admin" },
+              admin,
+            )
+          ).status,
+          500,
+        );
+        assert.equal(
+          (
+            await runtime.store.one<{ role: string }>(
+              "SELECT role FROM members WHERE id=?",
+              member!.id,
+            )
+          )?.role,
+          "member",
+        );
+      } finally {
+        runtime.store.authorization.write = write;
+      }
+      assert.equal(
+        (
+          await request(
+            "/auth/organization/remove-member",
+            { organizationId: orgId, memberIdOrEmail: member!.id },
+            admin,
+          )
+        ).status,
+        200,
+      );
+      assert.equal((await request("/me", undefined, cookie)).status, 401);
+    }
+  }
+  const administrator = await runtime.store.one<{ id: string }>(
+    "SELECT id FROM members WHERE org_id=? AND role='admin'",
+    orgId,
+  );
+  assert.equal(
+    (
+      await request(
+        "/auth/organization/update-member-role",
+        { organizationId: orgId, memberId: administrator!.id, role: "member" },
+        admin,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(
+        "/auth/organization/update-member-role",
+        { organizationId: orgId, memberId: administrator!.id, role: "owner" },
+        admin,
+      )
+    ).status,
+    400,
+  );
+  const check = runtime.store.authorization.check;
+  try {
+    runtime.store.authorization.check = async () => false;
+    assert.equal(
+      (
+        await request(
+          "/auth/organization/invite-member",
+          { organizationId: orgId, email: "denied@local.test", role: "member" },
+          admin,
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      await runtime.store.one(
+        "SELECT id FROM invites WHERE email=?",
+        "denied@local.test",
+      ),
+      undefined,
+    );
+  } finally {
+    runtime.store.authorization.check = check;
   }
 });

@@ -1,6 +1,6 @@
 # API and MCP access
 
-Open **Organization → API keys** to create a personal key. All organization members can manage their own keys. The secret is returned only at creation; copy it before closing the dialog. Keys expire after at most one year and can be revoked immediately. The server stores a SHA-256 hash rather than the secret.
+Open **Organization → API keys** to create a personal key. All organization members can manage their own keys. The secret is returned only at creation; copy it before closing the dialog. Keys expire after at most one year and can be revoked immediately. Better Auth’s API Key plugin generates and hashes the secret, enforces expiry and shared rate limits, and handles revocation. Keys cannot act as browser sessions.
 
 A key authenticates as its creator. Each request supplies an organization ID, and the server checks the creator's current membership and SpiceDB permissions. A key can access multiple organizations that its creator currently belongs to. Administration never bypasses restricted document or ancestor permissions. Every key has full read and search access to content its creator can currently access. Keys have no separately configurable access scopes.
 
@@ -31,7 +31,7 @@ Missing, expired, or revoked credentials return 401. Insufficient OAuth scopes r
 
 ## MCP
 
-Connect an MCP client to `<APP_ORIGIN>/mcp` using Streamable HTTP. The server is stateless, uses the official MCP TypeScript SDK, and offers read-only tools:
+Connect an MCP client to `<APP_ORIGIN>/mcp` using Streamable HTTP. Configure SDK v2 clients with `versionNegotiation: { mode: { pin: "2026-07-28" } }`. Older protocol revisions are rejected. The server uses the stateless MCP 2026-07-28 protocol and official TypeScript SDK v2, and offers read-only tools:
 
 | Tool                 | Arguments                                                    |
 | -------------------- | ------------------------------------------------------------ |
@@ -41,7 +41,7 @@ Connect an MCP client to `<APP_ORIGIN>/mcp` using Streamable HTTP. The server is
 
 Clients supporting custom headers can use the same personal API key in the Authorization header. API keys advertise all three tools. Native clients omit Origin; browser origins must match APP_ORIGIN or an explicit comma-separated `MCP_ALLOWED_ORIGINS` entry. This does not enable browser CORS access.
 
-OAuth clients can use browser sign-in and explicit consent. Better Auth provides authorization-code grants with PKCE, dynamic client registration, exact redirect validation, five-minute resource-bound access tokens, and refresh-token rotation. Only user-delegated authorization and refresh grants are enabled. OAuth access tokens authenticate as the consenting user and are checked against live consent, membership, and document permissions on each request.
+OAuth clients can use browser sign-in and explicit consent. Better Auth’s MCP plugin, composed with JWT and CIMD, provides authorization-code grants with PKCE, Client ID Metadata Documents, an explicit dynamic-registration fallback, exact redirect validation, five-minute resource-bound access tokens, and refresh-token rotation with a 30-second retry overlap. DPoP proof verification and replay protection use Better Auth’s durable database adapter. Only user-delegated authorization and refresh grants are enabled. OAuth access tokens authenticate as the consenting user and are checked against live consent, membership, and document permissions on each request.
 
 OAuth clients request these scopes, which can only narrow the user's current permissions:
 
@@ -62,4 +62,4 @@ The issuer is `<APP_ORIGIN>/api/auth`; endpoints for authorization, registration
 
 ## Operations
 
-The normal database migration adds key storage and Better Auth OAuth tables automatically. Preserve BETTER_AUTH_SECRET and the application encryption key across restarts so persisted signing material remains usable. Use a public HTTPS APP_ORIGIN for deployed clients. OAuth registration has its own Better Auth rate limits; search and document operations record their actor and organization in the audit log without queries, source text, or secrets.
+The normal database migration adds Better Auth organization, invitation, API-key, and OAuth storage automatically. The unreleased custom API keys and pending invitations are invalidated; account IDs, memberships, and documents are preserved. Preserve BETTER_AUTH_SECRET and the application encryption key across restarts so persisted signing material remains usable. Use a public HTTPS APP_ORIGIN for deployed clients. OAuth registration has its own Better Auth rate limits; search and document operations record their actor and organization in the audit log without queries, source text, or secrets.

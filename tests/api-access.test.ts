@@ -3,16 +3,19 @@ import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer } from "node:http";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { createApp } from "../server/app";
 import { hashPassword } from "../server/auth-passwords";
 import { buildIndex } from "../server/indexing";
 import { testDatabase } from "./database";
 import { choiceResponse } from "./model-tools";
 
-const origin = "http://localhost:4310";
+let origin = "http://localhost:4310";
 const headers = {
   Origin: origin,
   "X-Jevbox-Request": "1",
@@ -67,12 +70,34 @@ async function request(
   method = "GET",
   body?: unknown,
 ) {
+  if (path === "/mcp" && body && typeof body === "object") {
+    body = {
+      ...body,
+      params: {
+        ...(body as { params?: object }).params,
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientInfo": {
+            name: "Integration",
+            version: "1",
+          },
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
+      },
+    };
+  }
   return fetch(base + path, {
     method,
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       Accept: "application/json, text/event-stream",
+      ...(path === "/mcp"
+        ? {
+            "MCP-Protocol-Version": "2026-07-28",
+            "Mcp-Method": String((body as { method?: string })?.method),
+          }
+        : {}),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     redirect: "manual",
@@ -103,6 +128,13 @@ async function login(email: string) {
 }
 before(async () => {
   database = await testDatabase();
+  server = createServer();
+  server.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  base = origin = `http://127.0.0.1:${address.port}`;
+  headers.Origin = origin;
   directory = mkdtempSync(join(tmpdir(), "jevbox-api-"));
   runtime = await createApp({
     directory,
@@ -111,6 +143,7 @@ before(async () => {
     rateLimits: false,
     fetcher,
   });
+  server.on("request", runtime.app);
   const password = await hashPassword("a-secure-password-123!");
   await runtime.store.transaction(async () => {
     for (const [id, address] of [
@@ -192,11 +225,6 @@ before(async () => {
       userId,
     );
   });
-  server = runtime.app.listen(0, "127.0.0.1");
-  await new Promise<void>((resolve) => server.once("listening", resolve));
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
-  base = `http://127.0.0.1:${address.port}`;
   cookie = await login("api@local.test");
   otherCookie = await login("owner@local.test");
 });
@@ -210,7 +238,7 @@ after(async () => {
 test("keys are personal, hashed, shown once, expire, and cannot mutate or manage keys", async () => {
   const created = await key();
   const stored = await runtime.store.one<{ token_hash: string }>(
-    "SELECT token_hash FROM api_keys WHERE id=?",
+    "SELECT key AS token_hash FROM apikey WHERE id=?",
     created.key.id,
   );
   assert.notEqual(stored!.token_hash, created.token);
@@ -242,7 +270,7 @@ test("keys are personal, hashed, shown once, expire, and cannot mutate or manage
     403,
   );
   await runtime.store.run(
-    "UPDATE api_keys SET expires_at=now()-interval '1 second' WHERE id=?",
+    "UPDATE apikey SET \"expiresAt\"=now()-interval '1 second' WHERE id=?",
     created.key.id,
   );
   assert.equal(
@@ -399,7 +427,10 @@ test("revocation during retrieval and membership removal prevent returning evide
 });
 test("MCP works through the official client with full read and search access", async () => {
   const created = await key();
-  const client = new Client({ name: "integration-test", version: "1.0.0" });
+  const client = new Client(
+    { name: "integration-test", version: "1.0.0" },
+    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  );
   const transport = new StreamableHTTPClientTransport(new URL(base + "/mcp"), {
     requestInit: { headers: { Authorization: `Bearer ${created.token}` } },
   });
@@ -440,6 +471,12 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
   assert.equal(metadataResponse.status, 200);
   const metadata = await metadataResponse.json();
   assert.equal(metadata.issuer, origin + "/api/auth");
+  assert.equal(metadata.client_id_metadata_document_supported, true);
+  const protectedMetadata = await (
+    await fetch(base + "/.well-known/oauth-protected-resource/mcp")
+  ).json();
+  assert.equal(protectedMetadata.resource, origin + "/mcp");
+  assert.ok(protectedMetadata.dpop_signing_alg_values_supported.length);
   const unauthenticated = await fetch(base + "/mcp", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -665,6 +702,71 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
       await request("/mcp", refreshed.access_token, "POST", {
         jsonrpc: "2.0",
         id: 4,
+        method: "tools/list",
+      })
+    ).status,
+    401,
+  );
+});
+
+test("plugin key permissions restrict tools and native key routes cannot bypass management", async () => {
+  const limited = await runtime.auth.api.createApiKey({
+    body: {
+      userId,
+      name: "Documents",
+      expiresIn: 86400,
+      permissions: { documents: ["read"] },
+    },
+  });
+  const tools = await request("/mcp", limited.key, "POST", {
+    jsonrpc: "2.0",
+    id: 10,
+    method: "tools/list",
+  });
+  assert.equal(tools.status, 200, await tools.clone().text());
+  const names = (await tools.json()).result.tools.map(
+    (tool: { name: string }) => tool.name,
+  );
+  assert.ok(names.includes("fetch"));
+  assert.ok(!names.includes("search"));
+  assert.equal(
+    (
+      await request("/api/v1/search", limited.key, "POST", {
+        organizationId: orgId,
+        query: "question",
+      })
+    ).status,
+    403,
+  );
+  for (const action of ["create", "update", "delete"]) {
+    assert.equal(
+      (
+        await session(`/auth/api-key/${action}`, "POST", {
+          userId: otherId,
+          name: "Bypass",
+          keyId: limited.id,
+          permissions: { documents: ["write"] },
+        })
+      ).status,
+      404,
+    );
+  }
+  assert.equal(
+    (await session("/auth/get-session", "GET", undefined, "")).status,
+    200,
+  );
+  const keyOnly = await fetch(base + "/api/auth/get-session", {
+    headers: { "x-api-key": limited.key },
+  });
+  assert.equal(await keyOnly.json(), null);
+  await runtime.auth.api.updateApiKey({
+    body: { userId, keyId: limited.id, enabled: false },
+  });
+  assert.equal(
+    (
+      await request("/mcp", limited.key, "POST", {
+        jsonrpc: "2.0",
+        id: 11,
         method: "tools/list",
       })
     ).status,

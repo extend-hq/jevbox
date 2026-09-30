@@ -525,7 +525,7 @@ export function SettingsView({
             <div className="settings-section">
               <h2>Invite someone</h2>
               <p className="muted">
-                Create a private invitation link valid for seven days.
+                Send an email invitation valid for seven days.
               </p>
               <Form
                 className="invite-form"
@@ -563,7 +563,7 @@ export function SettingsView({
                 </Field>
                 <Button type="submit" disabled={action.busy}>
                   <Plus size={14} />
-                  Create invitation
+                  Send invitation
                 </Button>
               </Form>
               {invitation && (
