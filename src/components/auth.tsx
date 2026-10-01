@@ -290,27 +290,6 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
                       <FieldError />
                     </Field>
                   )}
-                  {register && !invite && (
-                    <details className="bootstrap-field">
-                      <summary className="triangle-summary">
-                        <ShapeTriangle
-                          size={10}
-                          className="disclosure-triangle"
-                        />
-                        Deployment setup token
-                      </summary>
-                      <Field name="bootstrapToken">
-                        <FieldLabel>Bootstrap token</FieldLabel>
-                        <Input
-                          name="bootstrapToken"
-                          type="password"
-                          autoComplete="off"
-                          placeholder="For the first account on a private deployment"
-                        />
-                        <FieldError />
-                      </Field>
-                    </details>
-                  )}
                   {mode !== "reset" && (
                     <Field name="email" validate={validateEmail}>
                       <FieldLabel>Email address</FieldLabel>
@@ -371,6 +350,27 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
                       />
                       <FieldError />
                     </Field>
+                  )}
+                  {register && !invite && (
+                    <details className="bootstrap-field">
+                      <summary className="triangle-summary">
+                        <ShapeTriangle
+                          size={10}
+                          className="disclosure-triangle"
+                        />
+                        Deployment setup token
+                      </summary>
+                      <Field name="bootstrapToken">
+                        <FieldLabel>Bootstrap token</FieldLabel>
+                        <Input
+                          name="bootstrapToken"
+                          type="password"
+                          autoComplete="off"
+                          placeholder="For the first account on a private deployment"
+                        />
+                        <FieldError />
+                      </Field>
+                    </details>
                   )}
                   {action.error && (
                     <div className="error" role="alert">

@@ -207,7 +207,7 @@ export function ChatComposerTools({
     if (open)
       window.document
         .querySelector(`[data-attachment-index="${activeIndex}"]`)
-        ?.scrollIntoView({ block: "nearest" });
+        ?.scrollIntoView?.({ block: "nearest" });
   }, [activeIndex, open]);
   async function upload(files: FileList | null) {
     if (!files?.length) return;
