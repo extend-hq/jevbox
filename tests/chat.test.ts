@@ -172,7 +172,7 @@ before(async () => {
   base = `http://127.0.0.1:${address.port}`;
   cookie = (
     await req(
-      "/auth/register",
+      "/auth/sign-up/email",
       "POST",
       {
         name: "Reviewer",
@@ -185,7 +185,7 @@ before(async () => {
   ).cookie;
   other = (
     await req(
-      "/auth/register",
+      "/auth/sign-up/email",
       "POST",
       {
         name: "Another",

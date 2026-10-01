@@ -20,7 +20,12 @@ export function authMailbox(origin: string) {
       invite?: string,
     ) {
       const deadline = Date.now() + 5000;
-      while (!messages.some((message) => message.to === email && message.kind === "verification") && Date.now() < deadline)
+      while (
+        !messages.some(
+          (message) => message.to === email && message.kind === "verification",
+        ) &&
+        Date.now() < deadline
+      )
         await new Promise((resolve) => setTimeout(resolve, 10));
       const verification = messages.findLast(
         (message) => message.to === email && message.kind === "verification",
@@ -46,11 +51,14 @@ export function authMailbox(origin: string) {
         .join("; ");
       assert.ok(cookie);
       if (invite) {
-        const accepted = await fetch(base + "/api/invitations/accept", {
-          method: "POST",
-          headers: { ...headers, Cookie: cookie },
-          body: JSON.stringify({ token: invite }),
-        });
+        const accepted = await fetch(
+          base + "/api/auth/organization/accept-invitation",
+          {
+            method: "POST",
+            headers: { ...headers, Cookie: cookie },
+            body: JSON.stringify({ invitationId: invite }),
+          },
+        );
         assert.equal(accepted.status, 200, await accepted.text());
       }
       return cookie;

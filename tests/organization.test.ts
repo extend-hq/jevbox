@@ -297,13 +297,13 @@ async function organizeAndWait(
 let users = 0;
 async function account() {
   const email = `organizer-${++users}@local.test`;
-  const response = await req("/auth/register", "", "POST", {
+  const response = await req("/auth/sign-up/email", "", "POST", {
     name: "Organizer",
     email,
     password: "a-secure-password-123!",
     organization: "Workspace",
   });
-  assert.equal(response.status, 201);
+  assert.equal(response.status, 200);
   const cookie = await mailbox.signIn(base, email);
   assert.equal(
     (
@@ -450,13 +450,13 @@ test("a chosen upload folder constrains filing and inaccessible folder labels ne
   const email = `member-${++users}@local.test`;
   const invitation = await req("/invitations", cookie, "POST", { email });
   assert.equal(invitation.status, 201);
-  const member = await req("/auth/register", "", "POST", {
+  const member = await req("/auth/sign-up/email", "", "POST", {
     name: "Member",
     email,
     password: "a-secure-password-123!",
     invite: new URL(invitation.data.url).searchParams.get("invite"),
   });
-  assert.equal(member.status, 201);
+  assert.equal(member.status, 200);
   member.cookie = await mailbox.signIn(
     base,
     email,

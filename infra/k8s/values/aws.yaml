@@ -1,5 +1,7 @@
 postgres:
   allowedCidrs: []
+serviceAccount:
+  name: jevbox-storage
 ingress:
   enabled: true
   className: alb

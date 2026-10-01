@@ -1711,6 +1711,9 @@ label textarea {
 .invite-form > button {
   min-height: 34px;
 }
+.invitation > button {
+  height: auto;
+}
 .invite-form input,
 .invitation input {
   flex: 1;

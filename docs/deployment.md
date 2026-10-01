@@ -46,7 +46,9 @@ The queue installation owns its `pgboss` schema and uses the pinned library's mi
 
 ## Any Kubernetes cluster
 
-Prerequisites: PostgreSQL 17 or a compatible supported version, two dedicated databases with separate login roles, a TLS ingress controller, DNS, a TLS certificate, and a CNI enforcing NetworkPolicy. The chart starts the pinned SpiceDB container and runs its datastore migrations in an init container; it does not provision a managed PostgreSQL service. Use RDS, Cloud SQL, Azure Database for PostgreSQL, or your own PostgreSQL operator. Use a dedicated namespace and verify your Kubernetes context before every write.
+Prerequisites: PostgreSQL 17 or a compatible supported version, two dedicated databases with separate login roles, a private S3 or S3-compatible bucket, a TLS ingress controller, DNS, a TLS certificate, and a CNI enforcing NetworkPolicy. The chart starts the pinned SpiceDB container and runs its datastore migrations in an init container; it does not provision a managed PostgreSQL service. Use RDS, Cloud SQL, Azure Database for PostgreSQL, or your own PostgreSQL operator. Use a dedicated namespace and verify your Kubernetes context before every write.
+
+Configure `storage.bucket` and `storage.region`, then supply S3 credentials in the existing Secret or use an EKS IAM role. Private object-store endpoints also need the Helm storage network settings. See [file storage](storage.md) for full configuration and migration.
 
 Set `authEmail.host`, `authEmail.port`, `authEmail.secure`, and `authEmail.from` for the SMTP relay. For a private relay, set `authEmail.allowedCidrs` to its private endpoint ranges. The sender must be verified with the email provider.
 
@@ -74,15 +76,15 @@ kubectl --namespace jevbox-sandbox logs deployment/sandbox-jevbox-worker --tail=
 
 5. Open the HTTPS origin, create the first organization using **Deployment setup token**, verify the account through its email link, sign in, and configure connections, then invite other members. Verify upload → index → search → cited chat with your provider credentials. Test a restricted document from a second account before onboarding users.
 
-The chart uses one web replica and one SpiceDB replica with `Recreate`; upgrades can have a short outage. The worker uses a separate rolling Deployment; set `worker.replicas` to scale consumers. Document data and permissions persist in PostgreSQL, so app and SpiceDB containers have no durable local volume. Keep one web replica until distributed API rate limits and snapshot rebuild throughput have been addressed. A permission mutation currently rebuilds its organization’s graph and database writes serialize under an advisory lock. This prioritizes atomic permission changes over large-organization write throughput.
+The chart uses one web replica and one SpiceDB replica with `Recreate`; upgrades can have a short outage. The worker uses a separate rolling Deployment; set `worker.replicas` to scale consumers. Document bytes persist in S3; metadata and permissions persist in PostgreSQL, so app and SpiceDB containers have no durable local volume. Keep one web replica until distributed API rate limits and snapshot rebuild throughput have been addressed. A permission mutation currently rebuilds its organization’s graph and database writes serialize under an advisory lock. This prioritizes atomic permission changes over large-organization write throughput.
 
-Health probes are `/health/live` and `/health/ready`. Web readiness queries PostgreSQL, the pg-boss queue installation, and SpiceDB. Worker startup logs readiness after registering all consumers. SpiceDB uses a gRPC readiness probe; its HTTP API is accessible only to the app through a private Service. The application installs the permission schema at startup, so use a dedicated SpiceDB datastore for this deployment.
+Health probes are `/health/live` and `/health/ready`. Web readiness queries PostgreSQL, the pg-boss queue installation, SpiceDB, and the S3 bucket. Worker startup logs readiness after registering all consumers. SpiceDB uses a gRPC readiness probe; its HTTP API is accessible only to the app through a private Service. The application installs the permission schema at startup, so use a dedicated SpiceDB datastore for this deployment.
 
 For an existing installation, create a fresh PostgreSQL-backed deployment. This revision intentionally does not import SQLite. Keep any old volume until its data has been deliberately discarded or exported; this chart no longer creates an application PVC.
 
 ## AWS
 
-The Terraform package provisions a VPC, private node and database subnets, NAT, EKS, one managed node, EBS CSI, an immutable ECR repository, a database security group, and an IAM role for the AWS Load Balancer Controller. VPC CNI NetworkPolicy enforcement is enabled in standard mode, allowing system add-ons to bootstrap before their policies are configured. Managed PostgreSQL remains a separate prerequisite; this package does not create an RDS instance. This creates ongoing AWS costs when applied.
+The Terraform package provisions a VPC, private node and database subnets, NAT, EKS, one managed node, EBS CSI, an immutable ECR repository, a private encrypted versioned S3 file bucket with an application IRSA role, a database security group, and an IAM role for the AWS Load Balancer Controller. VPC CNI NetworkPolicy enforcement is enabled in standard mode, allowing system add-ons to bootstrap before their policies are configured. Managed PostgreSQL remains a separate prerequisite; this package does not create an RDS instance. This creates ongoing AWS costs when applied.
 
 Before initialization, choose the target AWS account and region. The provider uses `allowed_account_ids`, and Terraform checks that the current credentials match `target_account_id`. The backend has its own account allowlist.
 
@@ -150,12 +152,19 @@ postgres:
 networkPolicy:
   ingressCidrs: [YOUR_PUBLIC_SUBNET_CIDR_1, YOUR_PUBLIC_SUBNET_CIDR_2]
 trustProxyCidrs: YOUR_PUBLIC_SUBNET_CIDR_1,YOUR_PUBLIC_SUBNET_CIDR_2
+serviceAccount:
+  name: jevbox-storage
+  annotations:
+    eks.amazonaws.com/role-arn: YOUR_STORAGE_ROLE_ARN
+storage:
+  bucket: YOUR_STORAGE_BUCKET
+  region: YOUR_AWS_REGION
 authEmail:
   host: YOUR_SMTP_HOST
   from: YOUR_VERIFIED_SENDER
 ```
 
-Read the database ranges from `database_subnet_cidrs` and the ALB source ranges from `ingress_subnet_cidrs`. NetworkPolicy must allow these public-subnet private addresses, not the controller's namespace. The ALB appends the real client address to the forwarding chain; trust only its subnet ranges. The AWS values configure HTTP to HTTPS redirection, IP targets, readiness checks, and 300-second stream timeouts. The Service port matches the container port for VPC CNI policy compatibility. ACM terminates TLS at the ALB; no Kubernetes TLS secret is required.
+Read `storage_bucket` and `storage_role_arn` from Terraform outputs and match `app_namespace`/`app_service_account` to the Helm namespace/account. Do not add static AWS keys when using the role. Read the database ranges from `database_subnet_cidrs` and the ALB source ranges from `ingress_subnet_cidrs`. NetworkPolicy must allow these public-subnet private addresses, not the controller's namespace. The ALB appends the real client address to the forwarding chain; trust only its subnet ranges. The AWS values configure HTTP to HTTPS redirection, IP targets, readiness checks, and 300-second stream timeouts. The Service port matches the container port for VPC CNI policy compatibility. ACM terminates TLS at the ALB; no Kubernetes TLS secret is required.
 
 ```sh
 helm lint infra/k8s/charts/jevbox \
@@ -174,6 +183,8 @@ An existing cluster on AWS, GCP, Azure, or another provider can use Helm directl
 ## Render
 
 Create a **New Blueprint** in Render, connect this repository, and select `render.yaml`. The Blueprint creates three paid Docker services in Virginia: a public web service, a background worker, and private SpiceDB. It also creates two paid PostgreSQL 17 instances with separate roles and public database access disabled. Review the displayed cost before creating resources. Change all five regions together before the first deployment if necessary. Disable Blueprint Auto Sync in the dashboard to keep subsequent infrastructure updates manual. No persistent application disk is required.
+
+The initial Blueprint flow also prompts for `S3_BUCKET`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY`. Create a private bucket and scoped IAM credentials first, then follow [file storage](storage.md). The worker references these values from the web service.
 
 The initial Blueprint flow prompts for `ENCRYPTION_KEY` (generate with `openssl rand -hex 32`), `ALLOW_SIGNUP`, `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, and `AUTH_EMAIL_FROM`. Set `ALLOW_SIGNUP` to `false` for invitation-only registration or `true` to allow public registration. This setting uses `sync: false`, so subsequent Blueprint syncs preserve its dashboard value. Use an SMTP provider that supports STARTTLS on port 587 and verify the sender before deploying. The worker references the web service's encryption key, origin, and SMTP settings. Better Auth, bootstrap, and shared SpiceDB secrets are generated automatically; keep them stable and save the encryption key separately.
 
@@ -201,7 +212,7 @@ CI also validates portable and AWS Helm manifests, builds both Docker images, an
 
 Persist the encryption key separately and keep it stable across deployments. Changing it without re-encrypting the database makes stored provider credentials unreadable.
 
-Stop application writes while taking coordinated PostgreSQL backups of both the application and SpiceDB databases, using `pg_dump` or your database provider’s backup facilities. Preserve the external encryption key separately. Restore both databases into an isolated environment with the same key and start SpiceDB before the application. Verify login, original bytes, parsed output, permitted reads, forbidden reads, and revocation from a second account. Restoring only one database can leave graph versions missing or inconsistent; fail closed and restore a matching pair. Backups of previously authorized data require the same access restrictions as the live databases.
+Preserve the S3 bucket and object versions referenced by the database backup as described in [file storage](storage.md). Stop application writes while taking coordinated PostgreSQL backups of both the application and SpiceDB databases, using `pg_dump` or your database provider’s backup facilities. Preserve the external encryption key separately. Restore both databases into an isolated environment with the same key and start SpiceDB before the application. Verify login, original bytes, parsed output, permitted reads, forbidden reads, and revocation from a second account. Restoring only one database can leave graph versions missing or inconsistent; fail closed and restore a matching pair. Backups of previously authorized data require the same access restrictions as the live databases.
 
 Backups, ingress/controller installation, DNS, certificates, cloud quotas, and real provider calls need environment-specific acceptance. Local validation does not establish that a deployment has been applied or accepted in AWS.
 

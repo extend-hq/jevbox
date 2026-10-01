@@ -79,7 +79,7 @@ export function createLinkSharingRouter(store: Store) {
     const token = String(req.params.token), resourceId = String(req.params.resourceId);
     const { resource } = await resolve(token, resourceId);
     if (resource.kind !== "document") throw missing();
-    const thumbnail = await store.one<{ body: Buffer; mime: string }>("SELECT body,mime FROM thumbnails WHERE resource_id=?", resource.id);
+    const thumbnail = await store.files.read("thumbnail", resource.id);
     await resolve(token, resourceId);
     if (!thumbnail || resource.thumbnail_status !== "ready") return res.status(204).end();
     res.set({ "Content-Type": thumbnail.mime, "Content-Security-Policy": "default-src 'none'; sandbox", "Cache-Control": "private, no-cache", ETag: `"${resource.thumbnail_key}"` });
@@ -92,10 +92,7 @@ export function createLinkSharingRouter(store: Store) {
       resourceId = String(req.params.resourceId);
     const { resource } = await resolve(token, resourceId);
     if (resource.kind !== "document") throw missing();
-    const blob = await store.one<{ body: Uint8Array }>(
-      "SELECT body FROM blobs WHERE resource_id=?",
-      resource.id,
-    );
+    const blob = await store.files.read("document", resource.id);
     if (!blob) throw missing();
     await resolve(token, resourceId);
     res.set({

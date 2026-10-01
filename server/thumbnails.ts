@@ -276,10 +276,7 @@ export function createThumbnailJobs(store: Store) {
           );
       }
       await check();
-      const source = await store.one<{ body: Buffer }>(
-        "SELECT body FROM blobs WHERE resource_id=?",
-        resource.id,
-      );
+      const source = await store.files.read("document", resource.id);
       if (!source) throw new PermanentJobError("Content unavailable");
       const result = await this.generate(
         source.body,
@@ -289,11 +286,7 @@ export function createThumbnailJobs(store: Store) {
       );
       await store.jobs.complete(job, async () => {
         await check();
-        await store.run(
-          "INSERT INTO thumbnails(resource_id,body) VALUES(?,?) ON CONFLICT(resource_id) DO UPDATE SET body=EXCLUDED.body",
-          resource.id,
-          result.body,
-        );
+        await store.files.write("thumbnail", resource.id, result.body, "image/webp");
         await store.run(
           "UPDATE resources SET thumbnail_status='ready',thumbnail_key=?,thumbnail_width=?,thumbnail_height=?,thumbnail_pages=? WHERE id=? AND thumbnail_job_id=?",
           createHash("sha256").update(result.body).digest("hex").slice(0, 24),

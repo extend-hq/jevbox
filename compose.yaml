@@ -62,6 +62,15 @@ services:
       SPICEDB_HTTP_URL: http://spicedb:8443
       SPICEDB_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY:-jevbox-local-spicedb-key}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      FILE_STORAGE: ${FILE_STORAGE:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+      S3_PREFIX: ${S3_PREFIX:-jevbox}
     depends_on:
       postgres:
         condition: service_healthy

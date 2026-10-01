@@ -46,6 +46,11 @@ assert worker_env["DATABASE_URL"]["fromDatabase"] == web_env["DATABASE_URL"]["fr
 assert worker_env["ENCRYPTION_KEY"]["fromService"]["envVarKey"] == "ENCRYPTION_KEY"
 assert worker_env["ENCRYPTION_KEY"]["fromService"]["name"] == web["name"]
 assert web_env["ENCRYPTION_KEY"].get("sync") is False
+assert web_env["FILE_STORAGE"]["value"] == worker_env["FILE_STORAGE"]["value"] == "s3"
+for key in ["S3_BUCKET", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]:
+    assert web_env[key].get("sync") is False
+    assert worker_env[key]["fromService"]["name"] == web["name"]
+    assert worker_env[key]["fromService"]["envVarKey"] == key
 
 for manifest_path in sys.argv[1:]:
     manifests = list(yaml.safe_load_all(Path(manifest_path).read_text()))
@@ -55,6 +60,16 @@ for manifest_path in sys.argv[1:]:
     assert len(web_pods) == len(worker_pods) == 1
     web_labels = web_pods[0]["spec"]["template"]["metadata"]["labels"]
     worker_labels = worker_pods[0]["spec"]["template"]["metadata"]["labels"]
+    storage_envs = []
+    for item in web_pods + worker_pods:
+        pod = item["spec"]["template"]["spec"]
+        assert pod["serviceAccountName"]
+        env = {v["name"]: v for v in pod["containers"][0]["env"]}
+        assert env["FILE_STORAGE"]["value"] == "s3"
+        assert env["S3_BUCKET"]["value"] and env["AWS_REGION"]["value"]
+        assert env["AWS_ACCESS_KEY_ID"]["valueFrom"]["secretKeyRef"]["optional"]
+        storage_envs.append({key: value for key, value in env.items() if key.startswith("S3_") or key.startswith("AWS_")})
+    assert storage_envs[0] == storage_envs[1]
     for service in [item for item in manifests if item and item["kind"] == "Service"]:
         selector = service["spec"]["selector"]
         matches = lambda labels: all(labels.get(key) == value for key, value in selector.items())

@@ -64,6 +64,14 @@ variables {
 run "deployment_foundation" {
   command = apply
   assert {
+    condition     = aws_s3_bucket_public_access_block.files.block_public_policy && aws_s3_bucket_public_access_block.files.block_public_acls && aws_s3_bucket_public_access_block.files.ignore_public_acls && aws_s3_bucket_public_access_block.files.restrict_public_buckets
+    error_message = "File storage must reject public access."
+  }
+  assert {
+    condition     = strcontains(aws_iam_role.storage.assume_role_policy, "system:serviceaccount:jevbox-sandbox:jevbox-storage") && strcontains(aws_iam_role_policy.storage.policy, "s3:PutObject") && !strcontains(aws_iam_role_policy.storage.policy, "s3:*")
+    error_message = "Storage credentials must bind to the application service account and scoped object actions."
+  }
+  assert {
     condition     = jsondecode(module.eks.cluster_addons["vpc-cni"].configuration_values).enableNetworkPolicy == "true"
     error_message = "Cluster networking must enforce policies."
   }

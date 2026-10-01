@@ -136,14 +136,14 @@ async function resourceRelationships(version: string, resourceId: string) {
     });
 }
 async function signup(email: string, invite?: string) {
-  const response = await req("/auth/register", "", "POST", {
+  const response = await req("/auth/sign-up/email", "", "POST", {
     name: email.split("@")[0],
     email,
     password: "a-secure-password-123!",
     organization: "Workspace",
     ...(invite ? { invite } : {}),
   });
-  assert.equal(response.status, 201);
+  assert.equal(response.status, 200);
   return mailbox.signIn(base, email, "a-secure-password-123!", invite);
 }
 async function upload(
@@ -223,7 +223,7 @@ test("authentication, CSRF and cookie flags", async () => {
     body: JSON.stringify({ name: "Rejected" }),
   });
   assert.equal(rejected.status, 403);
-  const login = await fetch(base + "/api/auth/login", {
+  const login = await fetch(base + "/api/auth/sign-in/email", {
     method: "POST",
     headers: {
       Origin: origin,
@@ -496,13 +496,21 @@ test("invitations are single-use, email-bound, and never allow role escalation",
   ).data;
   const token = new URL(invitation.url).searchParams.get("invite")!;
   assert.equal(
-    (await req("/invitations/accept", outsider, "POST", { token })).status,
+    (
+      await req("/auth/organization/accept-invitation", outsider, "POST", {
+        invitationId: token,
+      })
+    ).status,
     403,
   );
   const joined = await signup("new@local.test", token);
   assert.equal((await req("/me", joined)).data.role, "member");
   assert.equal(
-    (await req("/invitations/accept", joined, "POST", { token })).status,
+    (
+      await req("/auth/organization/accept-invitation", joined, "POST", {
+        invitationId: token,
+      })
+    ).status,
     400,
   );
 });
@@ -719,7 +727,7 @@ test("production bootstrap requires a token and closes after the first account",
   const address = local.address();
   assert.ok(address && typeof address !== "string");
   const register = (bootstrapToken?: string) =>
-    fetch(`http://127.0.0.1:${address.port}/api/auth/register`, {
+    fetch(`http://127.0.0.1:${address.port}/api/auth/sign-up/email`, {
       method: "POST",
       headers: {
         Origin: origin,
@@ -730,6 +738,7 @@ test("production bootstrap requires a token and closes after the first account",
         email: "bootstrap@local.test",
         password: "secure-password-123",
         name: "Owner",
+        organization: "Workspace",
         bootstrapToken,
       }),
     });
@@ -739,7 +748,7 @@ test("production bootstrap requires a token and closes after the first account",
     process.env.BOOTSTRAP_TOKEN = "bootstrap-test-token";
     assert.equal((await register()).status, 403);
     assert.equal((await register("wrong")).status, 403);
-    assert.equal((await register("bootstrap-test-token")).status, 201);
+    assert.equal((await register("bootstrap-test-token")).status, 200);
     assert.equal((await register("bootstrap-test-token")).status, 403);
   } finally {
     for (const [key, value] of Object.entries({

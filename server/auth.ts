@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -18,10 +17,9 @@ import {
 import { hashPassword, verifyPassword } from "./auth-passwords";
 import { createAuthEmailSender, type SendAuthEmail } from "./auth-email";
 import type { Store } from "./db";
+import { z } from "zod";
+import { verificationDestination } from "../shared/auth-navigation";
 
-export const registrationContext = new AsyncLocalStorage<{
-  passwordHash: string;
-}>();
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 
@@ -331,13 +329,10 @@ export function createAuthentication(
       revokeSessionsOnPasswordReset: true,
       resetPasswordTokenExpiresIn: 3600,
       password: {
-        hash: async (password) =>
-          registrationContext.getStore()?.passwordHash ??
-          hashPassword(password),
         verify: async ({ password, hash }) => {
           const valid = await verifyPassword(password, hash);
-          if (valid && hash.startsWith("legacy_scrypt$"))
-            await store.authDb.query(
+          if (valid && /^(legacy_scrypt|scrypt)\$/.test(hash))
+            await store.authPool.query(
               "UPDATE auth_accounts SET password=$1,updated_at=now() WHERE password=$2 AND provider_id='credential'",
               [await hashPassword(password), hash],
             );
@@ -346,11 +341,18 @@ export function createAuthentication(
       },
       sendResetPassword: async ({ user, url }) =>
         sendEmail({ to: user.email, kind: "password-reset", url }),
+      onExistingUserSignUp: async ({ user }, request) => {
+        if (user.emailVerified) return;
+        const body = await request?.json();
+        await auth.api.sendVerificationEmail({
+          body: { email: user.email, callbackURL: body?.callbackURL },
+        });
+      },
     },
     emailVerification: {
-      sendOnSignUp: false,
+      sendOnSignUp: true,
       sendOnSignIn: true,
-      autoSignInAfterVerification: false,
+      autoSignInAfterVerification: true,
       expiresIn: 3600,
       sendVerificationEmail: async ({ user, url }) =>
         sendEmail({ to: user.email, kind: "verification", url }),
@@ -374,10 +376,84 @@ export function createAuthentication(
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
-        if (ctx.path === "/sign-up/email" && !registrationContext.getStore())
-          throw new APIError("FORBIDDEN", {
-            message: "Use the organization registration flow",
-          });
+        if (ctx.path === "/sign-up/email") {
+          const label = z
+            .string()
+            .trim()
+            .min(1)
+            .max(160)
+            .refine((value) => !/[\x00-\x1f/\\]/.test(value));
+          const input = z
+            .object({
+              email: z
+                .string()
+                .trim()
+                .email()
+                .max(254)
+                .transform((value) => value.toLowerCase()),
+              name: label,
+              organization: label.optional(),
+              invite: z.string().min(1).max(256).optional(),
+              bootstrapToken: z.string().max(256).optional(),
+            })
+            .safeParse(ctx.body);
+          if (!input.success)
+            throw new APIError("BAD_REQUEST", {
+              message: "Invalid registration details",
+            });
+          const invitation = input.data.invite
+            ? await store.one<{ email: string }>(
+                "SELECT email FROM invites WHERE id=? AND status='pending' AND expires_at>now()",
+                input.data.invite,
+              )
+            : undefined;
+          if (input.data.invite && invitation?.email !== input.data.email)
+            throw new APIError("BAD_REQUEST", {
+              message: "Invitation is invalid or expired",
+            });
+          if (!invitation) {
+            if (!input.data.organization)
+              throw new APIError("FORBIDDEN", {
+                message: "An organization or invitation is required",
+              });
+            if (
+              process.env.NODE_ENV === "production" &&
+              process.env.ALLOW_SIGNUP !== "true"
+            ) {
+              const approved =
+                process.env.BOOTSTRAP_TOKEN &&
+                input.data.bootstrapToken &&
+                digest(process.env.BOOTSTRAP_TOKEN) ===
+                  digest(input.data.bootstrapToken);
+              if (
+                !approved ||
+                (await store.one("SELECT id FROM users LIMIT 1"))
+              )
+                throw new APIError("FORBIDDEN", {
+                  message:
+                    "An invitation is required. First-time setup requires the deployment bootstrap token.",
+                });
+            }
+          }
+          return {
+            context: {
+              body: {
+                ...ctx.body,
+                ...input.data,
+                callbackURL:
+                  ctx.body.callbackURL ??
+                  verificationDestination(
+                    new URL(options.origin),
+                    input.data.invite,
+                  ),
+              },
+            },
+          };
+        }
+        if (ctx.path === "/sign-in/email")
+          ctx.body.callbackURL ??= verificationDestination(
+            new URL(options.origin),
+          );
         if (
           ctx.path.startsWith("/organization/") &&
           (ctx.request || ctx.headers)
@@ -472,6 +548,20 @@ export function createAuthentication(
       }),
     },
     databaseHooks: {
+      user: {
+        create: {
+          after: async (user, ctx) => {
+            if (ctx?.path !== "/sign-up/email" || ctx.body?.invite) return;
+            await auth.api.createOrganization({
+              body: {
+                name: ctx.body.organization,
+                slug: randomUUID(),
+                userId: user.id,
+              },
+            });
+          },
+        },
+      },
       session: {
         create: {
           before: async (session) => {

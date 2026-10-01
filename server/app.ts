@@ -27,9 +27,8 @@ import express, {
   type NextFunction,
 } from "express";
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
-import { createAuthentication, registrationContext } from "./auth";
+import { createAuthentication } from "./auth";
 import { APIError } from "better-auth/api";
-import { hashPassword } from "./auth-passwords";
 import type { SendAuthEmail } from "./auth-email";
 import multer from "multer";
 import { rateLimit, ipKeyGenerator } from "express-rate-limit";
@@ -67,7 +66,6 @@ const name = z
     (s) => !/[\x00-\x1f/\\]/.test(s),
     "Use a name without slashes or control characters",
   );
-const password = z.string().min(12).max(128);
 const id = z.string().uuid();
 type AuthedRequest = Request & {
   actor: Actor;
@@ -118,6 +116,7 @@ export async function createApp(options: {
       await store.one("SELECT 1");
       await store.authorization.ready();
       await store.jobs.ready();
+      await store.files.ready();
       res.json({ ok: true });
     } catch {
       res.status(503).json({ ok: false });
@@ -150,6 +149,7 @@ export async function createApp(options: {
       return res.status(403).json({ error: "Request origin rejected" });
     if (
       !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
+      !req.path.startsWith("/api/auth/") &&
       !externalRequest &&
       !oauthProtocol &&
       (req.headers.origin !== options.origin ||
@@ -229,104 +229,11 @@ export async function createApp(options: {
       res.status(result.status).json(result.body);
     };
   }
-  app.post(
-    "/api/auth/register",
-    express.json({ limit: "16kb" }),
-    async (req, res) => {
-      const input = z
-        .object({
-          email,
-          password,
-          name,
-          organization: name.optional(),
-          invite: z.string().min(1).max(256).optional(),
-          bootstrapToken: z.string().max(256).optional(),
-        })
-        .parse(req.body);
-      if (options.rateLimits !== false) {
-        const limit = await consume(`register:${req.ip}`, {
-          window: 900,
-          max: 20,
-        });
-        if (!limit.allowed)
-          throw new HttpError(429, "Too many attempts. Try again later.");
-      }
-      const passwordHash = await hashPassword(input.password);
-      let createdId: string | undefined;
-      try {
-        await store.transaction(async () => {
-          const invite = input.invite
-            ? await store.one<{ org_id: string; email: string }>(
-                "SELECT * FROM invites WHERE id=? AND status='pending' AND expires_at>now()",
-                input.invite,
-              )
-            : undefined;
-          if (input.invite && (!invite || invite.email !== input.email))
-            throw new HttpError(400, "Invitation is invalid or expired");
-          if (
-            !invite &&
-            process.env.NODE_ENV === "production" &&
-            process.env.ALLOW_SIGNUP !== "true"
-          ) {
-            const approved =
-              process.env.BOOTSTRAP_TOKEN &&
-              input.bootstrapToken &&
-              digest(process.env.BOOTSTRAP_TOKEN) ===
-                digest(input.bootstrapToken);
-            if (!approved || (await store.one("SELECT id FROM users LIMIT 1")))
-              throw new HttpError(
-                403,
-                "An invitation is required. First-time setup requires the deployment bootstrap token.",
-              );
-          }
-          const existing = await store.one(
-            "SELECT id FROM users WHERE email=?",
-            input.email,
-          );
-          const response = await registrationContext.run({ passwordHash }, () =>
-            auth.api.signUpEmail({
-              body: {
-                email: input.email,
-                name: input.name,
-                password: input.password,
-              },
-              headers: fromNodeHeaders(req.headers),
-            }),
-          );
-          if (existing) return;
-          createdId = response.user.id;
-          if (!invite)
-            await auth.api.createOrganization({
-              body: {
-                name: input.organization ?? `${input.name}'s organization`,
-                slug: randomUUID(),
-                userId: createdId,
-              },
-            });
-        });
-      } catch (error) {
-        if (createdId)
-          await store.db.query(
-            "DELETE FROM users WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM members WHERE user_id=$1)",
-            [createdId],
-          );
-        throw error;
-      }
-      const callback = new URLSearchParams({
-        verified: "1",
-        ...(input.invite ? { invite: input.invite } : {}),
-      });
-      await auth.api.sendVerificationEmail({
-        body: { email: input.email, callbackURL: `${loginPath}?${callback}` },
-        headers: fromNodeHeaders(req.headers),
-      });
-      res.status(201).json({ ok: true, verificationRequired: true });
-    },
-  );
   const authHandler = toNodeHandler(async (request) => {
     if (
       ["GET", "HEAD"].includes(request.method) ||
-      !new URL(request.url).pathname.startsWith("/api/auth/organization/")
+      (!new URL(request.url).pathname.startsWith("/api/auth/organization/") &&
+        new URL(request.url).pathname !== "/api/auth/sign-up/email")
     )
       return auth.handler(request);
     let rejected: globalThis.Response | undefined;
@@ -374,37 +281,11 @@ export async function createApp(options: {
         resource_name: "Jevbox",
       }),
     );
-  app.all("/api/auth/{*path}", (req, res) => {
-    const aliases: Record<string, string> = {
-      "/api/auth/login": "/api/auth/sign-in/email",
-      "/api/auth/logout": "/api/auth/sign-out",
-    };
-    if (aliases[req.path]) {
-      req.url = aliases[req.path];
-      req.originalUrl = req.url;
-    }
-    return authHandler(req, res);
-  });
+  app.all("/api/auth/{*path}", authHandler);
   app.use(express.json({ limit: "1mb" }));
   app.use("/api/v1", external.router);
   app.use("/mcp", createMcpRouter(external, auth, options.origin));
   app.use("/api/shared", createLinkSharingRouter(store));
-  app.post("/api/invitations/accept", async (req, res) => {
-    const invitationId = z.string().min(1).max(256).parse(req.body.token);
-    await store.transaction(async () => {
-      const session = await auth.api.getSession({
-        headers: fromNodeHeaders(req.headers),
-      });
-      if (!session?.user.emailVerified)
-        throw new HttpError(401, "Please verify your email and sign in");
-      await auth.api.acceptInvitation({
-        body: { invitationId },
-        headers: fromNodeHeaders(req.headers),
-      });
-    });
-    res.json({ ok: true });
-  });
-
   app.use("/api", async (req, _res, next) => {
     try {
       (req as AuthedRequest).actor = await authenticate(req);
@@ -969,7 +850,7 @@ export async function createApp(options: {
           supportsIndex(filename) ? "queued" : "stored",
           now(),
         );
-        await store.run("INSERT INTO blobs VALUES(?,?)", rid, file.buffer);
+        await store.files.write("document", rid, file.buffer, mime);
         await enqueueThumbnail(store, rid);
         if (supportsIndex(filename))
           await store.run(
@@ -999,10 +880,7 @@ export async function createApp(options: {
     const resource = await requireResource(store, a, id.parse(req.params.id));
     if (resource.kind !== "document")
       throw new HttpError(404, "Thumbnail unavailable");
-    const thumbnail = await store.one<{ body: Buffer; mime: string }>(
-      "SELECT body,mime FROM thumbnails WHERE resource_id=?",
-      resource.id,
-    );
+    const thumbnail = await store.files.read("thumbnail", resource.id);
     if (!thumbnail || resource.thumbnail_status !== "ready") {
       res.set("Retry-After", "4");
       return res.status(204).end();
@@ -1031,9 +909,7 @@ export async function createApp(options: {
   app.use("/api/resources", createDownloadRouter(store, actor));
   app.get("/api/documents/:id/content", async (req, res) => {
     const r = await requireResource(store, actor(req), id.parse(req.params.id));
-    const body = await store.one<{
-      body: Uint8Array;
-    }>("SELECT body FROM blobs WHERE resource_id=?", r.id);
+    const body = await store.files.read("document", r.id);
     if (!body) throw new HttpError(404, "Content not found");
     res.set({
       "Content-Type": r.mime,

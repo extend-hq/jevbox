@@ -110,7 +110,7 @@ before(async () => {
   assert.ok(address && typeof address !== "string");
   base = `http://127.0.0.1:${address.port}`;
   for (const email of ["owner@download.test", "reader@download.test"]) {
-    const response = await request("/auth/login", "", {
+    const response = await request("/auth/sign-in/email", "", {
       email,
       password: "Download-test-password!",
     });

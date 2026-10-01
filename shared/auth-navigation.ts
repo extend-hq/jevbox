@@ -1,5 +1,20 @@
 export const loginPath = "/login";
 
+export function verificationDestination(
+  url: URL,
+  invite = url.searchParams.get("invite"),
+) {
+  const query = new URLSearchParams({ verified: "1" });
+  if (invite) query.set("invite", invite);
+  if (url.searchParams.has("returnTo"))
+    query.set("returnTo", loginDestination(url));
+  if (isOAuthLogin(url))
+    for (const [key, value] of url.searchParams)
+      if (!["verified", "error", "invite", "returnTo"].includes(key))
+        query.append(key, value);
+  return `${loginPath}?${query}`;
+}
+
 export function isAuthPage(pathname: string) {
   return pathname === loginPath || pathname === "/reset-password";
 }

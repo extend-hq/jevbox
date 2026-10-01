@@ -63,7 +63,7 @@ Alternatively, run the complete app and its services in Docker after `pnpm setup
 docker compose up --build
 ```
 
-PostgreSQL stores accounts, sessions, document bytes, parsed output, and chats. A local SpiceDB container evaluates permissions and persists its relationships in a separate PostgreSQL database. Compose binds PostgreSQL and SpiceDB to loopback ports 55432 and 58443. The Compose passwords are for local development only.
+PostgreSQL stores accounts, sessions, document metadata, parsed output, and chats. Production uses private S3 storage for original files and thumbnails; local development defaults to PostgreSQL bytes. See [file storage](docs/storage.md) for Render variables, Kubernetes settings, and migration. A local SpiceDB container evaluates permissions and persists its relationships in a separate PostgreSQL database. Compose binds PostgreSQL and SpiceDB to loopback ports 55432 and 58443. The Compose passwords are for local development only.
 
 `pnpm services:stop` stops the two services without deleting their volume. Never run `docker compose down -v` unless you intend to erase the databases. SQLite is no longer used; this change starts with a fresh database.
 
@@ -100,7 +100,7 @@ AI Gateway offers its model catalog; OpenAI-compatible endpoints support additio
 
 [Deployment guide](docs/deployment.md) includes Docker, cloud-neutral Helm, and AWS/EKS Terraform. Deployment requires an explicit target account, region, namespace, image, domain, and secret.
 
-The Helm chart runs one web replica, a separate pg-boss worker Deployment, and a private SpiceDB container. Supply two dedicated PostgreSQL databases and credentials through a Kubernetes Secret. The app has no persistent filesystem requirement. Permission updates publish complete versioned relationship snapshots before committing metadata; unavailable SpiceDB fails closed. Workers can scale independently. The current snapshot rebuild and in-process API rate limiting keep the web service at a single replica.
+The Helm chart runs one web replica, a separate pg-boss worker Deployment, and a private SpiceDB container. Supply two dedicated PostgreSQL databases, a private S3 bucket, and credentials through a Kubernetes Secret or an EKS IAM role. The app has no persistent filesystem requirement. Permission updates publish complete versioned relationship snapshots before committing metadata; unavailable SpiceDB fails closed. Workers can scale independently. The current snapshot rebuild and in-process API rate limiting keep the web service at a single replica.
 
 ## Security and verification
 

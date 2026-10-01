@@ -125,10 +125,7 @@ export function createDownloadRouter(
           zip.add(file);
           if (resource.kind === "folder") file.push(new Uint8Array(), true);
           else {
-            const blob = await store.one<{ body: Uint8Array }>(
-              "SELECT body FROM blobs WHERE resource_id=?",
-              resource.id,
-            );
+            const blob = await store.files.read("document", resource.id);
             if (!blob)
               throw new HttpError(404, "An original file is unavailable.");
             await requireResource(store, a, resource.id);

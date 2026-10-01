@@ -1,4 +1,5 @@
 import { toastManager } from "./components/coss/toast";
+import { authClient } from "./lib/auth-client";
 import { notifyUploads } from "./lib/notifications";
 import { FinderDropZone } from "./components/finder-drop-zone";
 import { downloadLibraryItems } from "./lib/library-download";
@@ -726,10 +727,12 @@ export default function App() {
                         disabled={org.id === me.organization.id}
                         onClick={() =>
                           void action.run(async () => {
-                            await api("/organization/switch", {
-                              method: "POST",
-                              body: JSON.stringify({ orgId: org.id }),
-                            });
+                            const result =
+                              await authClient.organization.setActive({
+                                organizationId: org.id,
+                              });
+                            if (result.error)
+                              throw new Error(result.error.message);
                             location.href = "/";
                           })
                         }
@@ -743,7 +746,8 @@ export default function App() {
                 <DropdownMenuItem
                   onClick={() =>
                     void action.run(async () => {
-                      await api("/auth/logout", { method: "POST" });
+                      const result = await authClient.signOut();
+                      if (result.error) throw new Error(result.error.message);
                       location.replace(loginPath);
                     })
                   }

@@ -66,6 +66,19 @@ spec:
         - protocol: TCP
           port: {{ .Values.authEmail.port }}
     {{- end }}
+    {{- if or .Values.storage.allowedCidrs .Values.storage.allowedPeers }}
+    - to:
+        {{- range .Values.storage.allowedCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.storage.allowedPeers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.storage.port }}
+    {{- end }}
 {{- end }}
 
 {{- if .Values.networkPolicy.enabled }}

@@ -37,3 +37,13 @@ variable "vpc_cidr" {
   type    = string
   default = "10.84.0.0/16"
 }
+variable "app_namespace" {
+  type        = string
+  default     = "jevbox-sandbox"
+  description = "Kubernetes namespace whose service account may access file storage"
+}
+variable "app_service_account" {
+  type        = string
+  default     = "jevbox-storage"
+  description = "Kubernetes service account used by web and worker pods"
+}

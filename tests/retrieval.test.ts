@@ -369,6 +369,12 @@ test("indexing never calls a configured chat provider for text or parsed documen
               "# Parent\nOpening\n## Child\nSource facts.",
             ),
           },
+    files: {
+      read: async () => ({
+        body: Buffer.from("# Parent\nOpening\n## Child\nSource facts."),
+        mime: "text/plain",
+      }),
+    },
     run: async () => {},
   } as unknown as Store;
   const requests: string[] = [];

@@ -331,7 +331,7 @@ for (const [name, mime, content] of files) {
     parsed,
     new Date().toISOString(),
   );
-  await runtime.store.run("INSERT INTO blobs VALUES(?,?)", rid, bytes);
+  await runtime.store.files.write("document", rid, bytes, String(mime));
   await enqueueThumbnail(runtime.store, rid);
 }
 const vite = await createServer({

@@ -4,15 +4,16 @@ import {
   isOAuthLogin,
   loginDestination,
   loginPath,
+  verificationDestination,
 } from "../../shared/auth-navigation";
 import { ScrollArea } from "@/components/coss/scroll-area";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight } from "@/components/icons";
 import { Button } from "@/components/coss/button";
 import { Input } from "@/components/coss/input";
 import { Form } from "@/components/coss/form";
 import { Field, FieldLabel, FieldError } from "@/components/coss/field";
-import { api, ApiError } from "@/lib/api";
+import { authClient } from "@/lib/auth-client";
 import {
   validateEmail,
   validateName,
@@ -22,15 +23,15 @@ import { Brand, useAction } from "./common";
 export function Auth({ onLogin }: { onLogin: () => void }) {
   const invite = new URLSearchParams(location.search).get("invite");
   const query = new URLSearchParams(location.search);
-  const verificationCallback = `${loginPath}?${new URLSearchParams({
-    verified: "1",
-    ...(invite ? { invite } : {}),
-    ...(query.has("returnTo")
-      ? { returnTo: loginDestination(new URL(location.href)) }
-      : {}),
-  })}`;
+  const verificationCallback = verificationDestination(new URL(location.href));
   type Mode =
-    "signin" | "register" | "verification" | "forgot" | "reset" | "sent";
+    | "signin"
+    | "register"
+    | "verification"
+    | "forgot"
+    | "reset"
+    | "sent"
+    | "invitation";
   const [mode, setMode] = useState<Mode>(
     location.pathname === "/reset-password"
       ? "reset"
@@ -41,15 +42,52 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
   const register = mode === "register";
   const [address, setAddress] = useState("");
   const [notice, setNotice] = useState(
-    query.has("verified")
-      ? "Email verified. Sign in to continue."
-      : query.has("error")
-        ? "That link is invalid or expired. Request a new one."
+    query.has("error")
+      ? "That link is invalid or expired. Request a new one."
+      : query.has("verified")
+        ? "Email verified."
         : "",
   );
   const resetToken = query.get("token");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const action = useAction();
+  async function completeLogin() {
+    if (invite) {
+      setMode("invitation");
+      const accepted = await authClient.organization.acceptInvitation({
+        invitationId: invite,
+      });
+      if (accepted.error) throw new Error(accepted.error.message);
+    }
+    onLogin();
+    navigateTo(
+      invite ? paths.library() : loginDestination(new URL(location.href)),
+      { replace: true },
+    );
+  }
+  useEffect(() => {
+    if (
+      location.pathname !== loginPath ||
+      (!invite && !query.has("verified")) ||
+      query.has("error")
+    )
+      return;
+    let active = true;
+    void action.run(async () => {
+      const session = await authClient.getSession();
+      if (!active) return;
+      if (session.error) throw new Error(session.error.message);
+      if (!session.data?.user.emailVerified) return;
+      if (isOAuthLogin(new URL(location.href))) {
+        onLogin();
+        return;
+      }
+      await completeLogin();
+    });
+    return () => {
+      active = false;
+    };
+  }, [location.pathname, invite, verificationCallback]);
   return (
     <ScrollArea className="h-dvh" scrollFade>
       <div className="auth-layout">
@@ -65,18 +103,51 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
                     ? "Reset password"
                     : mode === "sent"
                       ? "Check your email"
-                      : "Sign in"}
+                      : mode === "invitation"
+                        ? "Join organization"
+                        : "Sign in"}
             </h1>
             {notice && (
               <p className="notice" role="status">
                 {notice}
               </p>
             )}
-            {mode === "verification" || mode === "sent" ? (
+            {mode === "invitation" ? (
+              <div className="space-y-4">
+                {action.error && (
+                  <p className="error" role="alert">
+                    {action.error}
+                  </p>
+                )}
+                <Button
+                  type="button"
+                  className="w-full"
+                  disabled={action.busy}
+                  onClick={() => void action.run(completeLogin)}
+                >
+                  {action.busy ? "Joining…" : "Accept invitation"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={action.busy}
+                  onClick={() =>
+                    void action.run(async () => {
+                      const result = await authClient.signOut();
+                      if (result.error) throw new Error(result.error.message);
+                      setMode("signin");
+                      setNotice("");
+                    })
+                  }
+                >
+                  Sign in with another account
+                </Button>
+              </div>
+            ) : mode === "verification" || mode === "sent" ? (
               <div className="space-y-4">
                 <p>
                   {mode === "verification"
-                    ? "Open the verification link in your email, then sign in."
+                    ? "Open the verification link in your email to continue."
                     : "If an account exists, you’ll receive a password reset link."}
                 </p>
                 {mode === "verification" && (
@@ -86,13 +157,11 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
                     disabled={action.busy}
                     onClick={() =>
                       void action.run(async () => {
-                        await api("/auth/send-verification-email", {
-                          method: "POST",
-                          body: JSON.stringify({
-                            email: address,
-                            callbackURL: verificationCallback,
-                          }),
+                        const result = await authClient.sendVerificationEmail({
+                          email: address,
+                          callbackURL: verificationCallback,
                         });
+                        if (result.error) throw new Error(result.error.message);
                         setNotice("Verification email sent.");
                       })
                     }
@@ -140,13 +209,20 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
                       const email = String(data.get("email") ?? "").trim();
                       setAddress(email);
                       if (mode === "forgot") {
-                        await api("/auth/request-password-reset", {
-                          method: "POST",
-                          body: JSON.stringify({
-                            email,
-                            redirectTo: "/reset-password",
-                          }),
+                        const result = await authClient.requestPasswordReset({
+                          email,
+                          redirectTo: `/reset-password?${new URLSearchParams({
+                            ...(invite ? { invite } : {}),
+                            ...(query.has("returnTo")
+                              ? {
+                                  returnTo: loginDestination(
+                                    new URL(location.href),
+                                  ),
+                                }
+                              : {}),
+                          })}`,
                         });
+                        if (result.error) throw new Error(result.error.message);
                         setMode("sent");
                         setNotice("");
                         return;
@@ -164,14 +240,24 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
                           });
                           return;
                         }
-                        await api("/auth/reset-password", {
-                          method: "POST",
-                          body: JSON.stringify({
-                            token: resetToken,
-                            newPassword: data.get("password"),
-                          }),
+                        const result = await authClient.resetPassword({
+                          token: resetToken,
+                          newPassword: String(data.get("password")),
                         });
-                        navigateTo(loginPath, { replace: true });
+                        if (result.error) throw new Error(result.error.message);
+                        navigateTo(
+                          `${loginPath}?${new URLSearchParams({
+                            ...(invite ? { invite } : {}),
+                            ...(query.has("returnTo")
+                              ? {
+                                  returnTo: loginDestination(
+                                    new URL(location.href),
+                                  ),
+                                }
+                              : {}),
+                          })}`,
+                          { replace: true },
+                        );
                         setMode("signin");
                         setNotice(
                           "Password reset. Sign in with your new password.",
@@ -179,80 +265,53 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
                         onLogin();
                         return;
                       }
-                      try {
-                        const signedIn = await api<{
-                          redirect?: boolean;
-                          url?: string;
-                        }>(`/auth/${register ? "register" : "sign-in/email"}`, {
-                          method: "POST",
-                          body: JSON.stringify({
-                            email,
-                            password: data.get("password"),
-                            ...(!register
-                              ? { callbackURL: verificationCallback }
-                              : {}),
-                            ...(!register &&
-                            isOAuthLogin(new URL(location.href))
-                              ? { oauth_query: location.search.slice(1) }
-                              : {}),
-                            ...(register
-                              ? {
-                                  name: data.get("name"),
-                                  ...(!invite
-                                    ? {
-                                        organization: data.get("organization"),
-                                        bootstrapToken:
-                                          data.get("bootstrapToken") ||
-                                          undefined,
-                                      }
-                                    : { invite }),
-                                }
-                              : {}),
-                          }),
+                      if (register) {
+                        const result = await authClient.signUp.email({
+                          email,
+                          password: String(data.get("password")),
+                          name: String(data.get("name")),
+                          callbackURL: verificationCallback,
+                          ...(!invite
+                            ? {
+                                organization: data.get("organization"),
+                                bootstrapToken:
+                                  data.get("bootstrapToken") || undefined,
+                              }
+                            : { invite }),
                         });
-                        if (!register && signedIn.redirect && signedIn.url) {
-                          location.assign(signedIn.url);
-                          return;
-                        }
-                      } catch (error) {
-                        if (
-                          !register &&
-                          error instanceof ApiError &&
-                          error.code === "EMAIL_NOT_VERIFIED"
-                        ) {
+                        if (result.error) throw new Error(result.error.message);
+                        setMode("verification");
+                        setNotice("");
+                        return;
+                      }
+                      const result = await authClient.signIn.email({
+                        email,
+                        password: String(data.get("password")),
+                        callbackURL: verificationCallback,
+                      });
+                      if (result.error) {
+                        if (result.error.code === "EMAIL_NOT_VERIFIED") {
                           setMode("verification");
                           setNotice("");
                           return;
                         }
-                        if (
-                          !register &&
-                          error instanceof ApiError &&
-                          error.status === 401
-                        ) {
+                        if (result.error.status === 401) {
                           setErrors({
                             password: "Email or password is incorrect.",
                           });
                           return;
                         }
-                        throw error;
+                        throw new Error(result.error.message);
                       }
-                      if (register) {
-                        setMode("verification");
-                        setNotice("");
+                      if (
+                        isOAuthLogin(new URL(location.href)) &&
+                        result.data?.redirect &&
+                        result.data.url
+                      ) {
+                        location.assign(result.data.url);
                         return;
                       }
-                      if (invite && !register)
-                        await api("/invitations/accept", {
-                          method: "POST",
-                          body: JSON.stringify({ token: invite }),
-                        });
-                      onLogin();
-                      navigateTo(
-                        invite
-                          ? paths.library()
-                          : loginDestination(new URL(location.href)),
-                        { replace: true },
-                      );
+                      await completeLogin();
                     });
                   }}
                 >

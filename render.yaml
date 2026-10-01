@@ -98,6 +98,16 @@ services:
           property: hostport
       - key: ENCRYPTION_KEY
         sync: false
+      - key: FILE_STORAGE
+        value: s3
+      - key: S3_BUCKET
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
       - key: BETTER_AUTH_SECRET
         generateValue: true
       - key: BOOTSTRAP_TOKEN
@@ -168,6 +178,28 @@ services:
           name: jevbox-web
           type: web
           envVarKey: ENCRYPTION_KEY
+      - key: FILE_STORAGE
+        value: s3
+      - key: S3_BUCKET
+        fromService:
+          name: jevbox-web
+          type: web
+          envVarKey: S3_BUCKET
+      - key: AWS_REGION
+        fromService:
+          name: jevbox-web
+          type: web
+          envVarKey: AWS_REGION
+      - key: AWS_ACCESS_KEY_ID
+        fromService:
+          name: jevbox-web
+          type: web
+          envVarKey: AWS_ACCESS_KEY_ID
+      - key: AWS_SECRET_ACCESS_KEY
+        fromService:
+          name: jevbox-web
+          type: web
+          envVarKey: AWS_SECRET_ACCESS_KEY
       - key: SMTP_HOST
         fromService:
           name: jevbox-web

@@ -70,11 +70,7 @@ export function createProviders(store: Store, fetcher: Fetch = fetch) {
       });
     };
     const settings = await getSettings(store, document.org_id);
-    const body = (
-      await store.one<{
-        body: Uint8Array;
-      }>("SELECT body FROM blobs WHERE resource_id=?", document.id)
-    )?.body;
+    const body = (await store.files.read("document", document.id))?.body;
     if (!body) throw new PermanentJobError("Document content is unavailable");
     if (
       document.mime.startsWith("text/") ||

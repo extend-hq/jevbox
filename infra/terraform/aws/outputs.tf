@@ -8,3 +8,7 @@ output "database_subnet_cidrs" { value = module.vpc.database_subnets_cidr_blocks
 output "database_security_group_id" { value = aws_security_group.database.id }
 output "ingress_subnet_cidrs" { value = module.vpc.public_subnets_cidr_blocks }
 output "load_balancer_controller_role_arn" { value = aws_iam_role.load_balancer_controller.arn }
+output "storage_bucket" { value = aws_s3_bucket.files.id }
+output "storage_role_arn" { value = aws_iam_role.storage.arn }
+output "app_namespace" { value = var.app_namespace }
+output "app_service_account" { value = var.app_service_account }

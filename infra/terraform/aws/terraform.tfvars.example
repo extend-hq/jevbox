@@ -4,3 +4,5 @@ environment = "sandbox"
 operator_cidrs = ["REPLACE_WITH_OPERATOR_IP/32"]
 operator_role_arn = "REPLACE_WITH_TARGET_ACCOUNT_OPERATOR_ROLE_ARN"
 kubernetes_version = "REPLACE_WITH_SUPPORTED_MINOR_VERSION"
+app_namespace = "jevbox-sandbox"
+app_service_account = "jevbox-storage"

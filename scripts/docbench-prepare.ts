@@ -162,11 +162,7 @@ try {
         parsed ?? null,
         new Date().toISOString(),
       );
-      await store.run(
-        "INSERT INTO blobs(resource_id,body) VALUES(?,?)",
-        id,
-        body,
-      );
+      await store.files.write("document", id, body, "application/pdf");
       if (!parsed) await enqueueIndex(store, id);
     });
   }

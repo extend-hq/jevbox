@@ -68,6 +68,10 @@ dom.window.matchMedia = (query) => ({
 });
 dom.window.Element.prototype.getAnimations = () => [];
 
+const originalFetch = globalThis.fetch;
+let fetchImplementation = originalFetch;
+globalThis.fetch = (...args) => fetchImplementation(...args);
+
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { Auth } = await import("../src/components/auth");
@@ -93,9 +97,9 @@ beforeEach(() => {
   respond = (request) => {
     throw new Error(`Unexpected request: ${request.method} ${request.path}`);
   };
-  globalThis.fetch = async (input, init) => {
+  fetchImplementation = async (input, init) => {
     const request = {
-      path: String(input),
+      path: new URL(String(input), location.origin).pathname,
       method: init?.method ?? "GET",
       body: typeof init?.body === "string" ? JSON.parse(init.body) : {},
     };
@@ -238,7 +242,8 @@ test("login returns to a protected destination and rejects external destinations
 });
 
 test("OAuth sign-in at the canonical login path forwards the signed authorization query", async () => {
-  const query = "client_id=client&sig=signature&exp=123";
+  const query =
+    "client_id=client&sig=signature&exp=123&ba_param=client_id&ba_param=exp";
   history.replaceState({}, "", `/login?${query}`);
   respond = () => json({});
   await act(async () => root.render(<Auth onLogin={() => {}} />));
@@ -278,8 +283,113 @@ test("registration validates names and password length without altering credenti
   await fill("password", " password-with-spaces ");
   await submit();
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].path, "/api/auth/register");
+  assert.equal(requests[0].path, "/api/auth/sign-up/email");
   assert.equal(requests[0].body.password, " password-with-spaces ");
+});
+
+test("successful invited sign-in accepts before returning to the library", async () => {
+  history.replaceState({}, "", "/login?invite=invitation");
+  let signedIn = false;
+  respond = (request) => {
+    if (request.path === "/api/auth/get-session") return json(null);
+    if (request.path === "/api/auth/sign-in/email")
+      return json({
+        redirect: true,
+        url: "/login?verified=1&invite=invitation",
+      });
+    if (request.path === "/api/auth/organization/accept-invitation") {
+      assert.equal(signedIn, false);
+      assert.equal(location.pathname, "/login");
+      return json({});
+    }
+    throw new Error(`Unexpected request: ${request.path}`);
+  };
+  await act(async () =>
+    root.render(
+      <Auth
+        onLogin={() => {
+          signedIn = true;
+        }}
+      />,
+    ),
+  );
+  await act(async () =>
+    element<HTMLButtonElement>(".auth-switch button").click(),
+  );
+  await fill("email", "member@example.test");
+  await fill("password", "password");
+  await submit();
+  assert.equal(signedIn, true);
+  assert.equal(location.pathname + location.search, "/library");
+  assert.deepEqual(
+    requests.map(({ path }) => path),
+    [
+      "/api/auth/get-session",
+      "/api/auth/sign-in/email",
+      "/api/auth/organization/accept-invitation",
+    ],
+  );
+  assert.equal(requests.at(-1)!.body.invitationId, "invitation");
+});
+
+test("verification callback resumes the native session and invitation without another sign-in", async () => {
+  history.replaceState({}, "", "/login?invite=invitation&verified=1");
+  let signedIn = false;
+  respond = (request) =>
+    request.path === "/api/auth/get-session"
+      ? json({
+          user: { id: "member", emailVerified: true },
+          session: { id: "session" },
+        })
+      : request.path === "/api/auth/organization/accept-invitation"
+        ? json({})
+        : (() => {
+            throw new Error(`Unexpected request: ${request.path}`);
+          })();
+  await act(async () =>
+    root.render(
+      <Auth
+        onLogin={() => {
+          signedIn = true;
+        }}
+      />,
+    ),
+  );
+  assert.equal(signedIn, true);
+  assert.equal(location.pathname + location.search, "/library");
+  assert.deepEqual(
+    requests.map(({ path }) => path),
+    ["/api/auth/get-session", "/api/auth/organization/accept-invitation"],
+  );
+});
+
+test("failed verification links show the error instead of claiming successful verification", async () => {
+  history.replaceState(
+    {},
+    "",
+    "/login?invite=invitation&verified=1&error=TOKEN_EXPIRED",
+  );
+  await act(async () => root.render(<Auth onLogin={() => {}} />));
+  assert.match(element("[role=status]").textContent!, /invalid or expired/);
+  assert.doesNotMatch(document.body.textContent!, /Email verified/);
+  assert.equal(requests.length, 0);
+});
+
+test("password reset preserves the invitation and does not accept it before resetting", async () => {
+  history.replaceState(
+    {},
+    "",
+    "/reset-password?token=reset-token&invite=invitation",
+  );
+  respond = () => json({ status: true });
+  await act(async () => root.render(<Auth onLogin={() => {}} />));
+  assert.equal(requests.length, 0);
+  await fill("password", "updated-secure-password-456!");
+  await fill("confirmPassword", "updated-secure-password-456!");
+  await submit();
+  assert.equal(requests[0].path, "/api/auth/reset-password");
+  assert.equal(requests[0].body.token, "reset-token");
+  assert.equal(location.pathname + location.search, "/login?invite=invitation");
 });
 
 const me: Me = {

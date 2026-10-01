@@ -50,13 +50,13 @@ async function request(path: string, cookie = owner, body?: unknown) {
   });
 }
 async function signup(email: string) {
-  const response = await request("/auth/register", "", {
+  const response = await request("/auth/sign-up/email", "", {
     email,
     name: "Account",
     organization: "Workspace",
     password: "a-secure-password-123!",
   });
-  assert.equal(response.status, 201);
+  assert.equal(response.status, 200);
   await waitForJobs(runtime, [queues.email]);
   return mailbox.signIn(base, email, "a-secure-password-123!");
 }

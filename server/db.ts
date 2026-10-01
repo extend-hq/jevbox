@@ -17,6 +17,7 @@ import {
 import { createAuthorization, type Relationship } from "./authorization";
 import { HttpError } from "./errors";
 import { createJobs, type Jobs } from "./jobs";
+import { createFileStorage, createObjectStorage } from "./object-storage";
 export { HttpError } from "./errors";
 pgTypes.setTypeParser(20, (value) => {
   const n = Number(value);
@@ -28,6 +29,7 @@ export async function createStore(
   directory: string,
   databaseUrl = process.env.DATABASE_URL,
 ) {
+  const objects = createObjectStorage();
   if (!databaseUrl)
     throw new Error(
       "DATABASE_URL is required. Start PostgreSQL and SpiceDB with pnpm services:up.",
@@ -71,6 +73,7 @@ export async function createStore(
   const close = () =>
     (closing ??= (async () => {
       await jobs?.close();
+      objects?.close();
       await Promise.all([db.end(), snapshotDb.end(), authDb.end()]);
     })());
   const context = new AsyncLocalStorage<PoolClient>();
@@ -397,6 +400,21 @@ export async function createStore(
     await close();
     throw error;
   }
+  const files = createFileStorage(
+    {
+      one,
+      all,
+      run,
+      transaction,
+      async reserve(object) {
+        await snapshotDb.query(
+          "INSERT INTO storage_objects(bucket,object_key,sha256,size) VALUES($1,$2,$3,$4)",
+          [object.bucket, object.object_key, object.sha256, object.size],
+        );
+      },
+    },
+    objects,
+  );
   return {
     db,
     authDb,
@@ -408,6 +426,7 @@ export async function createStore(
     encrypt,
     decrypt,
     jobs,
+    files,
     authorization,
     permission,
     cleanupPermissions,

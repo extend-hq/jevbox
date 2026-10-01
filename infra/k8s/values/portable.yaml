@@ -3,6 +3,9 @@ image:
   tag: replace-with-commit-sha
 appOrigin: https://knowledge.example.org
 existingSecret: jevbox-secrets
+storage:
+  bucket: replace-with-private-bucket
+  region: us-east-1
 postgres:
   allowedCidrs: [10.20.30.0/24]
 ingress:

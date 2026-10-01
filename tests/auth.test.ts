@@ -64,13 +64,13 @@ after(async () => {
   if (directory) rmSync(directory, { recursive: true, force: true });
 });
 test("registration requires mailbox verification before access and cannot bypass organization admission", async () => {
-  const response = await request("/auth/register", {
+  const response = await request("/auth/sign-up/email", {
     name: "Account",
     organization: "Workspace",
     email: "auth@local.test",
     password,
   });
-  assert.equal(response.status, 201);
+  assert.equal(response.status, 200);
   assert.equal(response.headers.get("set-cookie"), null);
   const verification = new URL(
     mailbox.messages.findLast((message) => message.kind === "verification")!
@@ -111,7 +111,7 @@ test("registration requires mailbox verification before access and cannot bypass
     "SELECT password FROM auth_accounts WHERE user_id=(SELECT id FROM users WHERE email=?)",
     "auth@local.test",
   );
-  assert.match(credential!.password, /^scrypt\$/);
+  assert.match(credential!.password, /^[a-f0-9]{32}:[a-f0-9]{128}$/);
 });
 test("protected pages redirect before the app shell is served, while APIs return unauthorized", async () => {
   for (const path of [
@@ -204,7 +204,7 @@ test("verified sessions can open protected pages and revoked sessions cannot", a
   const allowed = await visit();
   assert.equal(allowed.status, 200);
   assert.equal(await allowed.text(), "APP_SHELL");
-  assert.equal((await request("/auth/logout", {}, cookie)).status, 200);
+  assert.equal((await request("/auth/sign-out", {}, cookie)).status, 200);
   assert.equal((await visit()).status, 302);
 });
 
@@ -302,7 +302,7 @@ test("password reset tokens are single-use and revoke every existing session", a
   });
 });
 test("logout revokes the Better Auth session", async () => {
-  assert.equal((await request("/auth/logout", {}, owner)).status, 200);
+  assert.equal((await request("/auth/sign-out", {}, owner)).status, 200);
   assert.equal((await request("/me", undefined, owner)).status, 401);
 });
 test("signing out other devices preserves the current session", async () => {
@@ -392,7 +392,7 @@ test(
   async () => {
     const results = await Promise.all(
       Array.from({ length: 16 }, (_, index) =>
-        request("/auth/register", {
+        request("/auth/sign-up/email", {
           name: "Account",
           organization: "Workspace",
           email: `parallel-${index}@local.test`,
@@ -400,7 +400,7 @@ test(
         }),
       ),
     );
-    assert.ok(results.every((response) => response.status === 201));
+    assert.ok(results.every((response) => response.status === 200));
     const members = await runtime.store.all(
       "SELECT m.user_id FROM members m JOIN users u ON u.id=m.user_id WHERE u.email LIKE 'parallel-%'",
     );
@@ -419,7 +419,7 @@ test("failed membership provisioning removes the credential account and can be r
     runtime.store.authorization.write = async () => {
       throw new Error("Unavailable");
     };
-    assert.equal((await request("/auth/register", input)).status, 500);
+    assert.equal((await request("/auth/sign-up/email", input)).status, 500);
     assert.equal(
       await runtime.store.one(
         "SELECT id FROM users WHERE email=?",
@@ -434,7 +434,7 @@ test("failed membership provisioning removes the credential account and can be r
   } finally {
     runtime.store.authorization.write = write;
   }
-  assert.equal((await request("/auth/register", input)).status, 201);
+  assert.equal((await request("/auth/sign-up/email", input)).status, 200);
   const cookie = await mailbox.signIn(base, input.email);
   assert.equal((await request("/me", undefined, cookie)).status, 200);
 });
@@ -572,7 +572,7 @@ test("migration preserves user IDs and passwords, requires verification, and inv
         "SELECT password FROM auth_accounts WHERE user_id=?",
         id,
       ))!.password,
-      /^scrypt\$/,
+      /^[a-f0-9]{32}:[a-f0-9]{128}$/,
     );
     assert.equal(
       (await pool.query("SELECT to_regclass('sessions') AS name")).rows[0].name,
@@ -589,13 +589,14 @@ test("plugin invitations deliver email and grant membership only after verified 
   const address = "organization-admin@local.test";
   assert.equal(
     (
-      await request("/auth/register", {
+      await request("/auth/sign-up/email", {
         email: address,
+        organization: "Workspace",
         name: "Administrator",
         password,
       })
     ).status,
-    201,
+    200,
   );
   const admin = await mailbox.signIn(base, address);
   const orgId = (await (await request("/me", undefined, admin)).json())
@@ -615,14 +616,14 @@ test("plugin invitations deliver email and grant membership only after verified 
     );
     assert.equal(
       (
-        await request("/auth/register", {
+        await request("/auth/sign-up/email", {
           email,
           name: "Invitee",
           password,
           invite: invitationId,
         })
       ).status,
-      201,
+      200,
     );
     assert.equal(
       await runtime.store.one(
@@ -811,4 +812,210 @@ test("plugin invitations deliver email and grant membership only after verified 
   } finally {
     runtime.store.authorization.check = check;
   }
+});
+
+test("native verification creates the invited session and acceptance opens the organization without another sign-in", async () => {
+  const adminEmail = "native-admin@local.test";
+  assert.equal(
+    (
+      await request("/auth/sign-up/email", {
+        name: "Administrator",
+        organization: "Workspace",
+        email: adminEmail,
+        password,
+      })
+    ).status,
+    200,
+  );
+  const admin = await mailbox.signIn(base, adminEmail);
+  const organizationId = (await (await request("/me", undefined, admin)).json())
+    .organization.id;
+  const email = "native-invitee@local.test";
+  const invitation = await request(
+    "/auth/organization/invite-member",
+    {
+      email,
+      role: "member",
+      organizationId,
+    },
+    admin,
+  );
+  assert.equal(invitation.status, 200);
+  const invitationId = (await invitation.json()).id;
+  const callbackURL = `/login?verified=1&invite=${invitationId}`;
+  assert.equal(
+    (
+      await request("/auth/sign-up/email", {
+        name: "Member",
+        email,
+        password,
+        invite: invitationId,
+        callbackURL,
+      })
+    ).status,
+    200,
+  );
+  const message = mailbox.messages.findLast(
+    (message) => message.to === email && message.kind === "verification",
+  )!;
+  const verification = new URL(message.url);
+  assert.equal(verification.searchParams.get("callbackURL"), callbackURL);
+  const response = await fetch(
+    base + verification.pathname + verification.search,
+    { redirect: "manual" },
+  );
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get("location"), callbackURL);
+  const cookie = response.headers
+    .getSetCookie()
+    .map((value) => value.split(";")[0])
+    .join("; ");
+  assert.ok(cookie.includes("session_token"));
+  const session = await request("/auth/get-session", undefined, cookie);
+  assert.equal((await session.json()).user.emailVerified, true);
+  assert.equal((await request("/me", undefined, cookie)).status, 401);
+  assert.equal(
+    (
+      await request(
+        "/auth/organization/accept-invitation",
+        { invitationId },
+        cookie,
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await (await request("/me", undefined, cookie)).json()).organization.id,
+    organizationId,
+  );
+  const messages = mailbox.messages.filter(
+    (message) => message.to === email && message.kind === "verification",
+  ).length;
+  assert.equal(messages, 1);
+  assert.equal(
+    (
+      await request(
+        "/auth/organization/accept-invitation",
+        { invitationId },
+        cookie,
+      )
+    ).status,
+    400,
+  );
+});
+
+test("passwords from the previous credential format upgrade through native sign-in", async () => {
+  const email = "credential-upgrade@local.test";
+  assert.equal(
+    (
+      await request("/auth/sign-up/email", {
+        name: "Member",
+        organization: "Workspace",
+        email,
+        password,
+      })
+    ).status,
+    200,
+  );
+  await mailbox.signIn(base, email);
+  const salt = "b".repeat(32);
+  const hash = `scrypt$${salt}:${scryptSync(password, salt, 64, {
+    N: 32768,
+    r: 8,
+    p: 3,
+    maxmem: 64 * 1024 * 1024,
+  }).toString("hex")}`;
+  await runtime.store.run(
+    "UPDATE auth_accounts SET password=? WHERE user_id=(SELECT id FROM users WHERE email=?)",
+    hash,
+    email,
+  );
+  assert.equal(
+    (
+      await request("/auth/sign-in/email", {
+        email,
+        password: "incorrect-password",
+      })
+    ).status,
+    401,
+  );
+  assert.equal(
+    (await request("/auth/sign-in/email", { email, password })).status,
+    200,
+  );
+  assert.match(
+    (await runtime.store.one<{ password: string }>(
+      "SELECT password FROM auth_accounts WHERE user_id=(SELECT id FROM users WHERE email=?)",
+      email,
+    ))!.password,
+    /^[a-f0-9]{32}:[a-f0-9]{128}$/,
+  );
+});
+
+test("native auth checks origins without requiring the application mutation header", async () => {
+  const input = {
+    name: "Member",
+    email: "native-origin@local.test",
+    organization: "Workspace",
+    password,
+  };
+  const post = (requestOrigin: string) =>
+    fetch(base + "/api/auth/sign-up/email", {
+      method: "POST",
+      headers: { Origin: requestOrigin, "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  assert.equal((await post("https://outside.test")).status, 403);
+  assert.equal(
+    await runtime.store.one("SELECT id FROM users WHERE email=?", input.email),
+    undefined,
+  );
+  assert.equal((await post(origin)).status, 200);
+  await waitForJobs(runtime, ["auth-email"]);
+  const cookie = await mailbox.signIn(base, input.email);
+  const response = await fetch(base + "/api/auth/sign-out", {
+    method: "POST",
+    headers: {
+      Origin: origin,
+      Cookie: cookie,
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await request("/me", undefined, cookie)).status, 401);
+});
+
+test("repeated native signup resends verification without recreating the organization", async () => {
+  const input = {
+    name: "Member",
+    email: "repeated-signup@local.test",
+    organization: "Workspace",
+    password,
+    callbackURL: "/login?verified=1&returnTo=/settings",
+  };
+  for (let attempt = 0; attempt < 2; attempt++)
+    assert.equal((await request("/auth/sign-up/email", input)).status, 200);
+  const messages = mailbox.messages.filter(
+    (message) => message.to === input.email && message.kind === "verification",
+  );
+  assert.equal(messages.length, 2);
+  assert.equal(
+    new URL(messages.at(-1)!.url).searchParams.get("callbackURL"),
+    input.callbackURL,
+  );
+  assert.equal(
+    (await runtime.store.all("SELECT id FROM users WHERE email=?", input.email))
+      .length,
+    1,
+  );
+  assert.equal(
+    (
+      await runtime.store.all(
+        "SELECT id FROM members WHERE user_id=(SELECT id FROM users WHERE email=?)",
+        input.email,
+      )
+    ).length,
+    1,
+  );
 });

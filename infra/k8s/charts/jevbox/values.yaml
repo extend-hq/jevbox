@@ -5,6 +5,21 @@ image:
 imagePullSecrets: []
 appOrigin: ""
 existingSecret: jevbox-secrets
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+storage:
+  backend: s3
+  bucket: ""
+  region: ""
+  endpoint: ""
+  forcePathStyle: false
+  prefix: jevbox
+  credentialsSecret: ""
+  port: 443
+  allowedCidrs: []
+  allowedPeers: []
 allowSignup: false
 trustProxyCidrs: ""
 authEmail:

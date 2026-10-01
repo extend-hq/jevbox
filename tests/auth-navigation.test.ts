@@ -1,8 +1,28 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { loginDestination, loginRedirect } from "../shared/auth-navigation";
+import {
+  loginDestination,
+  loginRedirect,
+  verificationDestination,
+} from "../shared/auth-navigation";
 
 const origin = "https://app.test";
+
+test("verification callbacks preserve invitation, protected destination and signed OAuth parameters", () => {
+  const url = new URL(
+    "/login?invite=invitation&returnTo=/settings&client_id=client&sig=signature&ba_param=client_id&ba_param=ba_param",
+    origin,
+  );
+  const callback = new URL(verificationDestination(url), origin);
+  assert.equal(callback.pathname, "/login");
+  for (const key of ["invite", "returnTo", "client_id", "sig"])
+    assert.equal(callback.searchParams.get(key), url.searchParams.get(key));
+  assert.deepEqual(
+    callback.searchParams.getAll("ba_param"),
+    url.searchParams.getAll("ba_param"),
+  );
+  assert.equal(callback.searchParams.get("verified"), "1");
+});
 
 test("login redirects preserve protected destinations and legacy authentication links", () => {
   for (const destination of [

@@ -163,11 +163,13 @@ export function createWorkers(
       await sender({ ...message, id: job.id });
       await store.jobs.remove(job);
     },
-    [queues.cleanup]: async (job) =>
-      store.jobs.complete(job, async () => {
+    [queues.cleanup]: async (job) => {
+      await store.files.cleanup();
+      await store.jobs.complete(job, async () => {
         await store.cleanupPermissions();
         await reconcile();
-      }),
+      });
+    },
     [queues.failed]: async (job) => {
       if (job.sourceName === queues.email) {
         await store.jobs.remove(job);
@@ -217,6 +219,7 @@ export function createWorkers(
   return {
     handle,
     async start(names: QueueName[] = Object.values(queues)) {
+      await store.files.ready();
       if (names.includes(queues.thumbnail))
         await enqueueMissingThumbnails(store);
       for (const name of names) {
