@@ -176,3 +176,33 @@ export function searchMetadata(
     links: [],
   };
 }
+
+export function buildSearchProfile(parsed: ParsedDocument) {
+  const statistics = JSON.parse(
+    searchMetadata(parsed, "").passages![0].content,
+  );
+  const terms = statistics.mostFrequentAbbreviations
+    .map((entry: { term: string }) => entry.term)
+    .join(", ");
+  const captions = [
+    ...new Set([
+      ...[...statistics.figureLabels, ...statistics.tableLabels].map(
+        (entry: { kind: string; label: string; caption: string }) =>
+          `${entry.kind} ${entry.label}: ${entry.caption}`,
+      ),
+      ...[
+        ...parsed.markdown.matchAll(
+          /^(?:#{1,6}\s*)?(?:Figure|Fig\.?|Table)\s+[A-Z]?\d+(?:\.\d+)?\s*[:.]\s*.+/gim,
+        ),
+      ].map((match) => normalizeIndexText(match[0]).slice(0, 180)),
+    ]),
+  ]
+    .slice(0, 24)
+    .join("; ");
+  return `Extracted terms: ${terms}\nSource captions: ${captions.slice(0, 1400)}\n${
+    parsed.summary ??
+    flatten(parsed.nodes)
+      .map((node) => node.title)
+      .join("; ")
+  }`.slice(0, 4096);
+}

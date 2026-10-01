@@ -101,7 +101,7 @@ test("library retrieval opens full indexes only for explored outline branches", 
   const { store } = storeFor(resources);
   const reads: string[] = [];
   store.all = async (sql: string) => {
-    assert.match(sql, /search_outline/);
+    assert.match(sql, /search_profile/);
     assert.doesNotMatch(sql, /SELECT \*/);
     return resources.map((resource) => ({
       ...resource,
@@ -159,6 +159,85 @@ test("revoked outline branches cannot load their full indexes", async () => {
   );
   assert.ok(!reads.includes("a"));
   assert.ok(result.results.every((source) => source.documentId !== "a"));
+});
+
+test("metadata shortcuts preserve authorized folder paths and exclude private profiles", async () => {
+  const folder = {
+    ...document("collection", ""),
+    kind: "folder" as const,
+    parsed: null,
+  };
+  const source = document(
+    "public",
+    "# ORION NOVA\nBoth values are documented.",
+    folder.id,
+  );
+  const hidden = document(
+    "hidden",
+    "# ORION NOVA UNSEEN\nPrivate source content.",
+    folder.id,
+  );
+  const resources = [folder, source, hidden];
+  const { store } = storeFor(resources, new Set([folder.id, source.id]));
+  let reads = 0;
+  store.all = async () =>
+    resources.map((resource) => ({
+      ...resource,
+      outline_only: true,
+      parsed: resource.parsed
+        ? JSON.stringify({ summary: JSON.parse(resource.parsed).searchProfile })
+        : null,
+    })) as never;
+  store.one = async (sql: string, id: string) => {
+    if (sql.startsWith("SELECT * FROM resources")) {
+      assert.equal(id, source.id);
+      reads++;
+    }
+    return resources.find((resource) => resource.id === id) as never;
+  };
+  const result = await retrieveDocuments(
+    store,
+    actor,
+    "What are the ORION and NOVA values?",
+    "key",
+    async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      assert.ok(!JSON.stringify(body).includes("UNSEEN"));
+      return body.questions.usefulness
+        ? Response.json({
+            answers: { usefulness: { type: "score", score: 3 } },
+          })
+        : Response.json({
+            answers: Object.fromEntries(
+              Object.entries(body.questions).map(
+                ([id, question]: [string, any]) => {
+                  const choices = Object.keys(question.criteria);
+                  return [
+                    id,
+                    {
+                      type: "choice",
+                      probabilities: Object.fromEntries(
+                        choices.map((choice, index) => [
+                          choice,
+                          Number(index === 0),
+                        ]),
+                      ),
+                    },
+                  ];
+                },
+              ),
+            ),
+          });
+    },
+  );
+  assert.equal(reads, 1);
+  assert.ok(result.results.every((entry) => entry.documentId === source.id));
+  assert.ok(result.results.length > 0);
+  assert.ok(
+    result.trace.some(
+      (entry) => entry.stage === "category" && entry.resourceId === folder.id,
+    ),
+  );
 });
 
 test("wide category menus bound their authorized child outlines", async () => {

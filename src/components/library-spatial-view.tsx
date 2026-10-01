@@ -51,6 +51,27 @@ type SceneHandle = {
 
 const SHEET_WIDTH = 2.25;
 const SHEET_HEIGHT = 3;
+const FOREGROUND_OPACITY = 0.1;
+const FOREGROUND_MAP_BLUR = /* glsl */ `
+  #ifdef USE_MAP
+    uniform vec2 foregroundBlurStep;
+    vec4 sampleForegroundMap(vec2 uv) {
+      if (max(foregroundBlurStep.x, foregroundBlurStep.y) < 0.000001)
+        return texture2D(map, uv);
+      vec2 step = foregroundBlurStep;
+      vec4 color = texture2D(map, uv) * 0.25;
+      color += texture2D(map, uv + vec2(step.x, 0.0)) * 0.125;
+      color += texture2D(map, uv - vec2(step.x, 0.0)) * 0.125;
+      color += texture2D(map, uv + vec2(0.0, step.y)) * 0.125;
+      color += texture2D(map, uv - vec2(0.0, step.y)) * 0.125;
+      color += texture2D(map, uv + step) * 0.0625;
+      color += texture2D(map, uv - step) * 0.0625;
+      color += texture2D(map, uv + vec2(step.x, -step.y)) * 0.0625;
+      color += texture2D(map, uv + vec2(-step.x, step.y)) * 0.0625;
+      return color;
+    }
+  #endif
+`;
 const LABEL_HEIGHT = 0.22;
 const FOLDER_LABEL_HEIGHT = 0.46;
 const LINK_SEGMENTS = 32;
@@ -623,6 +644,8 @@ export function LibrarySpatialView(props: Props) {
       base: THREE.Vector3;
       calm: number;
       hover: number;
+      occluded: boolean;
+      opacity: number;
       scale: number;
       height: number;
       width: number;
@@ -699,6 +722,8 @@ export function LibrarySpatialView(props: Props) {
         base: new THREE.Vector3(...node.position),
         calm: 0,
         hover: 0,
+        occluded: false,
+        opacity: 1,
         scale: 1,
         width: SHEET_WIDTH,
         height: SHEET_HEIGHT,
@@ -1414,6 +1439,119 @@ export function LibrarySpatialView(props: Props) {
     const focusBounds = new THREE.Box3();
     const candidateBounds = new THREE.Box3();
     const viewMatrix = new THREE.Matrix4();
+    const blurWorldScale = new THREE.Vector3();
+    const sharedFadeMaterials = new Set<THREE.Material>([
+      ...stackMaterials,
+      folderMaterial,
+      outline,
+      lineMaterial,
+    ]);
+    const opacityDefaults = new WeakMap<
+      THREE.Material,
+      {
+        opacity: number;
+        transparent: boolean;
+        depthWrite: boolean;
+        alphaTest: number;
+        alphaToCoverage: boolean;
+        blurStep: { value: THREE.Vector2 };
+      }
+    >();
+    function setOccluded(floater: Floater, occluded: boolean, delta: number) {
+      floater.occluded = occluded;
+      const goal = occluded ? FOREGROUND_OPACITY : 1;
+      const previous = floater.opacity;
+      floater.opacity +=
+        (goal - floater.opacity) *
+        (reducedMotion ? 1 : 1 - Math.exp(-delta * 10));
+      if (Math.abs(goal - floater.opacity) < 0.001) floater.opacity = goal;
+      if (floater.opacity === previous && floater.opacity === 1) return;
+      const fading = floater.opacity < 1;
+      worldPoint
+        .copy(floater.group.position)
+        .applyMatrix4(camera.matrixWorldInverse);
+      const pixelsPerUnit =
+        height() /
+        (2 *
+          Math.max(camera.near, -worldPoint.z) *
+          Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+      floater.group.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return;
+        let value = object.material as THREE.Material;
+        if (fading && sharedFadeMaterials.has(value)) {
+          value = material(value.clone());
+          object.material = value;
+          if (value instanceof LineMaterial) lineMaterials.add(value);
+        }
+        if (fading && !opacityDefaults.has(value)) {
+          const original = {
+            opacity: value.opacity,
+            transparent: value.transparent,
+            depthWrite: value.depthWrite,
+            alphaTest: value.alphaTest,
+            alphaToCoverage: value.alphaToCoverage,
+            blurStep: { value: new THREE.Vector2() },
+          };
+          opacityDefaults.set(value, original);
+          if ("map" in value) {
+            const compile = value.onBeforeCompile;
+            value.onBeforeCompile = (shader, renderer) => {
+              compile.call(value, shader, renderer);
+              shader.uniforms.foregroundBlurStep = original.blurStep;
+              shader.fragmentShader = shader.fragmentShader
+                .replace(
+                  "#include <map_pars_fragment>",
+                  `#include <map_pars_fragment>\n${FOREGROUND_MAP_BLUR}`,
+                )
+                .replace(
+                  "#include <map_fragment>",
+                  THREE.ShaderChunk.map_fragment.replace(
+                    "texture2D( map, vMapUv )",
+                    "sampleForegroundMap( vMapUv )",
+                  ),
+                );
+            };
+            value.needsUpdate = true;
+          }
+        }
+        const original = opacityDefaults.get(value);
+        if (!original) return;
+        const transparent = fading || original.transparent;
+        const alphaToCoverage = !fading && original.alphaToCoverage;
+        if (
+          value.transparent !== transparent ||
+          value.alphaToCoverage !== alphaToCoverage
+        ) {
+          value.transparent = transparent;
+          value.alphaToCoverage = alphaToCoverage;
+          value.needsUpdate = true;
+        }
+        // Overlapping pages together retain the same total opacity.
+        const opacity = floater.sheets.includes(object)
+          ? 1 - Math.pow(1 - floater.opacity, 1 / floater.sheets.length)
+          : floater.opacity;
+        value.opacity = original.opacity * opacity;
+        value.alphaTest = original.alphaTest * opacity;
+        value.depthWrite = !fading && original.depthWrite;
+        const blur = (2.5 * (1 - floater.opacity)) / (1 - FOREGROUND_OPACITY);
+        const plane = object.geometry as THREE.PlaneGeometry;
+        if (plane.parameters?.width && plane.parameters?.height) {
+          object.getWorldScale(blurWorldScale);
+          original.blurStep.value.set(
+            blur /
+              Math.max(
+                1,
+                plane.parameters.width * blurWorldScale.x * pixelsPerUnit,
+              ),
+            blur /
+              Math.max(
+                1,
+                plane.parameters.height * blurWorldScale.y * pixelsPerUnit,
+              ),
+          );
+        }
+      });
+    }
     function boundsInView(
       floater: Floater,
       bounds: THREE.Box3,
@@ -1447,13 +1585,20 @@ export function LibrarySpatialView(props: Props) {
       );
       return bounds.applyMatrix4(viewMatrix);
     }
-    function isVisible(object: THREE.Object3D) {
+    function isPickable(object: THREE.Object3D) {
       for (
         let current: THREE.Object3D | null = object;
         current;
         current = current.parent
-      )
-        if (!current.visible) return false;
+      ) {
+        const floater = floaters.get(current.userData.path);
+        if (
+          !current.visible ||
+          floater?.occluded ||
+          (floater?.opacity ?? 1) < 1
+        )
+          return false;
+      }
       return true;
     }
 
@@ -1593,14 +1738,17 @@ export function LibrarySpatialView(props: Props) {
         }
       }
       for (const floater of floaters.values()) {
-        floater.group.visible =
-          selectedDepth === null ||
-          floater === selected ||
-          !occludesSpatialFocus(
-            focusBounds,
-            boundsInView(floater, candidateBounds),
-            camera.near,
-          );
+        setOccluded(
+          floater,
+          selectedDepth !== null &&
+            floater !== selected &&
+            occludesSpatialFocus(
+              focusBounds,
+              boundsInView(floater, candidateBounds),
+              camera.near,
+            ),
+          delta,
+        );
       }
       if (pointerInside && !moving) {
         raycaster.setFromCamera(pointer, camera);
@@ -1610,7 +1758,7 @@ export function LibrarySpatialView(props: Props) {
         parent.body.localToWorld(linkFrom.set(0, -parent.height / 2, 0));
         child.body.localToWorld(linkTo.set(0, child.height / 2, 0));
         linkVisibility.fill(
-          parent.group.visible && child.group.visible ? 1 : 0,
+          Math.min(parent.opacity, child.opacity),
           i * LINK_SEGMENTS,
           (i + 1) * LINK_SEGMENTS,
         );
@@ -1638,9 +1786,9 @@ export function LibrarySpatialView(props: Props) {
       let focusGoal =
         selectedDepth ?? camera.position.distanceTo(controls.target);
       focusTargets.length = 0;
-      focusTargets.push(...pickables.filter(isVisible));
+      focusTargets.push(...pickables.filter(isPickable));
       const openTree = treePath ? trees.get(treePath) : undefined;
-      if (openTree && isVisible(openTree.group))
+      if (openTree && isPickable(openTree.group))
         for (const child of openTree.group.children)
           if (child instanceof THREE.Mesh && !(child instanceof LineSegments2))
             focusTargets.push(child);
@@ -1874,7 +2022,7 @@ export function LibrarySpatialView(props: Props) {
       let object: THREE.Object3D | null =
         raycaster
           .intersectObjects(pickables, false)
-          .find((hit) => isVisible(hit.object))?.object ?? null;
+          .find((hit) => isPickable(hit.object))?.object ?? null;
       while (object && object.userData.path === undefined)
         object = object.parent;
       return object?.userData.path as string | undefined;
@@ -1887,7 +2035,7 @@ export function LibrarySpatialView(props: Props) {
       const next = rayHit();
       if (next || !hovered) return next;
       const floater = floaters.get(hovered);
-      if (!floater || !floater.group.visible) return next;
+      if (!floater || floater.occluded || floater.opacity < 1) return next;
       projected
         .copy(floater.group.position)
         .applyMatrix4(camera.matrixWorldInverse);

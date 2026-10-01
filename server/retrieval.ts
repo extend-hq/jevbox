@@ -16,6 +16,7 @@ import {
 } from "./indexing";
 import type { RetrievalStep } from "../shared/retrieval";
 import { searchMetadata } from "./search-metadata";
+import { metadataCandidates } from "./search-candidates";
 
 export type RetrievedSource = {
   documentId: string;
@@ -105,7 +106,7 @@ export async function retrieveDocuments(
     await store.all<Resource & { outline_only?: boolean }>(
       documentIds.length && !options?.preserveFolders
         ? "SELECT * FROM resources WHERE org_id=? AND id=ANY(?::text[]) ORDER BY created DESC"
-        : "SELECT id,org_id,owner_id,parent_id,kind,name,description,access,mime,size,status,created,true AS outline_only,CASE WHEN parsed IS NULL THEN NULL ELSE json_build_object('summary',left(search_outline,1200))::text END AS parsed FROM resources WHERE org_id=? ORDER BY created DESC",
+        : "SELECT id,org_id,owner_id,parent_id,kind,name,description,access,mime,size,status,created,true AS outline_only,CASE WHEN parsed IS NULL THEN NULL ELSE json_build_object('summary',left(search_outline,1200),'searchProfile',left(search_profile,4096))::text END AS parsed FROM resources WHERE org_id=? ORDER BY created DESC",
       actor.orgId,
       ...(documentIds.length && !options?.preserveFolders ? [documentIds] : []),
     ),
@@ -220,11 +221,14 @@ export async function retrieveDocuments(
     byParent.set(resource.parent_id, children);
   }
   const eligible = new Set(docs.map((doc) => doc.id));
+  const documentNodes = new Map<string, RouteNode<Value>>();
   function resourceNode(
     resource: Resource & { outline_only?: boolean },
   ): RouteNode<Value> | undefined {
     if (resource.kind === "document") {
       if (!eligible.has(resource.id)) return;
+      const cached = documentNodes.get(resource.id);
+      if (cached) return cached;
       const outline = JSON.parse(resource.parsed!) as Partial<ParsedDocument>;
       let children: RouteNode<Value>[] | undefined;
       const loadChildren = async () => {
@@ -256,7 +260,7 @@ export async function retrieveDocuments(
         }
         return children;
       };
-      return {
+      const node: RouteNode<Value> = {
         id: `document:${resource.id}`,
         scope: resource.id,
         describe: async () =>
@@ -280,6 +284,8 @@ export async function retrieveDocuments(
           sources: [],
         },
       };
+      documentNodes.set(resource.id, node);
+      return node;
     }
     const children = (byParent.get(resource.id) ?? []).flatMap((child) => {
       const node = resourceNode(child);
@@ -337,6 +343,49 @@ export async function retrieveDocuments(
     const node = resourceNode(resource);
     return node ? [node] : [];
   });
+  const byId = new Map(resources.map((resource) => [resource.id, resource]));
+  if (
+    !documentIds.length &&
+    !options?.preserveFolders &&
+    options?.recoverRoutes !== false
+  ) {
+    const preferred = metadataCandidates(
+      docs.map((document) => {
+        const outline = JSON.parse(document.parsed!) as ParsedDocument;
+        return {
+          id: document.id,
+          name: document.name,
+          outline: outline.summary ?? "",
+          profile: outline.searchProfile,
+        };
+      }),
+      query,
+    );
+    if (preferred.length) {
+      const candidates = preferred.map((candidate) => {
+        const node = resourceNode(byId.get(candidate.id)!)!;
+        return {
+          ...node,
+          describe: async () =>
+            (await canRead(candidate.id)) ? candidate.hint : undefined,
+        };
+      });
+      roots.unshift({
+        id: "metadata-candidates",
+        children: candidates,
+        describe: async () => {
+          const descriptions = (
+            await Promise.all(
+              candidates.map((candidate) => candidate.describe()),
+            )
+          ).filter((text): text is string => text !== undefined);
+          return descriptions.length
+            ? `Direct source candidates from matching document outlines. These partial outlines locate sources; their facts still require verification.\n${descriptions.map((text) => text.slice(0, Math.floor(6000 / descriptions.length))).join("\n")}`
+            : undefined;
+        },
+      });
+    }
+  }
   const traversal = createTraversal(
     bounded(roots, "library"),
     createJev(key, fetcher, signal),
@@ -357,6 +406,34 @@ export async function retrieveDocuments(
     for (const route of routes) {
       if (!route.node.value) continue;
       const { step, sources } = route.node.value;
+      if (
+        step.stage === "document" &&
+        route.path.some((node) => node.id === "metadata-candidates")
+      ) {
+        const ancestors: Resource[] = [];
+        const seen = new Set<string>();
+        let parent = step.parentId;
+        while (parent && !seen.has(parent)) {
+          seen.add(parent);
+          const resource = byId.get(parent);
+          if (!resource || !(await canRead(resource.id))) break;
+          ancestors.unshift(resource);
+          parent = resource.parent_id;
+        }
+        for (const ancestor of ancestors)
+          if (
+            !trace.some(
+              (item) =>
+                item.stage === "category" && item.resourceId === ancestor.id,
+            )
+          )
+            trace.push({
+              stage: "category",
+              label: ancestor.name,
+              resourceId: ancestor.id,
+              parentId: ancestor.parent_id,
+            });
+      }
       trace.push({
         ...step,
         probability: route.probability,

@@ -9,7 +9,8 @@ The same failure analysis applies to tree search, sparse or dense retrieval, and
 | Values lose their meaning when chunked | Preserve typed evidence units, column headers, captions, row spans, units, and source provenance | Table rows and connected row groups retain headers, captions, and adjacent context; existing indexes upgrade from cached extraction |
 | Counts are inferred from a small sample | Use full-document aggregates with a defined counting method and completeness flags | Searchable page, word, term, abbreviation, parsed-object, and numbered-caption statistics |
 | Relevant evidence is incomplete | Distinguish topic relevance from coverage of the whole question | Stricter passage rubric and bounded evidence-set checks before stopping |
-| Routing cannot see the content of a collection | Give candidate selectors bounded, authorized descriptions of their children | Stored document outlines and per-request folder descriptions |
+| Routing cannot see the content of a collection | Give candidate selectors bounded, authorized descriptions of their children | Stored document outlines, derived search profiles, and per-request folder descriptions |
+| A single candidate-selection path misses a source | Combine independent source hints, then verify actual evidence | A small corpus-weighted metadata candidate branch complements tree traversal |
 | Every query loads the entire corpus | Separate small routing metadata from large source content | Lazy full-index loading, scoped SQL, and bounded provider concurrency |
 | Extraction loses a visual relationship | Preserve the original page or crop and escalate perception only when needed | Layout and source block coordinates are retained; query-time visual recovery remains future work |
 
@@ -18,6 +19,8 @@ Table structure is part of the evidence, rather than formatting to discard. [Tab
 Whole-document statistics must distinguish physical parsed objects from logical entities. Several panels may share one numbered figure caption. Counts of extracted words and token matches must state their normalization and inclusion rules. Heading inventories locate source material without proving complete author lists or surrounding claims. A truncated inventory cannot establish absence.
 
 Treat completeness as a query-dependent requirement. A single local fact can finish after one strong result; a comparison needs both values and matching units/conditions. A list needs every requested member, and an absence assertion needs exhaustive coverage. Score the combined evidence when several partial passages may jointly suffice. Continue within explicit budgets when coverage is weak.
+
+Keep source-selection metadata separate from source evidence and from navigation previews. Captions and body terms can help find a document, but placing them ahead of headings in a bounded folder preview can hide its structure. Prefer stronger title/heading signals and weaker body-derived hints; preserve an independent route for recovery. Authorization must filter candidate inputs before any outward model call, then be checked again when loading or returning evidence.
 
 The next reusable improvements should be tested as separate ablations:
 

@@ -1,100 +1,98 @@
-**DocBench search evaluation — October 1, 2026**
+# DocBench search evaluation — October 1, 2026
 
-All 1,102 questions from the 229-document [DocBench release](https://github.com/Anni-Zou/DocBench) were searched successfully. Search excerpts supported 737 of 978 document-answerable reference answers (75.4%). This is evidence coverage, not an end-to-end chat accuracy score. Retrieval still has material gaps, especially whole-document metadata and table context.
+All 1,102 questions across the 229-document [DocBench release](https://github.com/Anni-Zou/DocBench) completed without search errors. After indexing and retrieval improvements, returned evidence supports **844 of 978 document-answerable references (86.3%)**, compared with the previously reported **737 (75.4%)**. This is a model-assisted evidence-coverage assessment, not official end-to-end DocBench accuracy or a claim of state-of-the-art performance.
 
-Every original question was passed directly to the production retrieval function using its paired PDF, matching the benchmark’s document context. Retrieval used real PostgreSQL data, fresh authorization checks, and the configured TypeSafe `jev-latest` service. Reference answers and evidence were supplied only to a separate evaluation step after retrieval; they were never sent to routing or passage scoring. Application chat, answer-agent orchestration, query rewriting, and document-inspection tools were excluded.
+The general improvements preserve evidence structure, expose whole-document statistics, check completeness before stopping, and separate small routing metadata from large source indexes. No question IDs, reference answers, expected numbers, or benchmark-specific routing rules were added to indexing or retrieval.
 
-The full corpus ran in an isolated database schema: 98 matching existing indexes were reused by PDF checksum, and the other 131 PDFs were parsed through the normal indexing pipeline. All 229 finished without indexing errors. The user library was retained.
+## What was measured
 
-Evidence sufficiency was assessed with a separate `gpt-6-luna` evaluator. Positive assessments required supporting excerpts whose quoted text was checked against the actual returned sources. Minor HTML, whitespace, and line-wrap hyphenation differences were normalized for quote validation. Codex manually spot-reviewed 31 paired cases and the ten library-wide checks, including selected rendered PDF pages for reference/extraction conflicts. Eight persistent evaluator quote errors were resolved manually. This remains a model-assisted assessment, not 1,102 independent human labels.
+Every original question went directly to the production retrieval function, restricted to its paired document as provided by the benchmark. Searches used real PostgreSQL indexes, fresh SpiceDB authorization, and the configured TypeSafe `jev-latest` provider. Reference answers were supplied only to an independent `gpt-6-luna` evidence evaluator after retrieval. Application chat, answer-agent orchestration, query rewriting, and document-inspection tools were excluded.
 
-An answer is supported when the requested facts can be recovered from the excerpts, including calculations from shown inputs. Related text, incomplete tables, or captions without the required values do not suffice. Ordinary abbreviations and paraphrases are accepted. Whole-document counts and absence claims require complete coverage or an explicit statement.
+The complete corpus ran in an isolated database schema. Ninety-eight existing indexes were reused by PDF checksum; 131 PDFs went through normal parsing. All 229 indexed successfully. Timing includes database access, authorization, routing, passage scoring, and final filtering, at three concurrent searches. It excludes evaluation, HTTP transport, and chat queues.
 
-| Full paired-document run | Result |
-| --- | ---: |
-| Questions / documents | 1,102 / 229 |
-| Successful searches / errors | 1,102 / 0 |
-| Answerable references assessed | 978 / 978 |
-| Supported references | 737 (75.4%) |
-| Unsupported references | 241 |
-| Median search time | 1.33 s |
-| 95th percentile search time | 6.15 s |
-| Maximum search time | 15.09 s |
-| Empty search results | 114 |
-| Searches stopped with a remaining frontier or budget limit | 978 |
-| Retrieval provider requests | 23,420 |
+Positive evidence assessments require validated supporting quotes and recovery of the requested facts, operands, relationships, dates, and qualifiers. Related text, incomplete tables, and captions without requested values do not suffice. Codex reviewed selected gains and failures, rendered source pages, seven final assessment overrides, and the ten-question library check. Earlier baseline spot reviews are retained. These are not 1,102 independent human labels.
 
-Timing includes database access, authorization, routing, passage scoring, and final filtering. Three searches ran concurrently. It excludes evaluation, application HTTP transport, and chat queues. The `limited` flag also covers stopping after useful evidence was found; it does not mean all 978 searches exhausted a hard budget. Unanswerable questions account for much of the slow tail.
-
-| Question type | Supported / answerable | Coverage | Median | p95 |
-| --- | ---: | ---: | ---: | ---: |
-| text-only | 350 / 412 | 85.0% | 1.30 s | 3.90 s |
-| multimodal-t | 182 / 220 | 82.7% | 1.35 s | 2.61 s |
-| multimodal-f | 74 / 88 | 84.1% | 1.31 s | 2.67 s |
-| meta-data | 131 / 258 | 50.8% | 1.14 s | 2.87 s |
-
-The 117 `unanswerable` questions and seven `una-web` questions were also searched and assessed, but excluded from answerable-reference coverage. Empty excerpts do not prove a fact is absent from the entire document. External-web questions require evidence outside the library. Four unanswerable cases returned passages that appeared to conflict with the reference’s premise; these are flagged in the raw assessment, without claiming a chat hallucination.
-
-| Domain | Supported / answerable | Coverage | Median | p95 |
-| --- | ---: | ---: | ---: | ---: |
-| Academia | 218 / 266 | 82.0% | 1.33 s | 2.76 s |
-| Finance | 190 / 266 | 71.4% | 1.38 s | 7.90 s |
-| Government | 91 / 131 | 69.5% | 1.28 s | 4.89 s |
-| Law | 116 / 165 | 70.3% | 1.47 s | 11.05 s |
-| News | 122 / 150 | 81.3% | 1.17 s | 2.77 s |
-
-Library-wide retrieval was tested separately with ten self-contained questions across domains. The paired-document run cannot establish whole-library routing accuracy for ambiguous questions such as “Who is the last author of the paper?”
-
-| Same ten library-wide questions | Before richer folder outlines | After |
+| Full paired-document run | Previous | Improved |
 | --- | ---: | ---: |
-| Supported references | 6 / 10 | 7 / 10 |
-| Median | 5.52 s | 3.73 s |
-| p95 | 15.53 s | 9.91 s |
-| Empty results | 2 | 1 |
+| Successful searches / errors | 1,102 / 0 | 1,102 / 0 |
+| Answerable references assessed | 978 | 978 |
+| Supported references | 737 (75.4%) | 844 (86.3%) |
+| Unsupported references | 241 | 134 |
+| Median search time | 1.33 s | 1.19 s |
+| 95th percentile | 6.15 s | 6.16 s |
+| Maximum | 15.09 s | 13.13 s |
+| Empty results | 114 | 105 |
+| Provider requests | 23,420 | 32,349 |
 
-This small sample is diagnostic, not an estimate of library-wide accuracy. Three questions still lacked sufficient evidence: a dataset statistic comparison, a minimum-marriage-age law, and a complete list of emergency powers.
+Coverage improved by **10.9 percentage points**. Median latency fell about 10%; p95 was effectively unchanged. Stronger completeness checks used **38% more provider requests**. Token and dollar costs were not measured. This is an accuracy/usage tradeoff, not evidence that every query became faster.
 
-The original FDA question now returns “about 30 million Americans experience hearing loss,” matching DocBench. It succeeded in the full benchmark, the library-wide check, and all three repeated searches of the actual 98-document user library. Those live searches took 4.00 s, 2.79 s, 3.11 s.
+| Question type | Previous | Improved |
+| --- | ---: | ---: |
+| Text | 350 / 412 (85.0%) | 375 / 412 (91.0%) |
+| Tables | 182 / 220 (82.7%) | 192 / 220 (87.3%) |
+| Metadata | 131 / 258 (50.8%) | 200 / 258 (77.5%) |
+| Figures | 74 / 88 (84.1%) | 77 / 88 (87.5%) |
 
-Changes applied:
+| Domain | Improved coverage |
+| --- | ---: |
+| Academia | 232 / 266 (87.2%) |
+| Finance | 224 / 266 (84.2%) |
+| Government | 110 / 131 (84.0%) |
+| Law | 140 / 165 (84.8%) |
+| News | 138 / 150 (92.0%) |
 
-- Library searches now fetch stored document outlines and lazily open full indexes for explored document branches. The 229-document metadata read fell from roughly 394 MB to 291 KB and measured 16 ms after the change. Full index loading and outward descriptions still require fresh access checks.
-- Attached-document searches constrain the initial SQL read to the selected resources.
-- Folder routing descriptions now include bounded, authorized child outlines, so routing can consider what a folder actually contains.
-- Section routing and passage scoring include source page ranges; scoring distinguishes the source’s own authors from authors in bibliography entries and requires the requested relationships and qualifiers.
-- A generated outline column stays synchronized with parsed index updates. Migration 013 was verified on the actual library after an existing migration-number collision was corrected. The local server was restarted and `/health/ready` returned healthy.
+The other 117 unanswerable and seven external-web questions were searched and assessed separately. Empty results do not prove a fact is absent from the document. Three unanswerable cases returned evidence that conflicted with a reference premise; this is not a measurement of application-chat hallucination.
 
-Focused validation: all 25 retrieval checks passed, including lazy loading, revocation before full-index loading, outbound authorization, routing budgets, and source provenance. Project type checking and the benchmark script’s strict type check passed. No chat tests were run after the scope clarification.
+## General changes applied
 
-Remaining gaps observed in the saved results:
+- **Preserve evidence units.** Tables split at complete row boundaries, repeat headers, captions, and adjacent context, and retain connected row-span groups. Existing passages upgrade from cached extraction. A corpus audit checked 6,585 HTML tables and 81,157 rows with no missing whole rows; original Markdown and source blocks were preserved.
+- **Index document-wide information.** A searchable statistics branch exposes page and extracted-word counts, parsed-object and numbered-caption counts, abbreviation frequencies, term occurrences, and section inventories. It states counting rules and truncation. Logical figures and parsed image panels are distinguished; extraction counts cannot guarantee perfect visual recognition.
+- **Stop on sufficient evidence.** Passage scoring requires coverage of the entire question. Several partial passages receive a bounded joint-coverage check rather than automatically ending the search. Recovery continues within explicit budgets when evidence is incomplete.
+- **Keep routing cheap.** Generated outline/profile columns avoid loading every full index. The final 229-document routing read transferred about **798 KB**, compared with **377 MB** of stored parsed indexes, and measured **26 ms**. Full indexes load only for explored documents.
+- **Improve source selection without bypassing verification.** Authorized folder previews retain structural headings. A small candidate branch uses corpus-weighted title/heading matches and weaker extracted acronym/caption hints; JEV still selects routes and scores actual evidence. This complements the original hierarchy and preserves authorized folder ancestry in traces.
+- **Upgrade safely.** Derived profiles were backfilled for 98 ready library documents and all 229 benchmark documents, with no concurrent-revision conflicts or new parser calls. All 229 stored source indexes and their upgraded scoped-search representations were checked against the original caches and remained identical apart from the added profile fields.
 
-- Whole-document word/mention/figure/table counts, document length, and absence assertions often cannot be recovered from bounded passages. Metadata coverage is 50.8%.
-- Large table fragments can omit year or metric headers needed to interpret the retrieved values. Case `59:3` contains retained-earnings values without their year labels.
-- Formula extraction can lose fractions. Rendered PDF inspection in case `13:0` showed a denominator missing from the indexed text.
-- Some routes still return related material instead of the requested evidence. Case `60:2` returned stock-performance sections without the requested ticker; `63:1` returned no supporting equity excerpt.
-- Some reference answers are internally inconsistent or disagree with the PDF. These were retained as strict mismatches rather than silently correcting benchmark labels.
+## Whole-library checks and limitations
 
-Examples manually verified from the returned evidence:
+The full run measures within-document retrieval, not selection from an entire library. Ten self-contained questions were therefore tested separately across the corpus:
 
-| Question ID | Finding |
-| --- | --- |
-| `15:1` | The opening author list and affiliation table supply seven authors. |
-| `21:4` | The paired search returns 54.5 and 24.6, allowing the expected difference of 29.9. Library routing still missed this table. |
-| `17:0` | The reference calls 92.3 accuracy; PDF Table 5 labels it SANITY. Model accuracy reaches 63.6. |
-| `17:2` | The question asks why versus where; the reference instead answers what versus where. |
-| `34:4` | The returned reference inputs 54.31 and 44.24 subtract to 10.07, while the reference says 9.87. |
-| `11:1` | Manual review confirmed 67.5 and resolved an evaluator quote-format error. |
+| Same ten library queries | Initial | Folder outlines | Final candidate/profile routing |
+| --- | ---: | ---: | ---: |
+| Supported references | 6 / 10 | 7 / 10 | 7 / 10 |
+| Median | 5.52 s | 3.73 s | 4.17 s |
+| p95 | 15.53 s | 9.91 s | 9.48 s |
 
-The paired run was pinned to retrieval fingerprint `40cfe336820599c7d376b76e28a6080d64b15a4414a53f4e67cacf2ce137b666`. The later folder-outline change only affects the library routing branch, which is bypassed when the paired document IDs are supplied; it was checked separately with fingerprint `cfe9047be6f303d342ef3040eb505680692af47f586917c5168c417e2af31073`. The rows are not mixed across implementations. PDF checksum and question hashes are recorded in each run configuration.
+This small sample does not demonstrate an accuracy gain over the folder-outline baseline. Two source-selection failures remain: a dataset comparison and a company-wide percentage for a specific year. A third mismatch comes from a reference assigning cabinet powers to an individual. The final paired-document smoke check recovered 9 of the same ten references, retaining that strict attribution mismatch.
 
-Reproduction with the local DocBench manifest and configured parsing/retrieval credentials:
+A profile trial showed that prepending captions/acronyms to bounded previews could crowd out headings. The final implementation keeps them in a separate candidate channel. Intermediate runs and their provider/evaluator outputs are retained for inspection.
+
+The original FDA hearing-loss question returned the expected **about 30 million Americans** in the full run, the library check, and three fresh searches of the actual library. The final real-provider searches took **1.77 s, 1.67 s, and 1.85 s**. The local server was restarted with the final code and `/health/ready` returned healthy. These timings exclude HTTP transport and chat.
+
+Assessment uncertainty remains. The paired labels changed positively on 121 questions and negatively on 14. Three negative changes had identical returned evidence and reflect evaluator variability or a stricter reference check, rather than retrieval regressions. A fourth identical-evidence label discrepancy was corrected manually. The original published baseline is preserved unchanged. Incorrect or ambiguous references remain strict mismatches; neither retrieval nor benchmark inputs were tuned to reproduce them.
+
+## State-of-the-art comparison and next work
+
+[AutoThinkRAG](https://arxiv.org/html/2603.05551v2), published in March 2026, reports **82.13% end-to-end DocBench answer accuracy**, including unanswerable questions. Its authors describe this as state of the art in their comparison. Our 86.3% covers evidence sufficiency for 978 document-answerable questions and excludes answer generation, so the numbers cannot establish that this system matches or exceeds that result.
+
+The strongest remaining general opportunities are targeted page/crop retrieval for formulas and charts, query decomposition for comparisons and complete lists, and independent candidate selection evaluated at a fixed evidence budget. Rendered inspection confirmed that a formula denominator can disappear from extracted text. [TableRAG](https://arxiv.org/abs/2506.10380) also motivates retaining structured tables rather than flattening them. A visual-recovery stage should extract missing evidence before a separate reasoning stage interprets it. These are proposed follow-ups, not implemented features.
+
+The reusable approach and ablation priorities are documented in [search-quality.md](search-quality.md).
+
+## Validation and reproduction
+
+All **37 focused indexing/retrieval tests** passed, including table integrity, row spans, old-index upgrades, document statistics, coverage-aware recovery, lazy loading, revoked access, private profiles, and shortcut ancestry. Project type checking and strict checks of both scripts passed. No application-chat tests were run.
+
+The full improved run is pinned to `2beeda1132a8beef02b7eb501e11d1d3277471943f476e3fe918808e7148a5d8`; the previous run uses `40cfe336820599c7d376b76e28a6080d64b15a4414a53f4e67cacf2ce137b666`. Subsequent candidate/profile changes affect library routing or added index metadata, which the paired path does not use. The final ten-query library and paired smoke checks use `39fc9ae1721e7c72e6a55d9bad2b029d3d20193804a1889a4b71daf54b98115e`. The 1,102 results were not mixed with later runs or represented as a new full run on that final fingerprint.
+
+With the local manifest and configured credentials:
 
 ```sh
 pnpm exec tsx --env-file-if-exists=.env scripts/docbench-prepare.ts
 pnpm exec tsx --env-file-if-exists=.env scripts/docbench-search.ts --label verification --concurrency 3
 pnpm exec tsx --env-file-if-exists=.env scripts/docbench-search.ts --label verification --evaluate --concurrency 8
+pnpm exec tsx --env-file-if-exists=.env scripts/reindex-search.ts --org=<organization-id>
 ```
 
-Use a fresh label after retrieval implementation changes. An existing label can resume interrupted searches; `--retry-errors` retries failed searches. `--scope library` runs original questions without a paired-document restriction; `--ids` selects explicit question IDs. `--evaluate --follow` assesses new saved results while retrieval runs separately.
+Use a fresh label after implementation changes. An existing label can resume an interrupted run; `--retry-errors` retries failures. `--scope library` removes the paired-document restriction, `--ids` selects questions, and `--evaluate --follow` evaluates saved results while retrieval runs separately. Backfills optionally accept `--schema` and `--data-dir` for isolated stores.
 
-Saved evidence: [full summary](../.data/docbench/runs/search-v2-document/summary.json), [all 1,102 results and source excerpts](../.data/docbench/runs/search-v2-document/results.json), [241 unsupported references](../.data/docbench/audit/unsupported-references.json), [manual spot reviews](../.data/docbench/audit/manual-review.json), [library-wide results](../.data/docbench/runs/search-v3-library/results.json), and [actual library readback](../.data/docbench/audit/live-search.json). These local benchmark artifacts are ignored by Git; this report and the runner are reviewable workspace files.
+Saved local evidence: [full summary](../.data/docbench/runs/structure-final-document/summary.json), [all 1,102 questions and excerpts](../.data/docbench/runs/structure-final-document/results.json), [134 unsupported references](../.data/docbench/audit/unsupported-references-final.json), [paired label changes](../.data/docbench/audit/search-improvement-comparison.json), [manual overrides](../.data/docbench/audit/manual-review-final.json), [library check](../.data/docbench/runs/profile-split-library/results.json), [scoped smoke check](../.data/docbench/runs/profile-split-document/results.json), [index preservation](../.data/docbench/audit/index-preservation.json), [profile preservation](../.data/docbench/audit/profile-preservation.json), [routing read](../.data/docbench/audit/metadata-read-final.json), and [actual library readback](../.data/docbench/audit/live-search-final.json). These artifacts are ignored by Git; this report, the generalized guide, and scripts are reviewable workspace files.

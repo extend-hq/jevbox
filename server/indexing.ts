@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ParsedBlock } from "../shared/parsed-blocks";
+import { buildSearchProfile } from "./search-metadata";
 export type IndexNode = {
   id: string;
   title: string;
@@ -29,6 +30,8 @@ export type ParsedDocument = {
   version?: number;
   summary?: string;
   passageVersion?: number;
+  searchProfile?: string;
+  searchProfileVersion?: number;
 };
 
 export function splitPassages(content: string, size = 2400, overlap = 200) {
@@ -328,7 +331,7 @@ export function buildIndex(
   }
   for (const node of flatten(nodes))
     node.summary = `Pages ${node.page}–${node.endPage}. Sections: ${[node.title, ...flatten(node.children).map((child) => child.title)].join("; ")}`;
-  return withLayoutSections({
+  const parsed = withLayoutSections({
     version: 1,
     passageVersion: 2,
     source,
@@ -344,6 +347,11 @@ export function buildIndex(
       .map((node) => node.title)
       .join("; ")}`,
   });
+  return {
+    ...parsed,
+    searchProfile: buildSearchProfile(parsed),
+    searchProfileVersion: 1,
+  };
 }
 
 export function withSearchPassages(input: ParsedDocument): ParsedDocument {

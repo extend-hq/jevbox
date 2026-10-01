@@ -6,6 +6,7 @@ import {
   withSearchPassages,
 } from "../server/indexing";
 import { normalizeIndexText, searchMetadata } from "../server/search-metadata";
+import { metadataCandidates } from "../server/search-candidates";
 
 test("table passages repeat headers and captions without cutting or dropping rows", () => {
   const rows = Array.from(
@@ -39,6 +40,42 @@ test("table passages repeat headers and captions without cutting or dropping row
   );
   assert.ok(
     passages.some((passage) => passage.content.includes("Closing prose.")),
+  );
+});
+
+test("routing profiles retain extracted abbreviations and captions without replacing source content", () => {
+  const content =
+    "# Evaluation\nORION evaluates NOVA. ORION and NOVA share a benchmark.\nFigure 1: Evaluation results for ORION and NOVA.\nTable 1: Comparison of both systems.\n<table><tr><th>System</th><th>Value</th></tr><tr><td>ORION</td><td>9</td></tr></table>";
+  const parsed = buildIndex([{ content }], "text");
+  assert.equal(parsed.markdown, content);
+  assert.equal(parsed.searchProfileVersion, 1);
+  assert.match(parsed.searchProfile!, /ORION/);
+  assert.match(parsed.searchProfile!, /NOVA/);
+  assert.match(parsed.searchProfile!, /Comparison of both systems/);
+  assert.match(parsed.searchProfile!, /Evaluation results/);
+  assert.ok(parsed.searchProfile!.length <= 4096);
+  assert.ok(!parsed.summary!.includes("Extracted terms"));
+});
+
+test("metadata candidates prioritize rare query terms and retain matching late headings", () => {
+  const documents = Array.from({ length: 80 }, (_, index) => ({
+    id: String(index),
+    name: "Report",
+    outline:
+      index === 63
+        ? `${"General introduction; ".repeat(30)}Hydraulic turbine reliability`
+        : "General introduction; Annual financial results",
+  }));
+  const candidates = metadataCandidates(
+    documents,
+    "What affects hydraulic turbine reliability?",
+  );
+  assert.equal(candidates[0].id, "63");
+  assert.match(candidates[0].hint, /Hydraulic turbine reliability/);
+  assert.ok(candidates.length <= 8);
+  assert.deepEqual(
+    metadataCandidates(documents, "How many documents are there?"),
+    [],
   );
 });
 

@@ -132,12 +132,23 @@ const implementation = await Promise.all(
     "server/jev.ts",
     "server/indexing.ts",
     "server/search-metadata.ts",
+    "server/search-candidates.ts",
     "server/providers.ts",
   ].map((path) => readFile(resolve(path))),
 );
 let implementationHash = createHash("sha256")
   .update(Buffer.concat(implementation))
   .digest("hex");
+let previousConfig:
+  | {
+      implementationHash: string;
+      sourceHash: string;
+      questionHash: string;
+      concurrency: number;
+      searchConcurrency?: number;
+      evaluatorConcurrency?: number;
+    }
+  | undefined;
 if (values.evaluate || values["report-only"]) {
   const previous = JSON.parse(
     await readFile(resolve(runDirectory, "config.json"), "utf8"),
@@ -148,6 +159,7 @@ if (values.evaluate || values["report-only"]) {
   )
     throw new Error("The corpus or reference questions have changed");
   implementationHash = previous.implementationHash;
+  previousConfig = previous;
 }
 const settings = await getSettings(store, actor.orgId);
 const judgeSelection = {
@@ -183,6 +195,13 @@ const runSettings = {
   selectedQuestions: selected.length,
   scope: values.scope,
   concurrency,
+  searchConcurrency:
+    previousConfig?.searchConcurrency ??
+    previousConfig?.concurrency ??
+    concurrency,
+  evaluatorConcurrency: values.evaluate
+    ? concurrency
+    : previousConfig?.evaluatorConcurrency,
   sourceHash,
   questionHash,
   implementationHash,
@@ -191,6 +210,7 @@ const runSettings = {
     "Original questions sent directly to production retrieval, with real database authorization and retrieval provider. Document scope selects the paired document; library scope uses the original question across the corpus. Reference answers are used only after retrieval. Application chat/answer orchestration, query rewriting, and document inspection are not exercised. Search latency excludes evaluator time and HTTP/chat queues. Evidence sufficiency uses a separate evaluator with validated verbatim supporting excerpts and manual spot review. Unanswerable and external-web questions are reported separately; empty results cannot prove global absence.",
 };
 const resultsPath = resolve(runDirectory, "results.jsonl");
+await appendFile(resultsPath, "");
 const results = new Map<string, Result>();
 try {
   for (const line of (await readFile(resultsPath, "utf8")).split("\n")) {
