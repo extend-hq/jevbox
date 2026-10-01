@@ -39,12 +39,18 @@ import { HttpError } from "./db";
 import type { Settings, Fetch } from "./providers";
 import { providerExtensions } from "./provider-extensions";
 import { z } from "zod";
+import type { DocumentInspection } from "./document-inspection";
 export type AnswerExecution = {
   signal: AbortSignal;
+  attachedDocuments?: { id: string; name: string }[];
   maxOutputTokens?: number;
   onText?: (text: string) => Promise<void>;
   beforeStep?: () => Promise<void>;
   searchDocuments?: (query: string, signal?: AbortSignal) => Promise<unknown>;
+  inspectDocument?: (
+    input: DocumentInspection,
+    signal?: AbortSignal,
+  ) => Promise<unknown>;
 };
 export function isPublicAddress(address: string) {
   try {
@@ -291,6 +297,35 @@ export async function generateAnswer(
                   }
                 },
               }),
+              ...(execution.inspectDocument
+                ? {
+                    inspect_document: tool({
+                      description:
+                        "Inspect an attached or previously retrieved document. Returns its full-document statistics and section outline. Request specific PDF page positions to read their extracted text, or a literal term to count its occurrences throughout the complete extracted text. Use this for page counts, word counts, term frequency, common abbreviations, page contents, and document structure. Counts describe the extraction and can differ from the visual original; do not infer exact visual counts from incomplete extraction.",
+                      inputSchema: z
+                        .object({
+                          documentId: z.string().min(1).max(128),
+                          pages: z
+                            .array(z.number().int().positive())
+                            .max(5)
+                            .optional(),
+                          term: z.string().trim().min(1).max(200).optional(),
+                        })
+                        .strict(),
+                      execute: async (input, { abortSignal }) => {
+                        try {
+                          return await execution.inspectDocument!(
+                            input,
+                            abortSignal,
+                          );
+                        } catch (error) {
+                          toolFailure = error;
+                          throw error;
+                        }
+                      },
+                    }),
+                  }
+                : {}),
             },
             stopWhen: isStepCount(6),
           }

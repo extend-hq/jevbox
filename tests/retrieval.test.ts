@@ -72,6 +72,28 @@ const jevFetch: typeof fetch = async (_input, init) => {
     : choiceResponse(body);
 };
 
+test("attached retrieval loads only the requested resources before scoring", async () => {
+  const selected = document("selected", "# Section\nRelevant source facts.");
+  const { store } = storeFor([selected]);
+  let loaded = false;
+  store.all = async (sql: string, ...values: unknown[]) => {
+    assert.match(sql, /org_id=\? AND id=ANY\(\?::text\[\]\)/);
+    assert.deepEqual(values, [actor.orgId, [selected.id]]);
+    loaded = true;
+    return [selected] as never;
+  };
+  const result = await retrieveDocuments(
+    store,
+    actor,
+    "What facts are stated?",
+    "key",
+    jevFetch,
+    [selected.id],
+  );
+  assert.equal(loaded, true);
+  assert.equal(result.results[0]?.documentId, selected.id);
+});
+
 test("indexing continues sections across pages and ignores headings inside code fences", () => {
   const parsed = buildIndex(
     [

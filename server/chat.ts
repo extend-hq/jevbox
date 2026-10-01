@@ -13,6 +13,7 @@ import {
 import { availableChatModels } from "./ai";
 import { getSettings, type createProviders } from "./providers";
 import type { ChatModel, ChatTurn } from "../shared/chat";
+import { inspectDocument } from "./document-inspection";
 
 type Message = {
   role: string;
@@ -376,7 +377,9 @@ export function createChatRuntime(
       let searches = 0;
       let retrievalDurationMs: number | undefined;
       let searchChain: Promise<unknown> = Promise.resolve();
-      const runSearch = async (query: string, signal?: AbortSignal) => {
+      const runLookup = async (
+        lookup: (actor: Actor) => Promise<typeof retrieval>,
+      ) => {
         const started = performance.now();
         const { a: currentActor } = await check();
         await store.run(
@@ -384,12 +387,7 @@ export function createChatRuntime(
           turn.id,
           turn.attempt_id,
         );
-        const found = await providers.retrieve(
-          currentActor,
-          query,
-          turn.document_ids,
-          signal ?? controller.signal,
-        );
+        const found = await lookup(currentActor);
         for (const source of found.results)
           if (
             !retrieval.results.some(
@@ -430,20 +428,23 @@ export function createChatRuntime(
                 (existing) => sourceKey(existing) === sourceKey(source),
               ) + 1,
             title: source.name,
+            documentId: source.documentId,
             section: source.title,
             page: source.page,
             text: source.content,
           })),
         };
       };
-      const searchDocuments = (query: string, signal?: AbortSignal) => {
+      const lookupDocuments = (
+        lookup: (actor: Actor) => Promise<typeof retrieval>,
+      ) => {
         if (++searches > 5)
           return Promise.resolve({
             sources: [],
             message:
               "The search limit has been reached. Answer using the evidence already retrieved.",
           });
-        const result = searchChain.then(() => runSearch(query, signal));
+        const result = searchChain.then(() => runLookup(lookup));
         searchChain = result;
         return result;
       };
@@ -476,7 +477,54 @@ export function createChatRuntime(
         turn.selected_model ?? undefined,
         {
           signal: controller.signal,
-          searchDocuments,
+          attachedDocuments: turn.attachments,
+          searchDocuments: (query, signal) =>
+            lookupDocuments((currentActor) =>
+              providers.retrieve(
+                currentActor,
+                query,
+                turn.document_ids,
+                signal ?? controller.signal,
+              ),
+            ),
+          inspectDocument: (input, signal) => {
+            if (
+              !turn.document_ids.includes(input.documentId) &&
+              !retrieval.results.some(
+                (source) => source.documentId === input.documentId,
+              )
+            )
+              throw new HttpError(
+                400,
+                "Choose an attached or retrieved document to inspect.",
+              );
+            return lookupDocuments(async (currentActor) => {
+              const sources = await inspectDocument(
+                store,
+                currentActor,
+                input,
+                signal ?? controller.signal,
+              );
+              return {
+                mode: "jev",
+                limited: false,
+                results: sources,
+                trace: retrieval.trace.some(
+                  (step) =>
+                    step.stage === "document" &&
+                    step.resourceId === input.documentId,
+                )
+                  ? []
+                  : [
+                      {
+                        stage: "document",
+                        label: sources[0].name,
+                        resourceId: input.documentId,
+                      },
+                    ],
+              };
+            });
+          },
           beforeStep: async () => {
             await check();
           },

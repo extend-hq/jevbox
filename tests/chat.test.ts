@@ -233,6 +233,12 @@ test("streaming exposes partial text, durable queue edits preserve order, and du
   );
   assert.equal((await enqueue(chat, "First process question", id)).status, 202);
   assert.equal(calls.length, 1);
+  const question = calls[0].body.input.findLast(
+    (item: any) => item.role === "user",
+  );
+  assert.deepEqual(JSON.parse(question.content[0].text).attachedDocuments, [
+    { id: documentId, name: "notes.md" },
+  ]);
   const second = (await enqueue(chat, "Second process question")).data.id;
   const third = (await enqueue(chat, "Third process question")).data.id;
   assert.equal(

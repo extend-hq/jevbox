@@ -102,8 +102,11 @@ export async function retrieveDocuments(
   };
   const resources = await readable(
     await store.all<Resource>(
-      "SELECT * FROM resources WHERE org_id=? ORDER BY created DESC",
+      documentIds.length && !options?.preserveFolders
+        ? "SELECT * FROM resources WHERE org_id=? AND id=ANY(?::text[]) ORDER BY created DESC"
+        : "SELECT * FROM resources WHERE org_id=? ORDER BY created DESC",
       actor.orgId,
+      ...(documentIds.length && !options?.preserveFolders ? [documentIds] : []),
     ),
     (resource) => resource.id,
   );
