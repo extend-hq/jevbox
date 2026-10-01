@@ -68,6 +68,10 @@ run "deployment_foundation" {
     error_message = "File storage must reject public access."
   }
   assert {
+    condition     = !aws_s3_bucket.files.force_destroy && aws_s3_bucket_versioning.files.versioning_configuration[0].status == "Enabled" && one(one(aws_s3_bucket_server_side_encryption_configuration.files.rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256"
+    error_message = "Stored files must be encrypted and versioned, and bucket deletion must never force-delete data."
+  }
+  assert {
     condition     = strcontains(aws_iam_role.storage.assume_role_policy, "system:serviceaccount:jevbox-sandbox:jevbox-storage") && strcontains(aws_iam_role_policy.storage.policy, "s3:PutObject") && !strcontains(aws_iam_role_policy.storage.policy, "s3:*")
     error_message = "Storage credentials must bind to the application service account and scoped object actions."
   }

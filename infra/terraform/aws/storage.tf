@@ -2,9 +2,6 @@ resource "aws_s3_bucket" "files" {
   bucket        = "${local.name}-${var.target_account_id}-files"
   force_destroy = false
   depends_on    = [terraform_data.account_guard]
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 resource "aws_s3_bucket_public_access_block" "files" {
