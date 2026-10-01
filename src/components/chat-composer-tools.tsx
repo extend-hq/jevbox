@@ -8,8 +8,9 @@ import {
   useState,
   useImperativeHandle,
   type Ref,
+  type RefObject,
 } from "react";
-import { Check, Paperclip, Upload, X } from "./icons";
+import { Check, Paperclip, Upload } from "./icons";
 import { Button } from "./coss/button";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
 import { CursorTooltip } from "./cursor-tooltip";
@@ -24,9 +25,10 @@ export type ChatComposerToolsHandle = {
 };
 type Props = {
   ref?: Ref<ChatComposerToolsHandle>;
+  composerAnchor: RefObject<HTMLFormElement | null>;
   mentionQuery: string | null;
   onMentionClose: () => void;
-  onMentionAttach: () => void;
+  onMentionAttach: (document: Resource) => void;
   me: Me;
   attachments: Resource[];
   setAttachments: React.Dispatch<React.SetStateAction<Resource[]>>;
@@ -38,6 +40,7 @@ type Props = {
 };
 export function ChatComposerTools({
   ref,
+  composerAnchor,
   mentionQuery,
   onMentionClose,
   onMentionAttach,
@@ -62,6 +65,8 @@ export function ChatComposerTools({
   const [activeIndex, setActiveIndex] = useState(0);
   const searchRequest = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
+  const mentionOrigin = useRef(false);
+  const mentionPicker = mentionQuery !== null || mentionOrigin.current;
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [loadingDocuments, setLoadingDocuments] = useState(true);
@@ -105,13 +110,28 @@ export function ChatComposerTools({
         : document.name.toLowerCase().includes(effectiveQuery.toLowerCase()),
     )
     .slice(0, 50);
+  const selectableIndexes = visibleDocuments.flatMap((document, index) =>
+    attachments.some((item) => item.id === document.id) ||
+    (document.status === "ready" && attachments.length < 8)
+      ? [index]
+      : [],
+  );
+  const selectableKey = selectableIndexes.join(",");
   useEffect(() => {
-    setActiveIndex(0);
+    setActiveIndex((current) =>
+      selectableIndexes.includes(current)
+        ? current
+        : (selectableIndexes[0] ?? -1),
+    );
+  }, [selectableKey]);
+  useEffect(() => {
+    setActiveIndex(selectableIndexes[0] ?? -1);
     searchRequest.current++;
     setSearching(false);
   }, [effectiveQuery]);
   useEffect(() => {
     if (mentionQuery !== null) {
+      mentionOrigin.current = true;
       setQuery(mentionQuery);
       setSearchResult(null);
     }
@@ -124,15 +144,16 @@ export function ChatComposerTools({
     const selected = attachments.some((item) => item.id === document.id);
     if (!selected && (document.status !== "ready" || attachments.length >= 8))
       return;
+    if (mentionQuery !== null) {
+      setOpen(false);
+      onMentionAttach(document);
+      return;
+    }
     setAttachments((current) =>
       selected
         ? current.filter((item) => item.id !== document.id)
         : [...current, document],
     );
-    if (mentionQuery !== null) {
-      setOpen(false);
-      onMentionAttach();
-    }
   }
   async function searchLibrary() {
     const value = effectiveQuery.trim();
@@ -153,34 +174,35 @@ export function ChatComposerTools({
       if (request === searchRequest.current) setSearching(false);
     }
   }
-  useImperativeHandle(ref, () => ({
-    handleMentionKey(event) {
-      if (mentionQuery === null) return false;
-      if (event.key === "Escape") {
-        closePicker();
-        return true;
-      }
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        setActiveIndex((current) =>
-          Math.max(
-            0,
-            Math.min(
-              visibleDocuments.length - 1,
-              current + (event.key === "ArrowDown" ? 1 : -1),
-            ),
+  function handleMentionKey(event: { key: string; shiftKey: boolean }) {
+    if (mentionQuery === null) return false;
+    if (event.key === "Escape") {
+      closePicker();
+      return true;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      setActiveIndex((current) => {
+        const position = selectableIndexes.indexOf(current);
+        const next = Math.max(
+          0,
+          Math.min(
+            selectableIndexes.length - 1,
+            position + (event.key === "ArrowDown" ? 1 : -1),
           ),
         );
-        return true;
-      }
-      if (event.key === "Enter" && !event.shiftKey) {
-        const document = visibleDocuments[activeIndex];
-        if (document) attach(document);
-        else void searchLibrary();
-        return true;
-      }
-      return false;
-    },
-  }));
+        return selectableIndexes[next] ?? -1;
+      });
+      return true;
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      const document = visibleDocuments[activeIndex];
+      if (document) attach(document);
+      else void searchLibrary();
+      return true;
+    }
+    return false;
+  }
+  useImperativeHandle(ref, () => ({ handleMentionKey }));
   useEffect(() => {
     if (open)
       window.document
@@ -224,7 +246,12 @@ export function ChatComposerTools({
       <Popover
         open={open}
         modal={false}
-        onOpenChange={(value) => (value ? setOpen(true) : closePicker())}
+        onOpenChange={(value) => {
+          if (value) {
+            if (mentionQuery === null) mentionOrigin.current = false;
+            setOpen(true);
+          } else closePicker();
+        }}
       >
         <CursorTooltip label="Attach documents">
           <PopoverTrigger asChild>
@@ -244,50 +271,77 @@ export function ChatComposerTools({
           side="top"
           align="start"
           sideOffset={12}
-          className="attachment-picker"
-          initialFocus={mentionQuery !== null ? false : searchInput}
-          finalFocus={mentionQuery !== null ? false : undefined}
+          className={
+            mentionPicker
+              ? "attachment-picker mention-picker"
+              : "attachment-picker"
+          }
+          anchor={mentionPicker ? composerAnchor : undefined}
+          initialFocus={mentionPicker ? false : searchInput}
+          finalFocus={() =>
+            mentionOrigin.current
+              ? (composerAnchor.current?.querySelector<HTMLElement>(
+                  ".chat-prompt-content",
+                ) ?? false)
+              : true
+          }
         >
           <div className="attachment-picker-body">
-            <div className="attachment-picker-heading">
-              <strong>Attach documents</strong>
-              <span>{attachments.length}/8</span>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={uploading || attachments.length >= 8}
-              onClick={() => fileInput.current?.click()}
-            >
-              <Upload size={15} />
-              {uploading ? "Uploading…" : "Upload from computer"}
-            </Button>
-            <SearchInput
-              aria-label="Find a document to attach"
-              placeholder="Find in your library…"
-              ref={searchInput}
-              value={effectiveQuery}
-              onChange={(e) => {
-                if (mentionQuery !== null) onMentionClose();
-                setOpen(true);
-                setQuery(e.target.value);
-                setSearchResult(null);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void searchLibrary();
-                }
-              }}
-            />
-            <p className="attachment-search-hint" role="status">
-              {searching
-                ? "Searching your library…"
-                : matchedSources
-                  ? "Library search results"
-                  : "Press Enter to search document contents"}
-            </p>
+            {!mentionPicker && (
+              <div className="attachment-picker-heading">
+                <strong>Attach documents</strong>
+                <span>{attachments.length}/8</span>
+              </div>
+            )}
+            {!mentionPicker && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={uploading || attachments.length >= 8}
+                onClick={() => fileInput.current?.click()}
+              >
+                <Upload size={15} />
+                {uploading ? "Uploading…" : "Upload from computer"}
+              </Button>
+            )}
+            {!mentionPicker && (
+              <SearchInput
+                aria-label="Find a document to attach"
+                placeholder="Find in your library…"
+                ref={searchInput}
+                value={effectiveQuery}
+                onChange={(e) => {
+                  setOpen(true);
+                  setQuery(e.target.value);
+                  setSearchResult(null);
+                }}
+                onKeyDown={(event) => {
+                  if (
+                    !event.nativeEvent.isComposing &&
+                    handleMentionKey(event)
+                  ) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  } else if (
+                    event.key === "Enter" &&
+                    !event.nativeEvent.isComposing
+                  ) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void searchLibrary();
+                  }
+                }}
+              />
+            )}
+            {!mentionPicker && (
+              <p className="attachment-search-hint" role="status">
+                {searching
+                  ? "Searching your library…"
+                  : matchedSources
+                    ? "Library search results"
+                    : "Press Enter to search document contents"}
+              </p>
+            )}
             <ScrollArea className="attachment-scroll" scrollFade>
               <div
                 className="attachment-document-list"
@@ -319,6 +373,11 @@ export function ChatComposerTools({
                         (document.status !== "ready" || attachments.length >= 8)
                       }
                       onClick={() => attach(document)}
+                      onMouseDown={
+                        mentionPicker
+                          ? (event) => event.preventDefault()
+                          : undefined
+                      }
                     >
                       <ResourceThumbnail
                         name={document.name}
@@ -402,47 +461,5 @@ export function ChatComposerTools({
         </span>
       )}
     </>
-  );
-}
-export function ChatAttachments({
-  attachments,
-  onRemove,
-  disabled,
-}: {
-  attachments: Resource[];
-  onRemove: (id: string) => void;
-  disabled: boolean;
-}) {
-  if (!attachments.length) return null;
-  return (
-    <div className="chat-attachments">
-      {attachments.map((attachment) => (
-        <div className="chat-attachment" key={attachment.id}>
-          <ResourceThumbnail
-            name={attachment.name}
-            mime={attachment.mime}
-            src={`/api/documents/${attachment.id}/content`}
-            className="w-5 shrink-0 rounded-xs"
-          />
-          <span>
-            {attachment.name}
-            {attachment.status !== "ready" && (
-              <IndexStatusBadge
-                status={attachment.status}
-                error={attachment.error}
-              />
-            )}
-          </span>
-          <button
-            type="button"
-            aria-label={`Remove attachment ${attachment.name}`}
-            disabled={disabled}
-            onClick={() => onRemove(attachment.id)}
-          >
-            <X size={13} />
-          </button>
-        </div>
-      ))}
-    </div>
   );
 }

@@ -580,6 +580,44 @@ test("long histories use bounded recent-first pages and indexed cursors", async 
   assert.equal((await state(chat)).nextCursor, null);
 });
 
+test("inline references preserve the request and constrain evidence to attached documents", async () => {
+  hold = false;
+  const form = new FormData();
+  form.append(
+    "file",
+    new Blob(["# Process\nThe process follows a different review policy."]),
+    "alternative.md",
+  );
+  const otherDocument = (await req("/documents", "POST", form)).data.id;
+  await runJobs(runtime);
+  const chat = await newChat();
+  const content = `How is the process reviewed in [notes.md](/library/documents/${documentId})?`;
+  assert.equal((await enqueue(chat, content)).status, 202);
+  const saved = await waitFor(
+    () => state(chat),
+    (snapshot) => snapshot.messages.length === 2,
+  );
+  assert.equal(saved.messages[0].content, content);
+  assert.deepEqual(saved.messages[0].attachments, [
+    { id: documentId, name: "notes.md" },
+  ]);
+  const question = calls
+    .at(-1)!
+    .body.input.findLast((item: any) => item.role === "user");
+  const prompt = JSON.parse(question.content[0].text);
+  assert.equal(prompt.question, content);
+  assert.deepEqual(prompt.attachedDocuments, [
+    { id: documentId, name: "notes.md" },
+  ]);
+  assert.ok(saved.messages[1].sources.length > 0);
+  assert.ok(
+    saved.messages[1].sources.every(
+      (source: any) =>
+        source.documentId === documentId && source.documentId !== otherDocument,
+    ),
+  );
+});
+
 test("revoked membership hides live snapshots and prevents the queued successor from running", async () => {
   hold = true;
   const chat = await newChat();

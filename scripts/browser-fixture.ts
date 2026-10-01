@@ -11,7 +11,13 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { strToU8, zipSync } from "fflate";
 import { buildIndex } from "../server/indexing";
 import { enqueueThumbnail } from "../server/thumbnails";
-import { searchToolResponse, choiceResponse } from "../tests/model-tools";
+import {
+  searchToolResponse,
+  choiceResponse,
+  responseEvent,
+  responseUsage,
+  textResponse,
+} from "../tests/model-tools";
 const port = Number(process.env.FIXTURE_PORT ?? 4312);
 const origin = `http://localhost:${port}`;
 const fetcher: typeof fetch = async (url, init) => {
@@ -44,24 +50,44 @@ const fetcher: typeof fetch = async (url, init) => {
             }
           };
           init?.signal?.addEventListener("abort", abort, { once: true });
+          const emit = (event: Record<string, unknown>) =>
+            controller.enqueue(encoder.encode(responseEvent(event)));
+          emit({
+            type: "response.created",
+            response: { id: "response", created_at: 1, model: body.model },
+          });
+          emit({
+            type: "response.output_item.added",
+            output_index: 0,
+            item: { id: "message", type: "message" },
+          });
           const write = () => {
             if (closed) return;
-            const done = index >= words.length;
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: body.model, choices: [{ index: 0, delta: done ? {} : { content: words[index++] }, finish_reason: done ? "stop" : null }] })}\n\n`,
-              ),
-            );
-            if (done) {
-              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            if (index >= words.length) {
+              emit({
+                type: "response.output_item.done",
+                output_index: 0,
+                item: { id: "message", type: "message" },
+              });
+              emit({
+                type: "response.completed",
+                response: { usage: responseUsage },
+              });
               closed = true;
               controller.close();
               init?.signal?.removeEventListener("abort", abort);
-            } else
+            } else {
+              emit({
+                type: "response.output_text.delta",
+                item_id: "message",
+                output_index: 0,
+                delta: words[index++],
+              });
               timer = setTimeout(
                 write,
                 Number(process.env.FIXTURE_CHAT_DELAY_MS ?? 180),
               );
+            }
           };
           write();
         },
@@ -73,24 +99,13 @@ const fetcher: typeof fetch = async (url, init) => {
     );
   }
   if (String(url).includes("openai"))
-    return Response.json({
-      id: "fixture",
-      object: "chat.completion",
-      created: 1,
-      model: "gpt-4.1-mini",
-      choices: [
-        {
-          index: 0,
-          message: {
-            role: "assistant",
-            content:
-              "The library organizes knowledge into **categories, documents, sections, and pages** [1]. Access is restricted by default and every answer links back to its source [1].",
-          },
-          finish_reason: "stop",
-        },
-      ],
-      usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
-    });
+    return (
+      searchToolResponse(body) ??
+      textResponse(
+        body,
+        "The library organizes knowledge into **categories, documents, sections, and pages** [1]. Access is restricted by default and every answer links back to its source [1].",
+      )
+    );
   throw new Error("Unexpected provider request");
 };
 const database = await testDatabase();
@@ -144,7 +159,11 @@ await runtime.store.run(
     }),
   ),
 );
-await runtime.store.run("INSERT INTO members(org_id,user_id,role) VALUES(?,?,'admin')", org, user);
+await runtime.store.run(
+  "INSERT INTO members(org_id,user_id,role) VALUES(?,?,'admin')",
+  org,
+  user,
+);
 await runtime.store.run(
   "INSERT INTO members(org_id,user_id,role) VALUES(?,?,'member')",
   org,

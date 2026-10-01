@@ -81,10 +81,11 @@ const { FileSystem } = await import("../src/components/extend/file-system");
 const { Sharing } = await import("../src/components/sharing");
 const { ToastProvider } = await import("../src/components/coss/toast");
 const { ParsedBlocks } = await import("../src/components/parsed-blocks");
+const { FinderDropZone } = await import("../src/components/finder-drop-zone");
 const { IndexStatusBadge } =
   await import("../src/components/index-status-badge");
-const { ChatAttachments } =
-  await import("../src/components/chat-composer-tools");
+const { ChatPromptEditor } =
+  await import("../src/components/chat-prompt-editor");
 const { useFinderView, useDocumentSidebarPreference } =
   await import("../src/lib/preferences");
 import type { IndexNode, Me, Resource } from "../src/lib/api";
@@ -1056,7 +1057,7 @@ test("library and chat indexing badges share status labels, icons, and color cla
             ]}
           />
           <IndexStatusBadge status={status} />
-          <ChatAttachments
+          <ChatPromptEditor
             attachments={[
               {
                 id: "doc",
@@ -1066,7 +1067,10 @@ test("library and chat indexing badges share status labels, icons, and color cla
               } as Resource,
             ]}
             disabled={false}
-            onRemove={() => {}}
+            onAttachmentsChange={() => {}}
+            value=""
+            onChange={() => {}}
+            placeholder="Ask a question"
           />
         </>,
       ),
@@ -2144,9 +2148,9 @@ test("coss toasts stack with filled status icons and support downward swipe dism
 });
 
 test("attachment picker searches document contents on Enter and keeps attachment badges and preview slots", async () => {
-  const { ChatComposerTools, ChatAttachments } =
+  const { ChatComposerTools } =
     await import("../src/components/chat-composer-tools");
-  const { useState } = await import("react");
+  const { useState, useRef } = await import("react");
   const resources = ["Alpha", "Beta"].map((name) => ({
     id: name.toLowerCase(),
     name: `${name}.bin`,
@@ -2169,14 +2173,20 @@ test("attachment picker searches document contents on Enter and keeps attachment
     const [attachments, setAttachments] = useState<
       import("../src/lib/api").Resource[]
     >([]);
+    const anchor = useRef<HTMLFormElement>(null);
+    const [value, setValue] = useState("");
     return (
-      <>
-        <ChatAttachments
+      <form ref={anchor}>
+        <ChatPromptEditor
           attachments={attachments}
           disabled={false}
-          onRemove={() => {}}
+          onAttachmentsChange={setAttachments}
+          value={value}
+          onChange={setValue}
+          placeholder="Ask a question"
         />
         <ChatComposerTools
+          composerAnchor={anchor}
           me={{ chatModels: [] } as unknown as Me}
           attachments={attachments}
           setAttachments={setAttachments}
@@ -2189,7 +2199,7 @@ test("attachment picker searches document contents on Enter and keeps attachment
           onMentionClose={() => {}}
           onMentionAttach={() => {}}
         />
-      </>
+      </form>
     );
   }
   await act(async () => root.render(<Picker />));
@@ -2221,11 +2231,11 @@ test("attachment picker searches document contents on Enter and keeps attachment
   assert.ok(option.querySelector("[data-resource-thumbnail]"));
   await click(option);
   assert.ok(
-    document.querySelector(".chat-attachment [data-resource-thumbnail]"),
+    document.querySelector(".prompt-document-pill [data-resource-thumbnail]"),
   );
   assert.ok(
     document
-      .querySelector(".chat-attachment")
+      .querySelector(".prompt-document-pill")
       ?.textContent?.includes("Beta.bin"),
   );
 });
@@ -2648,4 +2658,84 @@ test("Sharing cannot save when access settings for any selected file fail to loa
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("folder drops wait for count confirmation and cancellation uploads nothing", async () => {
+  const uploads: File[][] = [];
+  await act(async () =>
+    root.render(
+      <FinderDropZone onFiles={(files) => uploads.push(files)}>
+        <div>Library</div>
+      </FinderDropZone>,
+    ),
+  );
+  const entry = (name: string) => ({
+    name,
+    isFile: true,
+    isDirectory: false,
+    file: (resolve: (file: File) => void) => resolve(new File([name], name)),
+  });
+  const nested = {
+    name: "Nested",
+    isFile: false,
+    isDirectory: true,
+    createReader: () => {
+      let read = false;
+      return {
+        readEntries: (resolve: (entries: unknown[]) => void) => {
+          resolve(read ? [] : [entry("Second.txt")]);
+          read = true;
+        },
+      };
+    },
+  };
+  const directory = {
+    name: "Collection",
+    isFile: false,
+    isDirectory: true,
+    createReader: () => {
+      let read = false;
+      return {
+        readEntries: (resolve: (entries: unknown[]) => void) => {
+          resolve(read ? [] : [entry("First.txt"), nested]);
+          read = true;
+        },
+      };
+    },
+  };
+  async function drop() {
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", {
+      value: {
+        items: [
+          {
+            kind: "file",
+            webkitGetAsEntry: () => directory,
+            getAsFile: () => null,
+          },
+        ],
+        files: [],
+        types: ["Files"],
+      },
+    });
+    await act(async () =>
+      document.querySelector(".finder-drop-zone")!.dispatchEvent(event),
+    );
+  }
+  await drop();
+  assert.ok(
+    document
+      .querySelector('[role="alertdialog"]')
+      ?.textContent?.includes("Upload 2 files?"),
+  );
+  assert.equal(uploads.length, 0);
+  await click(button("Cancel"));
+  assert.equal(uploads.length, 0);
+  await drop();
+  await click(button("Upload 2 files"));
+  assert.equal(uploads.length, 1);
+  assert.deepEqual(
+    uploads[0].map((file) => file.webkitRelativePath),
+    ["Collection/First.txt", "Collection/Nested/Second.txt"],
+  );
 });

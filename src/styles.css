@@ -2405,6 +2405,10 @@ label textarea {
   font-size: var(--type-ui);
   background: transparent;
 }
+.chat-compose form:has(.chat-prompt-content:focus) {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent);
+}
 .chat-compose > p {
   margin-top: 10px;
   display: flex;
@@ -3911,6 +3915,67 @@ label textarea {
 .chat-attachment svg {
   flex-shrink: 0;
 }
+.chat-prompt-content .prompt-document-pill {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  max-width: min(240px, 100%);
+  gap: 5px;
+  padding: 2px 5px;
+  border: var(--hairline) solid var(--border);
+  border-radius: 5px;
+  background: var(--background);
+  font-size: var(--type-caption);
+  line-height: 18px;
+  white-space: nowrap;
+}
+.prompt-document-pill[data-selected] {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.prompt-document-thumbnail {
+  display: block;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 2px;
+}
+.prompt-document-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mention-picker .attachment-picker-body {
+  padding: 6px;
+}
+.prompt-document-pill > button {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+.prompt-document-pill > button:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.chat-message-attachment {
+  min-width: 0;
+  max-width: 240px;
+  border-radius: 6px;
+}
+.chat-message-attachment .chat-message-thumbnail {
+  width: 20px;
+  height: 20px;
+  border-radius: 2px;
+  background: transparent;
+}
 .composer-error {
   color: var(--destructive-foreground);
   font-size: var(--type-caption);
@@ -4864,17 +4929,11 @@ label textarea {
 }
 .parsed-block .parsed-block-type {
   --badge-border-tone: var(--block-badge-tone);
-  border: 1px solid
-    color-mix(in oklch, var(--block-badge-tone) 55%, transparent);
+  border: var(--hairline) solid --alpha(var(--badge-border-tone) / 5%);
   background: color-mix(in oklch, var(--block-badge-tone) 15%, transparent);
   color: var(--block-badge-foreground);
-  font-weight: 600;
+  font-weight: inherit;
   text-transform: capitalize;
-}
-.parsed-block[data-selected] .parsed-block-type,
-.parsed-block-trigger[aria-pressed="true"] .parsed-block-type {
-  border-color: var(--block-badge-tone);
-  background: color-mix(in oklch, var(--block-badge-tone) 24%, transparent);
 }
 .parsed-block .page-pill {
   font-size: 11px;
@@ -5225,7 +5284,9 @@ button.retrieval-node:hover,
   }
 }
 
-.parsed-block:hover {
+.parsed-block:hover,
+.parsed-block[data-selected],
+.parsed-block:has(.parsed-block-trigger[aria-pressed="true"]) {
   background: var(--muted);
 }
 .section-output-panel {

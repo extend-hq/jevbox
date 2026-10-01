@@ -1,4 +1,5 @@
 import { createChatRuntime } from "./chat";
+import { createDownloadRouter } from "./downloads";
 import { createLinkSharingRouter } from "./link-sharing";
 import { createExternalAccess } from "./external-access";
 import { createMcpRouter } from "./mcp";
@@ -1027,6 +1028,7 @@ export async function createApp(options: {
       return res.status(304).end();
     res.send(thumbnail.body);
   });
+  app.use("/api/resources", createDownloadRouter(store, actor));
   app.get("/api/documents/:id/content", async (req, res) => {
     const r = await requireResource(store, actor(req), id.parse(req.params.id));
     const body = await store.one<{
@@ -1444,7 +1446,8 @@ export async function createApp(options: {
     next();
   });
   app.use(
-    (error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    (error: unknown, _req: Request, res: Response, next: NextFunction) => {
+      if (res.headersSent) return next(error);
       if (error instanceof z.ZodError)
         return res
           .status(400)

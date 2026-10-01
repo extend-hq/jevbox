@@ -116,7 +116,7 @@ services:
         fromService:
           name: jevbox-web
           type: web
-          envVarKey: APP_ORIGIN
+          envVarKey: RENDER_EXTERNAL_URL
       - key: ENCRYPTION_KEY
         fromService:
           name: jevbox-web

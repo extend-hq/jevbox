@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { JSDOM } from "jsdom";
 import { Editor } from "@tiptap/react";
+import { promptDocumentExtension } from "../src/lib/chat-document-extension";
 import {
   promptExtensions,
   pastedSpreadsheet,
@@ -106,4 +107,67 @@ test("headings, lists, links and marks survive the prompt Markdown round trip", 
   assert.equal(isMarkdownTable("ordinary | words"), false);
   assert.equal(promptLink("javascript:alert(1)"), null);
   assert.equal(promptLink("example.org"), "https://example.org/");
+});
+test("inline document references preserve identity, labels, and surrounding text through Markdown", () => {
+  const id = "b0af9e03-b9b5-4bfc-97e1-ed7a0d18449b";
+  const name = "Budget [draft]* & <review> ~~note~~.pdf";
+  withEditor("Compare ", (editor) => {
+    editor.commands.setContent({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "Compare " }] },
+      ],
+    });
+    editor.commands.insertContentAt(9, [
+      { type: "promptDocument", attrs: { id, name, mime: "application/pdf" } },
+      { type: "text", text: " with the prior year." },
+    ]);
+    const markdown = editor.getMarkdown();
+    assert.ok(markdown.startsWith("Compare "), markdown);
+    assert.ok(markdown.endsWith(" with the prior year."));
+    assert.ok(markdown.includes(`/library/documents/${id}`));
+    editor.commands.setContent(markdown, { contentType: "markdown" });
+    const reference = editor
+      .getJSON()
+      .content?.[0].content?.find((node) => node.type === "promptDocument");
+    assert.ok(reference && "attrs" in reference);
+    assert.equal(reference.attrs?.id, id);
+    assert.equal(reference.attrs?.name, name);
+    assert.equal(editor.getMarkdown(), markdown);
+  });
+});
+test("document links become attachment nodes only for known resources", () => {
+  const id = "b0af9e03-b9b5-4bfc-97e1-ed7a0d18449b";
+  const editor = new Editor({
+    extensions: promptExtensions(promptDocumentExtension(() => false)),
+    content: `Read [document](/library/documents/${id}) and [website](https://example.org).`,
+    contentType: "markdown",
+  });
+  try {
+    const content = editor.getJSON().content?.[0].content ?? [];
+    assert.ok(content.every((node) => node.type !== "promptDocument"));
+    assert.ok(
+      content.some((node) => node.marks?.some((mark) => mark.type === "link")),
+    );
+  } finally {
+    editor.destroy();
+  }
+});
+test("deleting an inline document is atomic and undo restores its identity", () => {
+  const id = "b0af9e03-b9b5-4bfc-97e1-ed7a0d18449b";
+  withEditor(
+    `Read [document](/library/documents/${id}) now.`,
+    (editor) => {
+      let position = 0;
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name === "promptDocument") position = pos;
+      });
+      assert.ok(position > 0);
+      editor.commands.deleteRange({ from: position, to: position + 1 });
+      assert.equal(editor.getMarkdown(), "Read  now.");
+      assert.ok(editor.commands.undo());
+      assert.ok(editor.getMarkdown().includes(`/library/documents/${id}`));
+    },
+    true,
+  );
 });

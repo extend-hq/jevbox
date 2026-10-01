@@ -14,6 +14,7 @@ import {
 import {
   ArrowRight,
   ExternalLink,
+  Download,
   Info,
   Share2,
   FolderBolt,
@@ -200,6 +201,7 @@ export type FileSystemProps = {
   canShare?: (item: FileSystemItem) => boolean;
   onDelete?: (item: FileSystemItem) => void;
   onDeleteItems?: (items: FileSystemItem[]) => void;
+  onDownloadItems?: (items: FileSystemItem[]) => void;
   onOrganizeItems?: (items: FileSystemFileItem[]) => void;
   canOrganize?: (item: FileSystemItem) => boolean;
   onMove?: (item: FileSystemItem, destinationId: string | null) => void;
@@ -222,7 +224,9 @@ export type FileSystemProps = {
   loadDetailThumbnail?: (
     file: FileSystemFileItem,
     signal: AbortSignal,
-  ) => Promise<import("../../lib/spatial-thumbnail-renderer").SpatialThumbnail | null>;
+  ) => Promise<
+    import("../../lib/spatial-thumbnail-renderer").SpatialThumbnail | null
+  >;
 };
 type FolderEntry = FileSystemFolderItem & {
   name: string;
@@ -1394,6 +1398,7 @@ export function FileSystem({
   canShare,
   onDelete,
   onDeleteItems,
+  onDownloadItems,
   onOrganizeItems,
   canOrganize,
   onMove,
@@ -2346,6 +2351,23 @@ export function FileSystem({
           >
             <Info /> Information
           </ContextMenuItem>
+          {onDownloadItems && (
+            <ContextMenuItem
+              disabled={!contextEntry || !selectedPaths.size}
+              onClick={() => {
+                const entries = [...selectedPaths].flatMap((path) => {
+                  const item = index.files.get(path) ?? index.folders.get(path);
+                  return item ? [item] : [];
+                });
+                if (entries.length) onDownloadItems(entries);
+              }}
+            >
+              <Download />
+              {selectedPaths.size > 1
+                ? `Download ${selectedPaths.size} items`
+                : "Download"}
+            </ContextMenuItem>
+          )}
           {(onShare || onShareItems) && (
             <ContextMenuItem
               disabled={
@@ -4305,7 +4327,14 @@ function FileSystemPierreTree({
       mutations.disconnect();
       observer?.disconnect();
     };
-  }, [currentPath, indexFiles, loadPreviewImageUrl, model, pageUrlCache, treeId]);
+  }, [
+    currentPath,
+    indexFiles,
+    loadPreviewImageUrl,
+    model,
+    pageUrlCache,
+    treeId,
+  ]);
   React.useEffect(() => {
     model.setIcons(icons);
   }, [icons, model]);

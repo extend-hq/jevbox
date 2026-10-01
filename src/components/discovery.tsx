@@ -61,7 +61,6 @@ import {
   ArrowRight,
   ArrowUp,
   ArrowUpRight,
-  FileText,
   IndexTreeIcon,
   BranchOut,
   LockKeyhole,
@@ -77,7 +76,6 @@ import { Field, FieldLabel, FieldError } from "@/components/coss/field";
 import { validateLength, validateRequiredText } from "@/lib/form-validation";
 import {
   ChatComposerTools,
-  ChatAttachments,
   type ChatComposerToolsHandle,
 } from "./chat-composer-tools";
 import { CursorTooltip } from "./cursor-tooltip";
@@ -446,6 +444,9 @@ export function ChatView({
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const promptEditor = useRef<ChatPromptEditorHandle>(null);
   const composerTools = useRef<ChatComposerToolsHandle>(null);
+  const composerAnchor = useRef<HTMLFormElement>(null);
+  const draft = useRef({ input, attachments });
+  draft.current = { input, attachments };
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const sending = useRef(false);
@@ -719,8 +720,16 @@ export function ChatView({
         body: JSON.stringify({ id: requestId, ...payload }),
       });
       submission.current = null;
-      if (mounted.current && activeChat.current === current)
-        setInput((value) => (value.trim() === content ? "" : value));
+      if (
+        mounted.current &&
+        activeChat.current === current &&
+        draft.current.input.trim() === content &&
+        draft.current.attachments.map((document) => document.id).join(",") ===
+          payload.documentIds.join(",")
+      ) {
+        setInput("");
+        setAttachments([]);
+      }
       await refreshChat(current);
       void refresh().catch(() => {});
     } catch (error) {
@@ -1109,10 +1118,21 @@ export function ChatView({
                                       {message.attachments.map((attachment) => (
                                         <Attachment
                                           key={attachment.id}
-                                          size="sm"
+                                          size="xs"
+                                          className="chat-message-attachment"
                                         >
-                                          <AttachmentMedia>
-                                            <FileText size={16} />
+                                          <AttachmentMedia
+                                            variant="image"
+                                            className="chat-message-thumbnail"
+                                          >
+                                            <ResourceThumbnail
+                                              name={attachment.name}
+                                              mime=""
+                                              src={`/api/documents/${attachment.id}/content`}
+                                              inline
+                                              square
+                                              className="block size-full"
+                                            />
                                           </AttachmentMedia>
                                           <AttachmentContent>
                                             <AttachmentTitle>
@@ -1311,22 +1331,16 @@ export function ChatView({
               onRemove={removeTurn}
             />
             <Form
+              ref={composerAnchor}
               onSubmit={(e) => {
                 e.preventDefault();
                 void submit();
               }}
             >
-              <ChatAttachments
-                attachments={attachments}
-                onRemove={(id) =>
-                  setAttachments((current) =>
-                    current.filter((a) => a.id !== id),
-                  )
-                }
-                disabled={uploading}
-              />
               <ChatPromptEditor
                 ref={promptEditor}
+                attachments={attachments}
+                onAttachmentsChange={setAttachments}
                 onMentionChange={setMentionQuery}
                 onMentionKeyDown={(event) =>
                   composerTools.current?.handleMentionKey(event) ?? false
@@ -1345,10 +1359,11 @@ export function ChatView({
               <div className="composer-tools">
                 <ChatComposerTools
                   ref={composerTools}
+                  composerAnchor={composerAnchor}
                   mentionQuery={mentionQuery}
                   onMentionClose={() => promptEditor.current?.dismissMention()}
-                  onMentionAttach={() =>
-                    promptEditor.current?.completeMention()
+                  onMentionAttach={(document) =>
+                    promptEditor.current?.attachDocument(document)
                   }
                   me={me}
                   attachments={attachments}

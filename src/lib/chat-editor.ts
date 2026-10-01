@@ -3,10 +3,12 @@ import { TableKit } from "@tiptap/extension-table";
 import { Markdown } from "@tiptap/markdown";
 import type { JSONContent } from "@tiptap/react";
 import Papa from "papaparse";
+import { PromptDocument } from "./chat-document-extension";
 
 export const promptLimit = 4000;
-export function promptExtensions() {
+export function promptExtensions(documentExtension = PromptDocument) {
   return [
+    documentExtension,
     StarterKit.configure({
       heading: { levels: [1, 2, 3] },
       link: {

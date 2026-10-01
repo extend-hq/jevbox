@@ -1,6 +1,7 @@
 import { toastManager } from "./components/coss/toast";
 import { notifyUploads } from "./lib/notifications";
 import { FinderDropZone } from "./components/finder-drop-zone";
+import { downloadLibraryItems } from "./lib/library-download";
 import {
   AlertDialog,
   AlertDialogPopup,
@@ -24,7 +25,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   ArrowUpRight,
-  TriangleAlert,
   ChevronDown,
   ChevronRight,
   FileText,
@@ -103,10 +103,7 @@ import {
   FileSystem as Finder,
   type FileSystemItem,
 } from "@/components/extend/file-system";
-import {
-  extension,
-  textExtensions,
-} from "../shared/file-types";
+import { extension, textExtensions } from "../shared/file-types";
 function FolderForm({
   parentId,
   onClose,
@@ -260,6 +257,11 @@ export default function App() {
     }
   }, []);
   useEffect(() => {
+    if (!action.error) return;
+    toastManager.add({ title: action.error, type: "error" });
+    action.setError("");
+  }, [action.error]);
+  useEffect(() => {
     if (loading || navigation.route.shareToken) return;
     if (!me && !isAuthPage(pathname))
       navigateTo(loginRedirect(new URL(location.href)), { replace: true });
@@ -337,14 +339,20 @@ export default function App() {
           updatedAt: r.created,
           url: `/api/documents/${r.id}/content`,
           previewPageCount:
-            r.thumbnail?.pageCount ?? previews[r.id]?.pageCount ??
+            r.thumbnail?.pageCount ??
+            previews[r.id]?.pageCount ??
             (textExtensions.includes(extension(r.name)) ||
             ["pdf", "docx", "pptx"].includes(extension(r.name))
               ? Math.max(r.pages || 1, 1)
               : undefined),
-          previewImageUrls: r.thumbnail ? [r.thumbnail.url, ...(previews[r.id]?.urls?.slice(1) ?? [])] : previews[r.id]?.urls,
+          previewImageUrls: r.thumbnail
+            ? [r.thumbnail.url, ...(previews[r.id]?.urls?.slice(1) ?? [])]
+            : previews[r.id]?.urls,
           previewAspectRatio:
-            (r.thumbnail ? r.thumbnail.width / r.thumbnail.height : undefined) ?? previews[r.id]?.aspectRatio ??
+            (r.thumbnail
+              ? r.thumbnail.width / r.thumbnail.height
+              : undefined) ??
+            previews[r.id]?.aspectRatio ??
             (extension(r.name) === "pptx"
               ? 16 / 9
               : extension(r.name) === "xlsx"
@@ -356,8 +364,10 @@ export default function App() {
   const loadPreviewImageUrl = useCallback(
     async (file: FileSystemItem, pageIndex: number) => {
       if (file.kind !== "file" || !file.url) return null;
-      if (pageIndex === 0) return file.previewImageUrls?.[0] ?? file.previewImageUrl ?? null;
-      const { renderDocumentThumbnail } = await import("./lib/document-thumbnail-utils");
+      if (pageIndex === 0)
+        return file.previewImageUrls?.[0] ?? file.previewImageUrl ?? null;
+      const { renderDocumentThumbnail } =
+        await import("./lib/document-thumbnail-utils");
       const thumbnail = await renderDocumentThumbnail(
         file.url,
         file.path,
@@ -389,11 +399,15 @@ export default function App() {
       ? { sections: parsed.nodes, blocks: parsed.blocks ?? [] }
       : null;
   }, []);
-  const loadDetailThumbnail = useCallback(async (file: FileSystemItem, signal: AbortSignal) => {
-    if (file.kind !== "file" || !file.url) return null;
-    const { renderSpatialThumbnail } = await import("./lib/spatial-thumbnail-renderer");
-    return renderSpatialThumbnail(file.url, file.path, signal);
-  }, []);
+  const loadDetailThumbnail = useCallback(
+    async (file: FileSystemItem, signal: AbortSignal) => {
+      if (file.kind !== "file" || !file.url) return null;
+      const { renderSpatialThumbnail } =
+        await import("./lib/spatial-thumbnail-renderer");
+      return renderSpatialThumbnail(file.url, file.path, signal);
+    },
+    [],
+  );
   const openDocument = (id: string, node?: string) =>
     navigateTo(
       paths.document(
@@ -419,12 +433,37 @@ export default function App() {
   async function upload(files: FileList | File[]) {
     const errors: string[] = [];
     let completed = 0;
+    const destinations = new Map<string, string | null>([
+      ["", currentFolder?.id ?? null],
+    ]);
     for (const file of Array.from(files)) {
       setUploading(file.name);
       try {
+        const segments = file.webkitRelativePath?.split("/").slice(0, -1) ?? [];
+        let path = "";
+        let parentId = currentFolder?.id ?? null;
+        for (const name of segments) {
+          path += `${name}/`;
+          if (!destinations.has(path)) {
+            const existing = folders.find(
+              (folder) =>
+                folder.parent_id === parentId &&
+                folder.name === name &&
+                folder.canWrite,
+            );
+            const folder =
+              existing ??
+              (await api<{ id: string }>("/folders", {
+                method: "POST",
+                body: JSON.stringify({ name, parentId }),
+              }));
+            destinations.set(path, folder.id);
+          }
+          parentId = destinations.get(path) ?? null;
+        }
         const body = new FormData();
         body.append("file", file);
-        if (currentFolder) body.append("parentId", currentFolder.id);
+        if (parentId) body.append("parentId", parentId);
         await api("/documents", { method: "POST", body });
         completed++;
       } catch (error) {
@@ -599,21 +638,6 @@ export default function App() {
                 <TooltipPopup side="right">Uploading {uploading}</TooltipPopup>
               </Tooltip>
             )}
-            {action.error && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    className="rail-alert"
-                    aria-label={`${action.error} · Dismiss`}
-                    onClick={() => action.setError("")}
-                  >
-                    <TriangleAlert size={24} className="micro-alert-icon" />
-                    <X className="rail-alert-action" size={10} />
-                  </button>
-                </TooltipTrigger>
-                <TooltipPopup side="right">{action.error}</TooltipPopup>
-              </Tooltip>
-            )}
             {[
               {
                 provider: "extend",
@@ -746,9 +770,7 @@ export default function App() {
         </div>
         <nav
           aria-label={
-            page === "settings"
-              ? "Settings navigation"
-              : "Library navigation"
+            page === "settings" ? "Settings navigation" : "Library navigation"
           }
         >
           {(page === "settings"
@@ -959,6 +981,38 @@ export default function App() {
                     title=""
                     view={finderView}
                     onViewChange={setFinderView}
+                    onDownloadItems={(selectedItems) =>
+                      void action.run(async () => {
+                        const items = selectedItems.flatMap((item) => {
+                          const resource = resources.find(
+                            (resource) => pathFor(resource) === item.path,
+                          );
+                          return resource ? [resource] : [];
+                        });
+                        if (!items.length) return;
+                        if (
+                          items.length === 1 &&
+                          items[0].kind === "document"
+                        ) {
+                          await downloadLibraryItems(items);
+                          return;
+                        }
+                        await toastManager
+                          .promise(downloadLibraryItems(items), {
+                            loading: { title: "Preparing ZIP…" },
+                            success: { title: "Download started" },
+                            error: (error) => ({
+                              title: "Couldn't prepare download",
+                              description:
+                                error instanceof Error
+                                  ? error.message
+                                  : "Try again.",
+                              timeout: 10000,
+                            }),
+                          })
+                          .catch(() => {});
+                      })
+                    }
                     onShareItems={(selectedItems) => {
                       const matches = selectedItems.flatMap((item) => {
                         const resource = resources.find(

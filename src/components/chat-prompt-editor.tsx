@@ -6,9 +6,17 @@ import {
   useImperativeHandle,
   type Ref,
 } from "react";
-import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
+import {
+  EditorContent,
+  NodeViewWrapper,
+  ReactNodeViewRenderer,
+  useEditor,
+  useEditorState,
+  type NodeViewProps,
+} from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import Placeholder from "@tiptap/extension-placeholder";
+import { TextSelection } from "@tiptap/pm/state";
 import {
   promptExtensions,
   pastedSpreadsheet,
@@ -26,6 +34,71 @@ import {
   SelectItem,
 } from "./coss/select";
 import { Bold, Italic, Link2, X, Check } from "./icons";
+import { promptDocumentExtension } from "@/lib/chat-document-extension";
+import type { Resource } from "@/lib/api";
+import { ResourceThumbnail } from "./resource-thumbnail";
+import { IndexStatusBadge } from "./index-status-badge";
+
+function PromptDocumentPill({
+  node,
+  editor,
+  deleteNode,
+  selected,
+}: NodeViewProps) {
+  return (
+    <NodeViewWrapper
+      as="span"
+      contentEditable={false}
+      className="prompt-document-pill"
+      data-document-id={node.attrs.id}
+      data-selected={selected || undefined}
+    >
+      <ResourceThumbnail
+        name={node.attrs.name}
+        mime={node.attrs.mime}
+        src={`/api/documents/${node.attrs.id}/content`}
+        inline
+        square
+        className="prompt-document-thumbnail"
+      />
+      <span className="prompt-document-name" title={node.attrs.name}>
+        {node.attrs.name}
+      </span>
+      {node.attrs.status !== "ready" && (
+        <IndexStatusBadge status={node.attrs.status} error={node.attrs.error} />
+      )}
+      <button
+        type="button"
+        aria-label={`Remove attachment ${node.attrs.name}`}
+        disabled={!editor.isEditable}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => {
+          deleteNode();
+          editor.commands.focus();
+        }}
+      >
+        <X size={12} />
+      </button>
+    </NodeViewWrapper>
+  );
+}
+
+function promptDocumentView(isAllowed: (id: string) => boolean) {
+  return promptDocumentExtension(isAllowed).extend({
+    addNodeView() {
+      return ReactNodeViewRenderer(PromptDocumentPill);
+    },
+  });
+}
+function documentAttrs(document: Resource) {
+  return {
+    id: document.id,
+    name: document.name,
+    mime: document.mime,
+    status: document.status,
+    error: document.error ?? null,
+  };
+}
 
 const blockStyles = [
   { value: "paragraph", label: "Text" },
@@ -36,13 +109,15 @@ const blockStyles = [
   { value: "numbered", label: "Numbered list" },
 ];
 export type ChatPromptEditorHandle = {
-  completeMention: () => void;
+  attachDocument: (document: Resource) => void;
   dismissMention: () => void;
 };
 export function ChatPromptEditor({
   ref,
   onMentionChange,
   onMentionKeyDown,
+  attachments,
+  onAttachmentsChange,
   value,
   onChange,
   disabled,
@@ -51,6 +126,8 @@ export function ChatPromptEditor({
   ref?: Ref<ChatPromptEditorHandle>;
   onMentionChange?: (query: string | null) => void;
   onMentionKeyDown?: (event: KeyboardEvent) => boolean;
+  attachments: Resource[];
+  onAttachmentsChange: (attachments: Resource[]) => void;
   value: string;
   onChange: (value: string) => void;
   disabled: boolean;
@@ -63,6 +140,8 @@ export function ChatPromptEditor({
     placeholder,
     onMentionChange,
     onMentionKeyDown,
+    attachments,
+    onAttachmentsChange,
   });
   callbacks.current = {
     onChange,
@@ -70,7 +149,12 @@ export function ChatPromptEditor({
     placeholder,
     onMentionChange,
     onMentionKeyDown,
+    attachments,
+    onAttachmentsChange,
   };
+  const documentCache = useRef(new Map<string, Resource>());
+  for (const document of attachments)
+    documentCache.current.set(document.id, document);
   const lastEmitted = useRef(value);
   const toolbar = useRef<HTMLDivElement>(null);
   const linkInput = useRef<HTMLInputElement>(null);
@@ -85,14 +169,14 @@ export function ChatPromptEditor({
     to: number;
     query: string;
   } | null>(null);
-  const dismissedMention = useRef<string | null>(null);
+  const dismissedMention = useRef<number | null>(null);
   function updateMention(editor: import("@tiptap/react").Editor) {
     const { $from, empty } = editor.state.selection;
     const match =
       empty && $from.parent.isTextblock
         ? $from.parent
-            .textBetween(0, $from.parentOffset, " ")
-            .match(/(?:^|\s)@([^\s@]*)$/)
+            .textBetween(0, $from.parentOffset, " ", "\ufffc")
+            .match(/(?:^|\s)@([^@\n]*)$/)
         : null;
     const mention = match
       ? {
@@ -102,7 +186,7 @@ export function ChatPromptEditor({
         }
       : null;
     mentionRange.current = mention;
-    const key = mention ? `${mention.from}:${mention.query}` : null;
+    const key = mention?.from ?? null;
     if (dismissedMention.current !== key) dismissedMention.current = null;
     callbacks.current.onMentionChange?.(
       mention && dismissedMention.current !== key ? mention.query : null,
@@ -110,7 +194,9 @@ export function ChatPromptEditor({
   }
   const editor = useEditor({
     extensions: [
-      ...promptExtensions(),
+      ...promptExtensions(
+        promptDocumentView((id) => documentCache.current.has(id)),
+      ),
       Placeholder.configure({
         placeholder: () => callbacks.current.placeholder,
       }),
@@ -167,6 +253,20 @@ export function ChatPromptEditor({
       const markdown = editor.isEmpty ? "" : editor.getMarkdown();
       lastEmitted.current = markdown;
       callbacks.current.onChange(markdown);
+      const ids = new Set<string>();
+      editor.state.doc.descendants((node) => {
+        if (node.type.name === "promptDocument") ids.add(node.attrs.id);
+      });
+      if (
+        Array.from(ids).join(",") !==
+        callbacks.current.attachments.map((document) => document.id).join(",")
+      )
+        callbacks.current.onAttachmentsChange(
+          Array.from(ids).flatMap((id) => {
+            const document = documentCache.current.get(id);
+            return document ? [document] : [];
+          }),
+        );
       updateMention(editor);
     },
     onSelectionUpdate({ editor }) {
@@ -174,15 +274,22 @@ export function ChatPromptEditor({
     },
   });
   useImperativeHandle(ref, () => ({
-    completeMention() {
+    attachDocument(document) {
+      documentCache.current.set(document.id, document);
       const range = mentionRange.current;
-      if (range) editor.chain().focus().deleteRange(range).run();
+      const content = [
+        { type: "promptDocument", attrs: documentAttrs(document) },
+        { type: "text", text: " " },
+      ];
+      const chain = editor.chain().focus();
+      if (range) chain.insertContentAt(range, content).run();
+      else chain.insertContent(content).run();
       mentionRange.current = null;
       callbacks.current.onMentionChange?.(null);
     },
     dismissMention() {
       const range = mentionRange.current;
-      dismissedMention.current = range ? `${range.from}:${range.query}` : null;
+      dismissedMention.current = range?.from ?? null;
       callbacks.current.onMentionChange?.(null);
     },
   }));
@@ -213,6 +320,62 @@ export function ChatPromptEditor({
     });
     setLinkOpen(false);
   }, [editor, value]);
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled || editor.isDestroyed) return;
+      const desired = new Map(
+        attachments.map((document) => [document.id, document]),
+      );
+      const present = new Set<string>();
+      const transaction = editor.state.tr;
+      let membershipChanged = false;
+      editor.state.doc.descendants((node, position) => {
+        if (node.type.name !== "promptDocument") return;
+        const document = desired.get(node.attrs.id);
+        const mappedPosition = transaction.mapping.map(position);
+        if (!document) {
+          transaction.delete(mappedPosition, mappedPosition + node.nodeSize);
+          membershipChanged = true;
+        } else {
+          present.add(document.id);
+          const attrs = documentAttrs(document);
+          if (
+            Object.entries(attrs).some(
+              ([key, value]) => node.attrs[key] !== value,
+            )
+          )
+            transaction.setNodeMarkup(mappedPosition, undefined, attrs);
+        }
+      });
+      const missing = attachments.filter(
+        (document) => !present.has(document.id),
+      );
+      if (missing.length) {
+        const content = missing.flatMap((document) => [
+          editor.schema.nodes.promptDocument.create(documentAttrs(document)),
+          editor.schema.text(" "),
+        ]);
+        const from = transaction.selection.from;
+        transaction.replaceWith(from, transaction.selection.to, content);
+        transaction.setSelection(
+          TextSelection.near(
+            transaction.doc.resolve(
+              from + content.reduce((size, node) => size + node.nodeSize, 0),
+            ),
+          ),
+        );
+        membershipChanged = true;
+      }
+      if (transaction.docChanged) {
+        transaction.setMeta("addToHistory", membershipChanged);
+        editor.view.dispatch(transaction);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [editor, attachments]);
   useEffect(() => {
     if (linkOpen) linkInput.current?.focus();
   }, [linkOpen]);
