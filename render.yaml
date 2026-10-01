@@ -103,7 +103,7 @@ services:
       - key: BOOTSTRAP_TOKEN
         generateValue: true
       - key: ALLOW_SIGNUP
-        value: "false"
+        sync: false
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
