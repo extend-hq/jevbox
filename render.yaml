@@ -14,7 +14,15 @@ services:
     region: virginia
     plan: 0.5c-512mb
     numInstances: 1
-    autoDeployTrigger: "off"
+    branch: main
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths:
+        - infra/render/spicedb.Dockerfile
+        - infra/render/start-spicedb.sh
+        - .dockerignore
+        - render.yaml
+      ignoredPaths: []
     dockerfilePath: ./infra/render/spicedb.Dockerfile
     dockerContext: .
     maxShutdownDelaySeconds: 45
@@ -45,7 +53,26 @@ services:
     region: virginia
     plan: 1c-2g
     numInstances: 1
-    autoDeployTrigger: "off"
+    branch: main
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths:
+        - src/**
+        - server/**
+        - shared/**
+        - public/**
+        - licenses/**
+        - Dockerfile
+        - .dockerignore
+        - package.json
+        - pnpm-lock.yaml
+        - tsconfig.json
+        - vite.config.ts
+        - index.html
+        - thumbnail-renderer.html
+        - infra/render/start-app.sh
+        - render.yaml
+      ignoredPaths: []
     dockerfilePath: ./Dockerfile
     dockerContext: .
     dockerCommand: /bin/sh infra/render/start-app.sh web
@@ -96,7 +123,26 @@ services:
     region: virginia
     plan: 1c-2g
     numInstances: 1
-    autoDeployTrigger: "off"
+    branch: main
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths:
+        - src/**
+        - server/**
+        - shared/**
+        - public/**
+        - licenses/**
+        - Dockerfile
+        - .dockerignore
+        - package.json
+        - pnpm-lock.yaml
+        - tsconfig.json
+        - vite.config.ts
+        - index.html
+        - thumbnail-renderer.html
+        - infra/render/start-app.sh
+        - render.yaml
+      ignoredPaths: []
     dockerfilePath: ./Dockerfile
     dockerContext: .
     dockerCommand: /bin/sh infra/render/start-app.sh worker

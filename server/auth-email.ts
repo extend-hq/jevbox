@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { z } from "zod";
 
 export type AuthEmail = {
   id?: string;
@@ -19,6 +20,16 @@ export function createAuthEmailSender(localDevelopment = false): SendAuthEmail {
   if (!host || !from)
     throw new Error(
       "SMTP_HOST and AUTH_EMAIL_FROM are required for authentication email",
+    );
+  const senderAddress = from
+    .trim()
+    .match(/^(?:[^<>]*<([^<>]+)>|([^<>]+))$/)
+    ?.slice(1)
+    .find(Boolean)
+    ?.trim();
+  if (/[\r\n]/.test(from) || !z.email().safeParse(senderAddress).success)
+    throw new Error(
+      "AUTH_EMAIL_FROM must contain one complete email address, optionally with a display name",
     );
   const port = Number(process.env.SMTP_PORT ?? (production ? 587 : 1025));
   if (!Number.isInteger(port) || port < 1 || port > 65535)

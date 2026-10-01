@@ -1,6 +1,6 @@
 # Deployment
 
-All configuration is contained in this repository. Nothing deploys automatically. CI verifies builds and templates; it has no AWS credentials or deployment jobs.
+All configuration is contained in this repository. Render deploys changes from `main` after CI passes, using per-service build filters. AWS and Kubernetes deployments remain explicit. CI verifies builds and templates; it has no AWS credentials or deployment jobs.
 
 ## Portable container
 
@@ -181,7 +181,11 @@ Both services' `APP_ORIGIN` values directly reference the web service's `RENDER_
 
 Deploy SpiceDB first, then the web service and worker, checking their logs and the web health check. Services might restart while the authorization database initializes on the first deployment. Open the generated HTTPS URL, copy `BOOTSTRAP_TOKEN` from the web service's environment in the dashboard, create the initial account with **Deployment setup token**, verify the email link, and sign in. Signup is disabled after bootstrap; invite additional users through the application. Configure provider credentials and verify upload/index/search/chat and restricted access with a second account.
 
-Automatic deploys and preview environments are disabled. Deploy the web and worker from the same commit when updating; deploy SpiceDB first if its version changes. All processes have a 45-second shutdown window. Keep one web instance because API rate limits are currently local to that process. To use a custom domain, add it in Render and replace both services' `APP_ORIGIN` references in the Blueprint with the same `value` containing the exact HTTPS origin, then sync. Set `renderSubdomainPolicy: disabled` on the web service to restrict access to the custom domain. Configure `TRUST_PROXY_CIDRS` only with verified proxy source ranges; leaving it unset is safe but clients share IP rate limits behind the proxy.
+For an existing Blueprint, push the updated configuration to `main` and select **Manual Sync** once in Render to apply the auto-deploy settings. Subsequent matching changes on `main` deploy automatically after the repository's CI checks pass (`autoDeployTrigger: checksPass`). Blueprint Auto Sync separately controls whether future `render.yaml` changes are applied automatically. See [Render's auto-deploy settings](https://render.com/docs/deploys#automatic-deploys).
+
+The web and worker use the same app build filters because their image includes both the web app and the thumbnail renderer. Changes to application source, shared code, public assets, dependencies, build configuration, licenses, or their startup wrapper deploy both services. SpiceDB deploys for changes to its Dockerfile or startup wrapper. Changes to `render.yaml` or `.dockerignore` match all three services; docs-only and tests-only changes skip service builds. Services deploy independently, so coordinated manual upgrades should still deploy SpiceDB first when its version changes. Preview environments remain disabled.
+
+All processes have a 45-second shutdown window. Keep one web instance because API rate limits are currently local to that process. To use a custom domain, add it in Render and replace both services' `APP_ORIGIN` references in the Blueprint with the same `value` containing the exact HTTPS origin, then sync. Set `renderSubdomainPolicy: disabled` on the web service to restrict access to the custom domain. Configure `TRUST_PROXY_CIDRS` only with verified proxy source ranges; leaving it unset is safe but clients share IP rate limits behind the proxy.
 
 Validate configuration before syncing:
 
@@ -207,7 +211,7 @@ The Better Auth migration preserves account IDs, credentials, memberships, and d
 
 ### Organization and credential plugins
 
-Organizations, memberships, invitations, API keys, and MCP OAuth use Better Auth plugins. Invite emails use the same queued SMTP transport as verification and password reset, so no additional Render service or secret is required. For Resend, verify the sending domain, then set `SMTP_HOST=smtp.resend.com`, `SMTP_USER=resend`, `SMTP_PASSWORD` to the Resend API key, and `AUTH_EMAIL_FROM` to a sender on that domain. Keep port 587 and `SMTP_SECURE=false` to require STARTTLS in production.
+Organizations, memberships, invitations, API keys, and MCP OAuth use Better Auth plugins. Invite emails use the same queued SMTP transport as verification and password reset, so no additional Render service or secret is required. For Resend, verify the sending domain, then set `SMTP_HOST=smtp.resend.com`, `SMTP_USER=resend`, `SMTP_PASSWORD` to the Resend API key, and `AUTH_EMAIL_FROM` to a complete sender address, such as `Jevbox <no-reply@YOUR_VERIFIED_DOMAIN>`. A domain alone is not a sender address. Keep port 587 and `SMTP_SECURE=false` to require STARTTLS in production. After changing the email settings, update both services' values or sync the Blueprint references, then redeploy the web service and worker. Check the worker's runtime settings; restarting a worker with an old environment value preserves that value. SMTP authentication can succeed while message delivery fails; check the worker and the Resend Emails dashboard when a verification email is missing.
 
 Registration through an invitation creates an unverified account without membership. The user verifies that email, signs in, and accepts the pending invitation. Membership changes commit only after SpiceDB publishes the corresponding permission snapshot. Removing a member invalidates their organization sessions and document grants immediately.
 
