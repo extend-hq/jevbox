@@ -7,7 +7,8 @@ import {
   type ConnectedApp,
 } from "../../shared/api-access";
 import { Button } from "./coss/button";
-import { Copy, PlugFilled } from "./icons";
+import { Copy } from "./icons";
+import { McpIcon } from "./mcp-icon";
 import { Loading, useAction } from "./common";
 import { McpConnectionGuide } from "./mcp-connection-guide";
 
@@ -37,7 +38,7 @@ export function McpView({ me }: { me: Me }) {
         <h2>Server URL</h2>
         <div className="api-endpoint">
           <span>
-            <PlugFilled size={18} />
+            <McpIcon size={18} />
             MCP
           </span>
           <code>{url}</code>

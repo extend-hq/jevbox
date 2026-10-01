@@ -51,8 +51,8 @@ import {
   LayersFilled,
   TriangleWarningFilled,
   Users,
-  PlugFilled,
 } from "@/components/icons";
+import { McpIcon } from "@/components/mcp-icon";
 import { useTheme } from "@/components/theme";
 import { Button } from "@/components/coss/button";
 import {
@@ -778,7 +778,7 @@ export default function App() {
                 { id: "people", title: "Members", icon: Users },
                 { id: "connections", title: "Connections", icon: KeyRound },
                 { id: "api-keys", title: "API keys", icon: UserKey },
-                { id: "mcp", title: "MCP", icon: PlugFilled },
+                { id: "mcp", title: "MCP", icon: McpIcon },
               ]
             : [
                 { id: "library", title: "Library", icon: Library },

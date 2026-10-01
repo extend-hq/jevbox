@@ -11,7 +11,8 @@ import {
 import { ScrollArea } from "./coss/scroll-area";
 import { Tabs, TabsList, TabsTab, TabsPanel } from "./coss/tabs";
 import { ProviderLogo } from "./provider-logo";
-import { ArrowUpRight, Check, Copy, PlugFilled } from "./icons";
+import { ArrowUpRight, Check, Copy } from "./icons";
+import { McpIcon } from "./mcp-icon";
 import { RouteLink } from "./route-link";
 import { paths } from "../lib/navigation";
 
@@ -71,7 +72,7 @@ function ClientLogo({ client, size = 18 }: { client: Client; size?: number }) {
         size={size}
       />
     );
-  if (client === "other") return <PlugFilled size={size} />;
+  if (client === "other") return <McpIcon size={size} />;
   return (
     <img
       className={`provider-logo ${client === "cursor" ? "monochrome" : ""}`}
@@ -376,7 +377,7 @@ function SetupPreview({ url }: { url: string }) {
         aria-label="Illustrated MCP setup form"
       >
         <div className="mcp-preview-toolbar">
-          <PlugFilled size={16} />
+          <McpIcon size={16} />
           <span>MCP connections</span>
         </div>
         <div className="mcp-preview-form">
