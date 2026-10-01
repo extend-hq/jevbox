@@ -1,15 +1,19 @@
-import { asyncFilter, createLimiter } from "./async";
+import { createLimiter } from "./async";
 import { createTraversal, type RouteNode } from "./beam-search";
 import { createJev, retrievalLimits } from "./jev";
 import {
   resourceAccess,
-  visibleResources,
   HttpError,
   type Actor,
   type Resource,
   type Store,
 } from "./db";
-import { flatten, type IndexNode, type ParsedDocument } from "./indexing";
+import {
+  flatten,
+  withLayoutSections,
+  type IndexNode,
+  type ParsedDocument,
+} from "./indexing";
 import type { RetrievalStep } from "../shared/retrieval";
 
 export type RetrievedSource = {
@@ -63,7 +67,46 @@ export async function retrieveDocuments(
     retrievalLimits.results,
     options?.maxResults ?? retrievalLimits.results,
   );
-  const resources = await visibleResources(store, actor);
+  const pendingAccess = new Map<string, Promise<boolean>>();
+  const canRead = (id: string) => {
+    const pending = pendingAccess.get(id);
+    if (pending) return pending;
+    const check = authorizationSlot(async () => {
+      signal?.throwIfAborted();
+      return resourceAccess(store, actor, id);
+    }).finally(() => pendingAccess.delete(id));
+    pendingAccess.set(id, check);
+    return check;
+  };
+  const readable = async <T>(
+    items: T[],
+    resourceId: (item: T) => string | undefined,
+  ) => {
+    const ids = [
+      ...new Set(
+        items.flatMap((item) => {
+          const id = resourceId(item);
+          return id ? [id] : [];
+        }),
+      ),
+    ];
+    const access = new Map(
+      await Promise.all(
+        ids.map(async (id) => [id, await canRead(id)] as const),
+      ),
+    );
+    return items.filter((item) => {
+      const id = resourceId(item);
+      return !id || access.get(id);
+    });
+  };
+  const resources = await readable(
+    await store.all<Resource>(
+      "SELECT * FROM resources WHERE org_id=? ORDER BY created DESC",
+      actor.orgId,
+    ),
+    (resource) => resource.id,
+  );
   const docs = resources.filter(
     (resource) =>
       resource.kind === "document" &&
@@ -71,11 +114,6 @@ export async function retrieveDocuments(
       resource.parsed &&
       (!documentIds.length || documentIds.includes(resource.id)),
   );
-  const canRead = (id: string) =>
-    authorizationSlot(async () => {
-      signal?.throwIfAborted();
-      return resourceAccess(store, actor, id);
-    });
 
   function bounded(
     nodes: RouteNode<Value>[],
@@ -100,6 +138,10 @@ export async function retrieveDocuments(
       retrievalLimits.menuSize,
       Math.ceil(nodes.length / retrievalLimits.menuSize),
     );
+    const groupBudget = Math.floor(
+      (retrievalLimits.routingCharacters - 4096) /
+        Math.ceil(nodes.length / size),
+    );
     for (let start = 0; start < nodes.length; start += size) {
       const children = bounded(
         nodes.slice(start, start + size),
@@ -114,7 +156,9 @@ export async function retrieveDocuments(
           ).filter(
             (description): description is string => description !== undefined,
           );
-          const length = Math.floor(1200 / Math.max(1, descriptions.length));
+          const length = Math.floor(
+            groupBudget / Math.max(1, descriptions.length),
+          );
           return descriptions.length
             ? `Source group: ${descriptions.map((description) => description.slice(0, length)).join("\n")}`
             : undefined;
@@ -130,6 +174,7 @@ export async function retrieveDocuments(
   ): RouteNode<Value> {
     return {
       id: `section:${doc.id}:${node.id}`,
+      scope: doc.id,
       describe: async () =>
         (await canRead(doc.id))
           ? `${node.title}\n${node.summary}`.slice(0, 1200)
@@ -171,17 +216,20 @@ export async function retrieveDocuments(
   function resourceNode(resource: Resource): RouteNode<Value> | undefined {
     if (resource.kind === "document") {
       if (!eligible.has(resource.id)) return;
-      const parsed: ParsedDocument = JSON.parse(resource.parsed!);
+      const parsed: ParsedDocument = withLayoutSections(
+        JSON.parse(resource.parsed!),
+      );
       return {
         id: `document:${resource.id}`,
+        scope: resource.id,
         describe: async () =>
           (await canRead(resource.id))
-            ? `${
+            ? `${resource.name}\n${
                 parsed.summary ??
                 flatten(parsed.nodes)
                   .map((node) => node.title)
                   .join("; ")
-              }\n${resource.name}`.slice(0, 1200)
+              }`.slice(0, 1200)
             : undefined,
         children: bounded(
           parsed.nodes.map((node) => section(resource, node)),
@@ -239,11 +287,12 @@ export async function retrieveDocuments(
   const jev = createJev(key, fetcher, signal);
   const results: RetrievedSource[] = [];
   const trace: RetrievalStep[] = [];
+  const candidates: Omit<RetrievedSource, "score">[] = [];
+  const passageCounts = new Map<string, number>();
   let scored = 0;
-  while (!traversal.exhausted && scored < maxPassages) {
+  while ((!traversal.exhausted || candidates.length) && scored < maxPassages) {
     signal?.throwIfAborted();
-    const routes = await traversal.walk();
-    const candidates: Omit<RetrievedSource, "score">[] = [];
+    const routes = traversal.exhausted ? [] : await traversal.walk();
     for (const route of routes) {
       if (!route.node.value) continue;
       const { step, sources } = route.node.value;
@@ -255,8 +304,27 @@ export async function retrieveDocuments(
       for (const source of sources)
         candidates.push({ ...source, routeScore: route.score });
     }
-    candidates.sort((a, b) => b.routeScore - a.routeScore);
-    const batch = candidates.slice(0, maxPassages - scored);
+    const batch: typeof candidates = [];
+    while (
+      candidates.length &&
+      batch.length <
+        Math.min(retrievalLimits.evidenceConcurrency, maxPassages - scored)
+    ) {
+      const rounds = (source: (typeof candidates)[number]) =>
+        Math.floor(
+          (passageCounts.get(source.documentId) ?? 0) /
+            retrievalLimits.sectionsPerDocument,
+        );
+      candidates.sort(
+        (a, b) => rounds(a) - rounds(b) || b.routeScore - a.routeScore,
+      );
+      const source = candidates.shift()!;
+      batch.push(source);
+      passageCounts.set(
+        source.documentId,
+        (passageCounts.get(source.documentId) ?? 0) + 1,
+      );
+    }
     for (
       let i = 0;
       i < batch.length;
@@ -291,14 +359,27 @@ export async function retrieveDocuments(
         ),
       );
     }
-    const accessible = await asyncFilter(results, (source) =>
-      canRead(source.documentId),
-    );
-    if (accessible.length >= retrievalLimits.minimumUsefulResults) break;
+    const accessible = await readable(results, (source) => source.documentId);
+    if (
+      accessible.length >= retrievalLimits.minimumUsefulResults ||
+      (options?.recoverRoutes !== false &&
+        accessible.some(
+          (source) => source.score >= retrievalLimits.sufficientScore,
+        ))
+    )
+      break;
   }
-  const ranked = (
-    await asyncFilter(results, (source) => canRead(source.documentId))
-  ).sort((a, b) => b.score - a.score || b.routeScore - a.routeScore);
+  const accessible = await readable(
+    [
+      ...results.map((source) => source.documentId),
+      ...trace.flatMap((step) => (step.resourceId ? [step.resourceId] : [])),
+    ],
+    (id) => id,
+  );
+  const allowed = new Set(accessible);
+  const ranked = results
+    .filter((source) => allowed.has(source.documentId))
+    .sort((a, b) => b.score - a.score || b.routeScore - a.routeScore);
   const context: RetrievedSource[] = [];
   let characters = 0;
   for (const source of ranked) {
@@ -320,10 +401,13 @@ export async function retrieveDocuments(
   return {
     mode: "jev" as const,
     results: context,
-    trace: await asyncFilter(
-      trace,
-      async (step) => !step.resourceId || canRead(step.resourceId),
+    trace: trace.filter(
+      (step) => !step.resourceId || allowed.has(step.resourceId),
     ),
-    limited: traversal.limited || !traversal.exhausted || scored >= maxPassages,
+    limited:
+      traversal.limited ||
+      !traversal.exhausted ||
+      candidates.length > 0 ||
+      scored >= maxPassages,
   };
 }

@@ -217,7 +217,7 @@ export function buildIndex(
   }
   for (const node of flatten(nodes))
     node.summary = `Pages ${node.page}–${node.endPage}. Sections: ${[node.title, ...flatten(node.children).map((child) => child.title)].join("; ")}`;
-  return {
+  return withLayoutSections({
     version: 1,
     source,
     pages: Math.max(
@@ -231,7 +231,136 @@ export function buildIndex(
     summary: `Document outline: ${flatten(nodes)
       .map((node) => node.title)
       .join("; ")}`,
+  });
+}
+
+export function withLayoutSections(parsed: ParsedDocument): ParsedDocument {
+  const nodes = flatten(parsed.nodes);
+  const owners = new Map<string, IndexNode>();
+  for (const node of nodes)
+    for (const block of node.blocks) owners.set(block.id, node);
+  const moves: { block: ParsedBlock; from: IndexNode; to: IndexNode }[] = [];
+  for (const page of new Set(parsed.blocks.map((block) => block.page))) {
+    const paragraphs = parsed.blocks.filter(
+      (block) =>
+        block.page === page &&
+        block.type === "text" &&
+        block.content.length >= 40 &&
+        block.boundingBox,
+    );
+    const widths = paragraphs
+      .map((block) => block.boundingBox!.right - block.boundingBox!.left)
+      .filter((width) => width > 0)
+      .sort((a, b) => a - b);
+    const columnWidth = widths[Math.floor(widths.length / 2)];
+    if (
+      paragraphs.length < 8 ||
+      !columnWidth ||
+      !paragraphs.some((a) =>
+        paragraphs.some(
+          (b) =>
+            Math.abs(a.boundingBox!.left - b.boundingBox!.left) > columnWidth &&
+            Math.min(a.boundingBox!.bottom, b.boundingBox!.bottom) >
+              Math.max(a.boundingBox!.top, b.boundingBox!.top),
+        ),
+      )
+    )
+      continue;
+    const headings = parsed.blocks.filter(
+      (block) =>
+        block.page === page &&
+        block.type === "section_heading" &&
+        block.boundingBox &&
+        owners.has(block.id) &&
+        !/^#{1,6}\s+By\s/i.test(block.content),
+    );
+    const contains = (heading: ParsedBlock, block: ParsedBlock) => {
+      const box = heading.boundingBox!;
+      const center = (block.boundingBox!.left + block.boundingBox!.right) / 2;
+      return center >= box.left - 4 && center <= box.right + 4;
+    };
+    const parent = (heading: ParsedBlock) =>
+      headings
+        .filter((other) => {
+          const a = other.boundingBox!;
+          const b = heading.boundingBox!;
+          return (
+            a.bottom < b.top &&
+            b.top - a.bottom < Math.max((a.bottom - a.top) * 4, 48) &&
+            a.right - a.left > (b.right - b.left) * 2 &&
+            contains(other, heading)
+          );
+        })
+        .sort((a, b) => b.boundingBox!.bottom - a.boundingBox!.bottom)[0] ??
+      heading;
+    const placements = paragraphs.flatMap((block) => {
+      const from = owners.get(block.id);
+      const heading = headings
+        .filter(
+          (heading) =>
+            heading.boundingBox!.bottom <= block.boundingBox!.top + 2 &&
+            contains(heading, block),
+        )
+        .sort((a, b) => b.boundingBox!.bottom - a.boundingBox!.bottom)[0];
+      const to = heading && owners.get(parent(heading).id);
+      return from && to && from !== to ? [{ block, from, to }] : [];
+    });
+    const misplaced = placements.filter(({ block, from }) => {
+      const heading = from.blocks.find(
+        (candidate) =>
+          candidate.type === "section_heading" && candidate.boundingBox,
+      );
+      return (
+        heading &&
+        (heading.boundingBox!.top > block.boundingBox!.bottom ||
+          !contains(heading, block))
+      );
+    });
+    if (misplaced.length < 2) continue;
+    moves.push(
+      ...placements.sort((a, b) =>
+        Math.abs(a.block.boundingBox!.left - b.block.boundingBox!.left) <
+        columnWidth / 2
+          ? a.block.boundingBox!.top - b.block.boundingBox!.top
+          : a.block.boundingBox!.left - b.block.boundingBox!.left,
+      ),
+    );
+  }
+  if (!moves.length) return parsed;
+  const copies = new Map<string, IndexNode>();
+  const copy = (node: IndexNode): IndexNode => {
+    const result = {
+      ...node,
+      blocks: [...node.blocks],
+      children: node.children.map(copy),
+    };
+    copies.set(node.id, result);
+    return result;
   };
+  const roots = parsed.nodes.map(copy);
+  const changed = new Set<IndexNode>();
+  for (const { block, from, to } of moves) {
+    const previous = copies.get(from.id)!;
+    const next = copies.get(to.id)!;
+    previous.content = previous.content.replace(block.content, "");
+    previous.blocks = previous.blocks.filter(
+      (candidate) => candidate.id !== block.id,
+    );
+    next.content += `\n\n${block.content}`;
+    next.blocks.push(block);
+    changed.add(previous);
+    changed.add(next);
+  }
+  for (const node of changed) {
+    const content = node.content.trim();
+    const blocks = node.blocks;
+    node.content = "";
+    node.blocks = [];
+    node.passages = [];
+    node.links = [];
+    append(node, content, node.page, node.endPage, blocks);
+  }
+  return { ...parsed, nodes: roots };
 }
 
 function append(

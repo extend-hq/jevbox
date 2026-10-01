@@ -3,8 +3,8 @@ import { HttpError } from "./errors";
 import { jsonRequest, ProviderResponseError } from "./provider-http";
 
 export const retrievalLimits = {
-  menuSize: 16,
-  routingCharacters: 24000,
+  menuSize: 64,
+  routingCharacters: 96000,
   beamWidth: 4,
   expansions: 96,
   passages: 96,
@@ -12,9 +12,13 @@ export const retrievalLimits = {
   contextCharacters: 24000,
   minimumUsefulResults: 3,
   minimumScore: 1.5,
+  sufficientScore: 2.25,
+  sectionsPerDocument: 8,
   evidenceConcurrency: 16,
   authorizationConcurrency: 8,
 } as const;
+
+export const filingMenuSize = 16;
 
 const probability = z.number().finite().min(0).max(1);
 const choiceSchema = z.object({

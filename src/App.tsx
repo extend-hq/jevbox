@@ -38,8 +38,6 @@ import {
   FolderFilled,
   MessageSquareOutline,
   FolderOpenOutline,
-  UsersOutline,
-  UsersFilled,
   Plus,
   Search,
   Settings,
@@ -53,6 +51,7 @@ import {
   LayersFilled,
   TriangleWarningFilled,
   Users,
+  PlugFilled,
 } from "@/components/icons";
 import { useTheme } from "@/components/theme";
 import { Button } from "@/components/coss/button";
@@ -96,6 +95,7 @@ import { Brand, Loading, useAction } from "@/components/common";
 import { Sharing } from "@/components/sharing";
 import { SettingsView } from "@/components/settings";
 import { ApiKeysView } from "@/components/api-keys";
+import { McpView } from "@/components/mcp";
 import { OAuthConsent, OAuthResume } from "@/components/oauth-consent";
 import { SearchView, ChatView } from "@/components/discovery";
 import { DocumentView } from "@/components/document";
@@ -226,7 +226,7 @@ export default function App() {
           : page === "chat"
             ? "Chats"
             : page === "settings"
-              ? "Organization"
+              ? "Settings"
               : "Library"
       : "Sign in";
   }, [me, page, documentId]);
@@ -238,7 +238,7 @@ export default function App() {
   const [resourcesLoading, setResourcesLoading] = useState(true);
   const [deleting, setDeleting] = useState<Resource[] | null>(null);
   const deletion = useAction();
-  const [sharing, setSharing] = useState<Resource | null>(null);
+  const [sharing, setSharing] = useState<Resource | Resource[] | null>(null);
   const [folderOpen, setFolderOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -389,6 +389,11 @@ export default function App() {
       ? { sections: parsed.nodes, blocks: parsed.blocks ?? [] }
       : null;
   }, []);
+  const loadDetailThumbnail = useCallback(async (file: FileSystemItem, signal: AbortSignal) => {
+    if (file.kind !== "file" || !file.url) return null;
+    const { renderSpatialThumbnail } = await import("./lib/spatial-thumbnail-renderer");
+    return renderSpatialThumbnail(file.url, file.path, signal);
+  }, []);
   const openDocument = (id: string, node?: string) =>
     navigateTo(
       paths.document(
@@ -466,14 +471,16 @@ export default function App() {
         ]
       : page === "settings"
         ? [
-            { label: "Organization", href: paths.settings() },
+            { label: "Settings", href: paths.settings() },
             {
               label:
-                settingsSection === "api-keys"
-                  ? "API keys"
-                  : settingsSection === "connections"
-                    ? "Connections"
-                    : "Members",
+                settingsSection === "mcp"
+                  ? "MCP"
+                  : settingsSection === "api-keys"
+                    ? "API keys"
+                    : settingsSection === "connections"
+                      ? "Connections"
+                      : "Members",
               href: paths.settings(settingsSection),
             },
           ]
@@ -545,9 +552,9 @@ export default function App() {
             },
             {
               id: "settings",
-              label: "Organization",
-              icon: UsersFilled,
-              outline: UsersOutline,
+              label: "Settings",
+              icon: Settings,
+              outline: Settings,
             },
           ].map((item) => (
             <Tooltip key={item.id}>
@@ -684,7 +691,7 @@ export default function App() {
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => navigate("settings")}>
                   <Settings size={15} />
-                  Organization settings
+                  Settings
                 </DropdownMenuItem>
                 {me.organizations.length > 1 && (
                   <>
@@ -740,7 +747,7 @@ export default function App() {
         <nav
           aria-label={
             page === "settings"
-              ? "Organization navigation"
+              ? "Settings navigation"
               : "Library navigation"
           }
         >
@@ -749,6 +756,7 @@ export default function App() {
                 { id: "people", title: "Members", icon: Users },
                 { id: "connections", title: "Connections", icon: KeyRound },
                 { id: "api-keys", title: "API keys", icon: UserKey },
+                { id: "mcp", title: "MCP", icon: PlugFilled },
               ]
             : [
                 { id: "library", title: "Library", icon: Library },
@@ -861,6 +869,8 @@ export default function App() {
             <ScrollArea scrollFade>
               {settingsSection === "api-keys" ? (
                 <ApiKeysView key={me.user.id} me={me} />
+              ) : settingsSection === "mcp" ? (
+                <McpView key={me.user.id} me={me} />
               ) : (
                 <SettingsView
                   me={me}
@@ -944,15 +954,19 @@ export default function App() {
                     items={items}
                     isLoading={resourcesLoading}
                     loadPreviewImageUrl={loadPreviewImageUrl}
+                    loadDetailThumbnail={loadDetailThumbnail}
                     loadDocumentStructure={loadDocumentStructure}
                     title=""
                     view={finderView}
                     onViewChange={setFinderView}
-                    onShare={(item) => {
-                      const resource = resources.find(
-                        (r) => pathFor(r) === item.path,
-                      );
-                      if (resource) setSharing(resource);
+                    onShareItems={(selectedItems) => {
+                      const matches = selectedItems.flatMap((item) => {
+                        const resource = resources.find(
+                          (r) => pathFor(r) === item.path,
+                        );
+                        return resource ? [resource] : [];
+                      });
+                      if (matches.length) setSharing(matches);
                     }}
                     canShare={(item) =>
                       Boolean(

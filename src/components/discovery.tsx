@@ -467,6 +467,7 @@ export function ChatView({
   const [preview, setPreview] = useState<{
     source: Source;
     trace: NonNullable<Message["trace"]>;
+    retrievalDurationMs?: number;
     focusRequest?: number;
   } | null>(null);
   const sourceFocusRequest = useRef(0);
@@ -476,6 +477,7 @@ export function ChatView({
     documentId: string,
     nodeId?: string,
     onlyIfOpen = false,
+    retrievalDurationMs?: number,
   ) => {
     if (onlyIfOpen && !preview) return;
     if (
@@ -502,6 +504,7 @@ export function ChatView({
         page: section?.page ?? 1,
       },
       trace,
+      retrievalDurationMs,
     });
     setPreviewTab("index");
   };
@@ -1062,6 +1065,7 @@ export function ChatView({
                                       }
                                     >
                                       {message.role === "assistant" &&
+                                        !text &&
                                         activeTurn &&
                                         activeTurn.id === message.turnId && (
                                           <ChatThinking
@@ -1079,6 +1083,8 @@ export function ChatView({
                                           setPreview({
                                             source,
                                             trace: message.trace ?? [],
+                                            retrievalDurationMs:
+                                              message.retrievalDurationMs,
                                             focusRequest:
                                               ++sourceFocusRequest.current,
                                           });
@@ -1140,6 +1146,8 @@ export function ChatView({
                                                 setPreview({
                                                   source,
                                                   trace: message.trace ?? [],
+                                                  retrievalDurationMs:
+                                                    message.retrievalDurationMs,
                                                   focusRequest:
                                                     ++sourceFocusRequest.current,
                                                 });
@@ -1153,6 +1161,9 @@ export function ChatView({
                                         {message.trace?.length ? (
                                           <RetrievalTree
                                             trace={message.trace}
+                                            retrievalDurationMs={
+                                              message.retrievalDurationMs
+                                            }
                                             activeDocumentId={
                                               preview?.source.documentId
                                             }
@@ -1164,6 +1175,8 @@ export function ChatView({
                                                 message.trace ?? [],
                                                 documentId,
                                                 nodeId,
+                                                false,
+                                                message.retrievalDurationMs,
                                               )
                                             }
                                             onPreview={(documentId, nodeId) =>
@@ -1172,6 +1185,7 @@ export function ChatView({
                                                 documentId,
                                                 nodeId,
                                                 true,
+                                                message.retrievalDurationMs,
                                               )
                                             }
                                           />
@@ -1463,14 +1477,27 @@ export function ChatView({
             <div className="source-preview-retrieval">
               <RetrievalTree
                 trace={preview.trace}
+                retrievalDurationMs={preview.retrievalDurationMs}
                 activeDocumentId={preview.source.documentId}
                 activeNodeId={preview.source.nodeId}
                 defaultOpen
                 onSelect={(documentId, nodeId) =>
-                  previewRetrievalPath(preview.trace, documentId, nodeId)
+                  previewRetrievalPath(
+                    preview.trace,
+                    documentId,
+                    nodeId,
+                    false,
+                    preview.retrievalDurationMs,
+                  )
                 }
                 onPreview={(documentId, nodeId) =>
-                  previewRetrievalPath(preview.trace, documentId, nodeId, true)
+                  previewRetrievalPath(
+                    preview.trace,
+                    documentId,
+                    nodeId,
+                    true,
+                    preview.retrievalDurationMs,
+                  )
                 }
               />
             </div>

@@ -196,6 +196,7 @@ export type FileSystemProps = {
   };
   onSelectionChange?: (item: FileSystemItem | null) => void;
   onShare?: (item: FileSystemItem) => void;
+  onShareItems?: (items: FileSystemItem[]) => void;
   canShare?: (item: FileSystemItem) => boolean;
   onDelete?: (item: FileSystemItem) => void;
   onDeleteItems?: (items: FileSystemItem[]) => void;
@@ -218,6 +219,10 @@ export type FileSystemProps = {
   loadDocumentStructure?: (
     file: FileSystemFileItem,
   ) => Promise<SpatialDocumentStructure | null>;
+  loadDetailThumbnail?: (
+    file: FileSystemFileItem,
+    signal: AbortSignal,
+  ) => Promise<import("../../lib/spatial-thumbnail-renderer").SpatialThumbnail | null>;
 };
 type FolderEntry = FileSystemFolderItem & {
   name: string;
@@ -1385,6 +1390,7 @@ export function FileSystem({
   onPathChange,
   onSelectionChange,
   onShare,
+  onShareItems,
   canShare,
   onDelete,
   onDeleteItems,
@@ -1396,6 +1402,7 @@ export function FileSystem({
   getFileUrl,
   loadChildren,
   loadPreviewImageUrl,
+  loadDetailThumbnail,
   loadDocumentStructure,
   renderFilePreview,
 }: FileSystemProps) {
@@ -2281,6 +2288,7 @@ export function FileSystem({
                     onSelect={selectAndPrefetchEntry}
                     onOpen={openEntry}
                     loadPreviewImageUrl={loadPreviewImageUrl}
+                    loadDetailThumbnail={loadDetailThumbnail}
                     loadDocumentStructure={loadStructure}
                   />
                 </Panel>
@@ -2338,10 +2346,24 @@ export function FileSystem({
           >
             <Info /> Information
           </ContextMenuItem>
-          {onShare && (
+          {(onShare || onShareItems) && (
             <ContextMenuItem
-              disabled={!contextEntry || (canShare && !canShare(contextEntry))}
-              onClick={() => contextEntry && onShare(contextEntry)}
+              disabled={
+                !contextEntry ||
+                [...selectedPaths].some((path) => {
+                  const item = index.files.get(path) ?? index.folders.get(path);
+                  return !item || Boolean(canShare && !canShare(item));
+                })
+              }
+              onClick={() => {
+                if (!contextEntry) return;
+                const entries = [...selectedPaths].flatMap((path) => {
+                  const item = index.files.get(path) ?? index.folders.get(path);
+                  return item ? [item] : [];
+                });
+                if (onShareItems) onShareItems(entries);
+                else onShare?.(contextEntry);
+              }}
             >
               <Share2 /> Share
             </ContextMenuItem>

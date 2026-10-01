@@ -1275,6 +1275,11 @@ label textarea {
   font-size: 0.92em;
   overflow-wrap: anywhere;
 }
+.mcp-guide-screenshots {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
 .mcp-guide-screenshot,
 .mcp-preview {
   min-width: 0;
@@ -1385,7 +1390,8 @@ label textarea {
   font-size: 11px;
   font-weight: 500;
 }
-.mcp-guide-code {
+.mcp-guide-code,
+.api-docs-code {
   margin-top: 26px;
   padding: 0 16px 15px;
   border: var(--hairline) solid var(--border);
@@ -1393,7 +1399,8 @@ label textarea {
   background: var(--muted);
   min-width: 0;
 }
-.mcp-guide-code-heading {
+.mcp-guide-code-heading,
+.api-docs-code-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1403,7 +1410,8 @@ label textarea {
   font-size: var(--type-caption);
   color: var(--muted-foreground);
 }
-.mcp-guide-code pre {
+.mcp-guide-code pre,
+.api-docs-code pre {
   margin: 14px 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1422,6 +1430,68 @@ label textarea {
   gap: 3px;
   margin-top: 8px;
   font-size: var(--type-caption);
+}
+.api-docs-section {
+  margin-top: 30px;
+  padding-top: 26px;
+  border-top: var(--hairline) solid var(--border);
+}
+.api-docs-section h3 {
+  font-size: var(--type-body);
+  font-weight: 600;
+}
+.api-docs-section p {
+  margin-top: 12px;
+  font-size: var(--type-ui);
+  color: var(--muted-foreground);
+  line-height: 1.75;
+}
+.api-docs-section p code,
+.api-docs-route code,
+.api-docs-table code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--foreground);
+}
+.api-docs-route {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 13px;
+  font-size: var(--type-ui);
+}
+.api-docs-code {
+  margin-top: 16px;
+  padding-bottom: 0;
+}
+.api-docs-table-scroll {
+  overflow-x: auto;
+  margin-top: 18px;
+}
+.api-docs-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: var(--type-caption);
+  line-height: 1.65;
+}
+.api-docs-table th,
+.api-docs-table td {
+  padding: 11px 12px;
+  border-bottom: var(--hairline) solid var(--border);
+  vertical-align: top;
+}
+.api-docs-table thead th {
+  background: var(--muted);
+  font-weight: 500;
+}
+.api-docs-table tbody th {
+  width: 140px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.api-docs-table td {
+  color: var(--muted-foreground);
 }
 .mcp-guide-footer {
   display: flex;
@@ -1470,7 +1540,7 @@ label textarea {
     grid-template-columns: minmax(0, 1fr);
     gap: 25px;
   }
-  .mcp-guide-screenshot,
+  .mcp-guide-screenshots,
   .mcp-preview {
     max-width: 440px;
   }
@@ -4111,13 +4181,6 @@ label textarea {
 .share-general [data-slot="select-trigger"] {
   min-width: 160px;
   width: auto;
-  padding-left: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-.share-general [data-slot="select-trigger"]:before {
-  display: none;
 }
 .share-inherited-note {
   font-size: var(--type-caption);
@@ -4321,40 +4384,6 @@ label textarea {
   height: 5px;
   border-radius: 50%;
   background: var(--primary);
-}
-
-label.share-access-card {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px;
-  border: var(--hairline) solid var(--border);
-  border-radius: 9px;
-  cursor: pointer;
-}
-.share-access-card:hover,
-.share-access-card:has([data-checked]) {
-  background: var(--accent);
-}
-.share-access-card:has([data-checked]) {
-  border-color: var(--ring);
-}
-.share-access-card > svg,
-.share-access-card > [data-slot="radio"] {
-  margin-top: 2px;
-  flex-shrink: 0;
-}
-.share-access-card strong {
-  font-size: var(--type-ui);
-  font-weight: 500;
-}
-.share-access-card small {
-  display: block;
-  margin-top: 4px;
-  font-size: var(--type-caption);
-  color: var(--muted-foreground);
-  line-height: 1.5;
 }
 
 .app-breadcrumbs {

@@ -4,6 +4,7 @@ export type RouteNode<T> = {
   id: string;
   describe: () => Promise<string | undefined>;
   children: RouteNode<T>[];
+  scope?: string;
   value?: T;
 };
 export type Route<T> = {
@@ -58,7 +59,16 @@ export function createTraversal<T>(
   ];
   const deferred: Route<T>[] = [];
   const visited = new Set<string>();
+  const evidenceVisits = new Map<string, number>();
   let expansions = 0;
+  const rank = (a: Route<T>, b: Route<T>) => {
+    const rounds = (route: Route<T>) =>
+      Math.floor(
+        (evidenceVisits.get(route.node.scope ?? "") ?? 0) /
+          retrievalLimits.sectionsPerDocument,
+      );
+    return rounds(a) - rounds(b) || b.score - a.score;
+  };
 
   return {
     get limited() {
@@ -72,23 +82,25 @@ export function createTraversal<T>(
     },
     async walk() {
       const found: Route<T>[] = [];
-      if (!beam.length) beam = deferred.splice(0, retrievalLimits.beamWidth);
+      beam = [...beam, ...deferred.splice(0)].sort(rank);
+      deferred.push(...beam.splice(retrievalLimits.beamWidth));
       while (beam.length && expansions < retrievalLimits.expansions) {
         const prepared: {
           route: Route<T>;
           choices: { id: string; text: string; node: RouteNode<T> }[];
         }[] = [];
-        const finished: Route<T>[] = [];
         for (const route of beam) {
           if ((await route.node.describe()) === undefined) continue;
           if (!visited.has(route.node.id)) {
             visited.add(route.node.id);
             found.push(route);
+            if (route.node.scope && hasEvidence(route.node))
+              evidenceVisits.set(
+                route.node.scope,
+                (evidenceVisits.get(route.node.scope) ?? 0) + 1,
+              );
           }
-          if (!route.node.children.length) {
-            finished.push(route);
-            continue;
-          }
+          if (!route.node.children.length) continue;
           if (++expansions > retrievalLimits.expansions) break;
           const choices = (
             await Promise.all(
@@ -164,16 +176,13 @@ export function createTraversal<T>(
             }
           }
         }
-        const ranked = [...finished, ...expanded].sort(
-          (a, b) => b.score - a.score,
-        );
+        const ranked = [...expanded, ...deferred.splice(0)].sort(rank);
         beam = ranked.slice(0, retrievalLimits.beamWidth);
         deferred.push(
           ...ranked
             .slice(retrievalLimits.beamWidth)
             .filter((route) => !visited.has(route.node.id)),
         );
-        deferred.sort((a, b) => b.score - a.score);
         deferred.splice(retrievalLimits.expansions);
         if (found.some((route) => hasEvidence(route.node))) return found;
       }

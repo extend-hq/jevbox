@@ -147,6 +147,7 @@ export type Message = {
   sources?: Source[];
   attachments?: { id: string; name: string }[];
   trace?: RetrievalStep[];
+  retrievalDurationMs?: number;
 };
 export const flatten = (nodes: IndexNode[]): IndexNode[] =>
   nodes.flatMap((n) => [n, ...flatten(n.children)]);

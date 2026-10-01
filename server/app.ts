@@ -11,6 +11,7 @@ import {
 } from "../shared/auth-navigation";
 import { oauthProviderAuthServerMetadata } from "@better-auth/oauth-provider";
 import { enqueueIndex } from "./indexing-jobs";
+import { withLayoutSections } from "./indexing";
 import { describeThumbnail, enqueueThumbnail } from "./thumbnails";
 import { createWorkers } from "./workers";
 import { queues, type QueueName } from "./jobs";
@@ -989,7 +990,7 @@ export async function createApp(options: {
     const r = await requireResource(store, a, id.parse(req.params.id));
     res.json({
       ...(await publicResource(r, a)),
-      parsed: r.parsed ? JSON.parse(r.parsed) : null,
+      parsed: r.parsed ? withLayoutSections(JSON.parse(r.parsed)) : null,
     });
   });
   app.get("/api/documents/:id/thumbnail", async (req, res) => {

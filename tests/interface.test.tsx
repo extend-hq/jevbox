@@ -78,6 +78,7 @@ const { Markdown } = await import("../src/components/common");
 const { ChatThinking } = await import("../src/components/loading-state");
 const { RetrievalTree } = await import("../src/components/retrieval-tree");
 const { FileSystem } = await import("../src/components/extend/file-system");
+const { Sharing } = await import("../src/components/sharing");
 const { ToastProvider } = await import("../src/components/coss/toast");
 const { ParsedBlocks } = await import("../src/components/parsed-blocks");
 const { IndexStatusBadge } =
@@ -229,7 +230,7 @@ test("citation thumbnails stay mounted when preview callbacks and source snapsho
   assert.equal((selected as typeof source).title, "Passage");
 });
 
-test("inline citations preview on hover and focus, cancel brief hovers, and clean up on unmount", async () => {
+test("inline citations preview only on activation and preserve modified link navigation", async () => {
   const sources = [1, 2].map((page) => ({
     documentId: "doc",
     nodeId: "node",
@@ -265,8 +266,30 @@ test("inline citations preview on hover and focus, cancel brief hovers, and clea
     enter(second);
     await new Promise((resolve) => setTimeout(resolve, 220));
   });
-  assert.deepEqual(selected, [sources[1]]);
+  assert.deepEqual(selected, []);
   await act(async () => first.focus());
+  assert.deepEqual(selected, []);
+  await click(second);
+  assert.deepEqual(selected, [sources[1]]);
+  for (const modifier of ["metaKey", "ctrlKey", "shiftKey", "altKey"]) {
+    const event = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      [modifier]: true,
+    });
+    await act(async () => first.dispatchEvent(event));
+    assert.equal(event.defaultPrevented, false);
+  }
+  assert.deepEqual(selected, [sources[1]]);
+  const activation = new MouseEvent("click", {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    detail: 0,
+  });
+  await act(async () => first.dispatchEvent(activation));
+  assert.equal(activation.defaultPrevented, true);
   assert.deepEqual(selected, [sources[1], sources[0]]);
   await act(async () => {
     enter(second);
@@ -296,6 +319,7 @@ test("sources and retrieval paths collapse into bounded fading scroll areas", as
           }}
         />
         <RetrievalTree
+          retrievalDurationMs={2450}
           trace={Array.from({ length: 16 }, (_, index) => ({
             stage: "document" as const,
             resourceId: `doc-${index}`,
@@ -311,6 +335,11 @@ test("sources and retrieval paths collapse into bounded fading scroll areas", as
   await click(trigger);
   await click(button("Preview source 1: Document", host));
   assert.equal(previewed, true);
+  assert.match(
+    host.querySelector(".retrieval-trace .retrieval-trigger")?.textContent ??
+      "",
+    /16 documents · 2\.5 s/,
+  );
   await click(host.querySelector(".retrieval-trace .retrieval-trigger"));
   const scrolls = host.querySelectorAll(
     '.retrieval-tree-panel [data-slot="scroll-area"]',
@@ -322,10 +351,50 @@ test("sources and retrieval paths collapse into bounded fading scroll areas", as
     assert.equal(scroll.getAttribute("data-scroll-fade"), "true");
 });
 
+test("retrieval latency formats short and long searches and omits unavailable timing", async () => {
+  for (const [duration, expected] of [
+    [undefined, "1 document"],
+    [NaN, "1 document"],
+    [-1, "1 document"],
+    [0, "1 document · 0 ms"],
+    [842, "1 document · 842 ms"],
+    [1000, "1 document · 1 s"],
+    [2400, "1 document · 2.4 s"],
+    [59999, "1 document · 1m 0s"],
+    [72000, "1 document · 1m 12s"],
+  ] as const) {
+    await act(async () =>
+      root.render(
+        <RetrievalTree
+          trace={[{ stage: "document", resourceId: "doc", label: "Document" }]}
+          retrievalDurationMs={duration}
+        />,
+      ),
+    );
+    assert.equal(
+      host.querySelector(".retrieval-trigger > span")?.textContent,
+      expected,
+    );
+  }
+});
+
 test("loading steps follow observed response stages", async () => {
   await act(async () => root.render(<ChatThinking status="retrieving" />));
   assert.equal(host.querySelectorAll(".work-loader-grid > span").length, 9);
+  const elapsed = host.querySelector(".work-elapsed");
+  assert.ok(elapsed);
   await act(async () => root.render(<ChatThinking status="generating" />));
+  assert.ok(
+    host.querySelector(
+      '.work-loading-state[aria-label="Writing answer…"] .work-loader-grid',
+    ),
+  );
+  assert.equal(host.querySelector(".work-elapsed"), elapsed);
+  const before = Number.parseFloat(elapsed.textContent ?? "0");
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 220));
+  });
+  assert.ok(Number.parseFloat(elapsed.textContent ?? "0") > before);
   await click(button("View response steps", host));
   assert.deepEqual(
     [...host.querySelectorAll(".chat-thinking-steps li")].map(
@@ -550,7 +619,7 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
         id: body.id,
         content: body.content,
         status: requests.length === 1 ? "generating" : "queued",
-        partialText: requests.length === 1 ? "First fragment" : "",
+        partialText: "",
         selectedModel: body.selectedModel,
         attachments: [],
         error: null,
@@ -593,7 +662,19 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
       ),
     );
     await typeChatMessage("First");
+    assert.ok(document.querySelector(".chat-thinking .work-loader-grid"));
+    assert.ok(document.querySelector(".chat-thinking .work-elapsed"));
+    snapshot.turns[0].partialText = "First fragment";
+    await act(async () => {
+      listeners.get("snapshot")?.({ data: JSON.stringify(snapshot) });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
     assert.ok(document.body.textContent?.includes("First fragment"));
+    assert.equal(document.querySelector(".chat-thinking"), null);
+    assert.equal(document.querySelector(".work-elapsed"), null);
+    assert.ok(document.querySelector(".chat-stream-cursor"));
     assert.equal(document.querySelector('[data-slot="message-header"]'), null);
     assert.ok(document.querySelector('[data-slot="message-avatar"] svg'));
     await typeChatMessage("Second");
@@ -1288,13 +1369,26 @@ test("Finder Grid requests and renders the first PDF thumbnail", async () => {
 test("Finder uses a stored cover without invoking document thumbnail generation", async () => {
   const loaded: number[] = [];
   for (const view of ["icons", "columns"] as const) {
-    await act(async () => root.render(
-      <FileSystem
-        items={[{ kind: "file", path: "Document.pdf", url: "/original", previewImageUrl: "/small-thumbnail.webp", previewPageCount: 2 }]}
-        view={view}
-        loadPreviewImageUrl={async (_file, page) => { loaded.push(page); return null; }}
-      />,
-    ));
+    await act(async () =>
+      root.render(
+        <FileSystem
+          items={[
+            {
+              kind: "file",
+              path: "Document.pdf",
+              url: "/original",
+              previewImageUrl: "/small-thumbnail.webp",
+              previewPageCount: 2,
+            },
+          ]}
+          view={view}
+          loadPreviewImageUrl={async (_file, page) => {
+            loaded.push(page);
+            return null;
+          }}
+        />,
+      ),
+    );
     assert.ok(host.querySelector('img[src="/small-thumbnail.webp"]'));
     assert.deepEqual(loaded, []);
     assert.equal(host.querySelector('img[src="/original"]'), null);
@@ -1583,6 +1677,7 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
             role: "assistant",
             content: "Answer [1]",
             trace,
+            retrievalDurationMs: 2400,
             sources: [
               {
                 documentId: "source",
@@ -1627,6 +1722,10 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
       ".chat-answer-details .retrieval-trace",
     );
     assert.ok(messageTree);
+    assert.match(
+      messageTree.querySelector(".retrieval-trigger")?.textContent ?? "",
+      /1 document · 2\.4 s/,
+    );
     await click(messageTree.querySelector(".retrieval-trigger"));
     await hover(row(messageTree, "Passage"));
     assert.equal(host.querySelector(".chat-source-panel"), null);
@@ -1635,6 +1734,10 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
     assert.ok(sidebar);
     const sidebarTree = sidebar.querySelector(".retrieval-trace");
     assert.ok(sidebarTree);
+    assert.match(
+      sidebarTree.querySelector(".retrieval-trigger")?.textContent ?? "",
+      /1 document · 2\.4 s/,
+    );
     assert.equal(
       sidebarTree
         .querySelector(".retrieval-trigger")
@@ -1683,8 +1786,14 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
       citation.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 220));
     });
+    assert.equal(host.querySelector(".chat-source-panel"), null);
+    await click(citation);
     const citationPreview = host.querySelector(".chat-source-panel");
     assert.ok(citationPreview);
+    assert.match(
+      citationPreview.querySelector(".retrieval-trigger")?.textContent ?? "",
+      /1 document · 2\.4 s/,
+    );
     await click(button("Source blocks 1", citationPreview));
     assert.equal(citationPreview.querySelectorAll(".parsed-block").length, 1);
     assert.equal(
@@ -1693,6 +1802,10 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
         ?.getAttribute("data-block-id"),
       "block-2",
     );
+    assert.equal(
+      button("Source blocks 1", citationPreview)?.getAttribute("aria-selected"),
+      "true",
+    );
     await act(async () => {
       citation.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
       citation.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
@@ -1700,7 +1813,7 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
     });
     assert.equal(host.querySelector(".chat-source-panel"), citationPreview);
     assert.equal(
-      button("Preview", citationPreview)?.getAttribute("aria-selected"),
+      button("Source blocks 1", citationPreview)?.getAttribute("aria-selected"),
       "true",
     );
   } finally {
@@ -2212,5 +2325,327 @@ test("API rate-limit errors remain readable when a server returns plain text", a
     );
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+test("Finder Share targets the full selection and rejects a selection containing an unshareable item", async () => {
+  const shared: string[][] = [];
+  await act(async () =>
+    root.render(
+      <FileSystem
+        items={[
+          { kind: "file", path: "Alpha.txt" },
+          { kind: "file", path: "Beta.txt" },
+          { kind: "file", path: "Unavailable.txt" },
+        ]}
+        onShareItems={(items) => shared.push(items.map((item) => item.path))}
+        canShare={(item) => item.path !== "Unavailable.txt"}
+      />,
+    ),
+  );
+  const entry = (path: string) =>
+    host.querySelector(`[data-entry-path="${path}"]`)!;
+  const context = async (path: string) =>
+    act(async () =>
+      entry(path).dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+        }),
+      ),
+    );
+  const share = () =>
+    [...document.querySelectorAll('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "Share",
+    )!;
+  await click(entry("Alpha.txt"));
+  await act(async () =>
+    entry("Beta.txt").dispatchEvent(
+      new MouseEvent("click", { bubbles: true, metaKey: true }),
+    ),
+  );
+  await context("Beta.txt");
+  await click(share());
+  assert.deepEqual(shared, [["Alpha.txt", "Beta.txt"]]);
+  await act(async () =>
+    entry("Unavailable.txt").dispatchEvent(
+      new MouseEvent("click", { bubbles: true, metaKey: true }),
+    ),
+  );
+  await context("Alpha.txt");
+  assert.equal(share().getAttribute("aria-disabled"), "true");
+  assert.deepEqual(shared, [["Alpha.txt", "Beta.txt"]]);
+});
+
+function sharingResources(): Resource[] {
+  return ["first", "second"].map((id) => ({
+    id,
+    name: `${id}.txt`,
+    kind: "document",
+    parent_id: null,
+    owner_id: "owner",
+    description: "",
+    access: "restricted",
+    status: "ready",
+    mime: "text/plain",
+    size: 10,
+    pages: 1,
+    created: "",
+    canWrite: true,
+    canShare: true,
+  }));
+}
+
+test("Sharing copies all selected links without overwriting mixed permissions", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalClipboard = Object.getOwnPropertyDescriptor(
+    navigator,
+    "clipboard",
+  );
+  let copied = "";
+  const writes: string[] = [];
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: {
+      writeText: async (text: string) => {
+        copied = text;
+      },
+    },
+  });
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    if (init?.method === "PUT") writes.push(path);
+    if (path === "/api/members")
+      return Response.json([
+        { id: "owner", name: "Owner", email: "owner@app.test" },
+        { id: "person", name: "Person", email: "person@app.test" },
+      ]);
+    return Response.json({
+      ownerId: "owner",
+      access: path.includes("first") ? "link" : "restricted",
+      grants: path.includes("first")
+        ? [{ userId: "person", role: "viewer" }]
+        : [],
+      shareUrl: path.includes("first") ? "https://app.test/s/public" : null,
+    });
+  };
+  try {
+    await act(async () =>
+      root.render(
+        <Sharing
+          resource={sharingResources()}
+          onClose={() => {}}
+          onSaved={() => {}}
+        />,
+      ),
+    );
+    const dialog = document.querySelector('[role="dialog"]')!;
+    assert.ok(dialog.textContent?.includes("2 files"));
+    assert.equal(
+      dialog.querySelector('[aria-label="General access"]')?.textContent,
+      "Mixed access",
+    );
+    assert.ok(
+      dialog.querySelector(".share-role")?.textContent?.includes("Mixed"),
+    );
+    assert.equal(dialog.querySelector('[role="radio"]'), null);
+    await click(button("Copy links", dialog));
+    assert.deepEqual(copied.split("\n"), [
+      "https://app.test/s/public",
+      "https://app.test/library/documents/second",
+    ]);
+    assert.deepEqual(writes, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalClipboard)
+      Object.defineProperty(navigator, "clipboard", originalClipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  }
+});
+
+test("Sharing applies permissions to every selected file and retries only failed saves before copying links", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalClipboard = Object.getOwnPropertyDescriptor(
+    navigator,
+    "clipboard",
+  );
+  let copied = "",
+    fail = true;
+  const writes: {
+    id: string;
+    access: string;
+    grants: { userId: string; role: string }[];
+  }[] = [];
+  let saved = 0;
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: {
+      writeText: async (text: string) => {
+        copied = text;
+      },
+    },
+  });
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    if (path === "/api/members")
+      return Response.json([
+        { id: "owner", name: "Owner", email: "owner@app.test" },
+        { id: "person", name: "Person", email: "person@app.test" },
+        { id: "other", name: "Other", email: "other@app.test" },
+      ]);
+    const id = path.split("/")[3];
+    if (init?.method === "PUT") {
+      writes.push({ id, ...JSON.parse(String(init.body)) });
+      if (id === "second" && fail)
+        return Response.json(
+          { error: "Permission service unavailable" },
+          { status: 503 },
+        );
+      return Response.json({ shareUrl: `https://app.test/s/${id}` });
+    }
+    return Response.json({
+      ownerId: "owner",
+      access: "restricted",
+      shareUrl: null,
+      grants:
+        id === "first"
+          ? [{ userId: "person", role: "viewer" }]
+          : [{ userId: "other", role: "viewer" }],
+    });
+  };
+  try {
+    await act(async () =>
+      root.render(
+        <Sharing
+          resource={sharingResources()}
+          onClose={() => {}}
+          onSaved={() => {
+            saved++;
+          }}
+        />,
+      ),
+    );
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const person = [...dialog.querySelectorAll(".person-row")].find(
+      (row) => row.querySelector("strong")?.textContent === "Person",
+    )!;
+    await click(person.querySelector('[role="combobox"]'));
+    const editor = [...document.querySelectorAll('[role="option"]')].find(
+      (option) => option.textContent?.trim() === "Can edit",
+    )!;
+    await act(async () =>
+      editor.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+      ),
+    );
+    await click(editor);
+    assert.ok(
+      person.querySelector(".share-role")?.textContent?.includes("Can edit"),
+    );
+    await click(dialog.querySelector('[aria-label="General access"]'));
+    const link = [...document.querySelectorAll('[role="option"]')].find(
+      (option) => option.textContent?.includes("Link Sharing Enabled"),
+    )!;
+    assert.ok(
+      link.textContent?.includes(
+        "Anyone with the link can view and download. No sign-in required.",
+      ),
+    );
+    assert.ok(
+      [...document.querySelectorAll('[role="option"]')].some((option) =>
+        option.textContent?.includes("Only people added above can access."),
+      ),
+    );
+    await act(async () =>
+      link.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+      ),
+    );
+    await click(link);
+    assert.equal(
+      dialog.querySelector('[aria-label="General access"]')?.textContent,
+      "Link Sharing Enabled",
+    );
+    await click(button("Save & copy links", dialog));
+    assert.ok(
+      dialog
+        .querySelector('[role="alert"]')
+        ?.textContent?.includes("1 of 2 items updated"),
+    );
+    assert.equal(copied, "");
+    assert.equal(saved, 1);
+    assert.deepEqual(writes, [
+      {
+        id: "first",
+        access: "link",
+        grants: [{ userId: "person", role: "editor" }],
+      },
+      {
+        id: "second",
+        access: "link",
+        grants: [
+          { userId: "other", role: "viewer" },
+          { userId: "person", role: "editor" },
+        ],
+      },
+    ]);
+    fail = false;
+    await click(button("Save & copy links", dialog));
+    assert.equal(writes.length, 3);
+    assert.equal(writes[2].id, "second");
+    assert.equal(saved, 2);
+    assert.equal(dialog.querySelector('[role="alert"]'), null);
+    assert.equal(copied, "https://app.test/s/first\nhttps://app.test/s/second");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalClipboard)
+      Object.defineProperty(navigator, "clipboard", originalClipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  }
+});
+
+test("Sharing cannot save when access settings for any selected file fail to load", async () => {
+  const originalFetch = globalThis.fetch;
+  const writes: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    if (init?.method === "PUT") writes.push(path);
+    if (path === "/api/members") return Response.json([]);
+    if (path.includes("second"))
+      return Response.json({ error: "Access denied" }, { status: 403 });
+    return Response.json({
+      ownerId: "owner",
+      access: "restricted",
+      grants: [],
+      shareUrl: null,
+    });
+  };
+  try {
+    await act(async () =>
+      root.render(
+        <Sharing
+          resource={sharingResources()}
+          onClose={() => {}}
+          onSaved={() => {}}
+        />,
+      ),
+    );
+    const dialog = document.querySelector('[role="dialog"]')!;
+    assert.equal(
+      dialog.querySelector('[role="alert"]')?.textContent,
+      "Access denied",
+    );
+    assert.equal(
+      (button("Save changes", dialog) as HTMLButtonElement).disabled,
+      true,
+    );
+    assert.equal(
+      (button("Copy links", dialog) as HTMLButtonElement).disabled,
+      true,
+    );
+    assert.deepEqual(writes, []);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });

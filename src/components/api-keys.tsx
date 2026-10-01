@@ -1,12 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type Me } from "@/lib/api";
 import { notifySuccess } from "@/lib/notifications";
-import {
-  scopeLabels,
-  type ApiKeyInfo,
-  type ApiScope,
-  type ConnectedApp,
-} from "../../shared/api-access";
+import { type ApiKeyInfo } from "../../shared/api-access";
 import { Button } from "./coss/button";
 import { Input } from "./coss/input";
 import { Form } from "./coss/form";
@@ -20,13 +15,12 @@ import {
   DialogPanel,
   DialogFooter,
 } from "./coss/dialog";
-import { Copy, Plus, UserKey, Code, PlugFilled } from "./icons";
+import { Copy, Plus, UserKey } from "./icons";
 import { Choice, Loading, useAction } from "./common";
-import { McpConnectionGuide } from "./mcp-connection-guide";
+import { ApiUsageGuide } from "./api-usage-guide";
 
 export function ApiKeysView({ me }: { me: Me }) {
   const [keys, setKeys] = useState<ApiKeyInfo[] | null>(null);
-  const [apps, setApps] = useState<ConnectedApp[]>([]);
   const [open, setOpen] = useState(false);
   const [token, setToken] = useState("");
   const [name, setName] = useState("");
@@ -34,12 +28,7 @@ export function ApiKeysView({ me }: { me: Me }) {
   const action = useAction();
   const form = useAction();
   async function refresh() {
-    const [nextKeys, nextApps] = await Promise.all([
-      api<ApiKeyInfo[]>("/api-keys"),
-      api<ConnectedApp[]>("/connected-apps"),
-    ]);
-    setKeys(nextKeys);
-    setApps(nextApps);
+    setKeys(await api<ApiKeyInfo[]>("/api-keys"));
   }
   useEffect(() => {
     void action.run(refresh);
@@ -127,73 +116,14 @@ export function ApiKeysView({ me }: { me: Me }) {
           </p>
         )}
       </section>
-      <section className="settings-section" aria-label="API and MCP endpoints">
-        <h2>Connect</h2>
-        {[
-          { label: "API", url: `${location.origin}/api/v1`, icon: Code },
-          { label: "MCP", url: `${location.origin}/mcp`, icon: PlugFilled },
-        ].map((endpoint) => (
-          <div className="api-endpoint" key={endpoint.label}>
-            <span>
-              <endpoint.icon size={18} />
-              {endpoint.label}
-            </span>
-            <code>{endpoint.url}</code>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`Copy ${endpoint.label} URL`}
-              onClick={() => void copy(endpoint.url)}
-            >
-              <Copy size={14} />
-            </Button>
-          </div>
-        ))}
-        <McpConnectionGuide
-          origin={location.origin}
-          onCopy={(value) => void copy(value)}
-        />
-        {form.error && !open && (
-          <p className="error" role="alert">
-            {form.error}
-          </p>
-        )}
-      </section>
-      {!!apps.length && (
-        <section
-          className="settings-section"
-          aria-label="Connected applications"
-        >
-          <h2>Connected apps</h2>
-          {apps.map((app) => (
-            <div className="api-key-row" key={app.id}>
-              <div className="api-key-details">
-                <strong>{app.name}</strong>
-                <span>
-                  {app.scopes
-                    .filter((scope) => scope !== "offline_access")
-                    .map((scope) => scopeLabels[scope as ApiScope] ?? scope)
-                    .join(" · ")}
-                </span>
-              </div>
-              <Button
-                variant="outline"
-                disabled={action.busy}
-                onClick={() =>
-                  void action.run(async () => {
-                    await api(`/connected-apps/${encodeURIComponent(app.id)}`, {
-                      method: "DELETE",
-                    });
-                    await refresh();
-                    notifySuccess("Application disconnected");
-                  })
-                }
-              >
-                Disconnect
-              </Button>
-            </div>
-          ))}
-        </section>
+      <ApiUsageGuide
+        origin={location.origin}
+        onCopy={(value) => void copy(value)}
+      />
+      {form.error && !open && (
+        <p className="error" role="alert">
+          {form.error}
+        </p>
       )}
       <Dialog open={open} onOpenChange={changeOpen}>
         <DialogPopup>

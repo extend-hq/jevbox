@@ -22,6 +22,7 @@ type Message = {
   turnId?: string;
   sources?: unknown[];
   trace?: unknown[];
+  retrievalDurationMs?: number;
 };
 type Chat = {
   id: string;
@@ -373,8 +374,10 @@ export function createChatRuntime(
       const sourceKey = (source: (typeof retrieval.results)[number]) =>
         `${source.documentId}:${source.nodeId}:${source.content}`;
       let searches = 0;
+      let retrievalDurationMs: number | undefined;
       let searchChain: Promise<unknown> = Promise.resolve();
       const runSearch = async (query: string, signal?: AbortSignal) => {
+        const started = performance.now();
         const { a: currentActor } = await check();
         await store.run(
           "UPDATE chat_turns SET status='retrieving' WHERE id=? AND attempt_id=? AND status='generating'",
@@ -418,6 +421,8 @@ export function createChatRuntime(
           turn.id,
           turn.attempt_id,
         );
+        retrievalDurationMs =
+          (retrievalDurationMs ?? 0) + performance.now() - started;
         return {
           sources: found.results.map((source) => ({
             citation:
@@ -497,6 +502,10 @@ export function createChatRuntime(
             turnId: turn.id,
             sources: retrieval.results.map(({ content, score, ...s }) => s),
             trace: retrieval.trace,
+            retrievalDurationMs:
+              retrievalDurationMs === undefined
+                ? undefined
+                : Math.round(retrievalDurationMs),
           },
         ];
         await store.run(

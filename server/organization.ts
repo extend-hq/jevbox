@@ -2,7 +2,7 @@ import { queues, type BackgroundJob } from "./jobs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ProviderResponseError } from "./provider-http";
-import { createJev, retrievalLimits } from "./jev";
+import { createJev, filingMenuSize } from "./jev";
 import { availableChatModels, generateAnswer } from "./ai";
 import { getSettings } from "./providers";
 import { flatten, type ParsedDocument } from "./indexing";
@@ -72,10 +72,10 @@ export async function planFiling(options: {
     children?: Candidate[];
   };
   function grouped(nodes: Candidate[], prefix: string): Candidate[] {
-    if (nodes.length <= retrievalLimits.menuSize) return nodes;
+    if (nodes.length <= filingMenuSize) return nodes;
     const size = Math.max(
-      retrievalLimits.menuSize,
-      Math.ceil(nodes.length / retrievalLimits.menuSize),
+      filingMenuSize,
+      Math.ceil(nodes.length / filingMenuSize),
     );
     const groups: Candidate[] = [];
     for (let i = 0; i < nodes.length; i += size) {

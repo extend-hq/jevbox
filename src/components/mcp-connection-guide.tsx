@@ -11,7 +11,9 @@ import {
 import { ScrollArea } from "./coss/scroll-area";
 import { Tabs, TabsList, TabsTab, TabsPanel } from "./coss/tabs";
 import { ProviderLogo } from "./provider-logo";
-import { ArrowUpRight, Check, Code, Copy, PlugFilled } from "./icons";
+import { ArrowUpRight, Check, Copy, PlugFilled } from "./icons";
+import { RouteLink } from "./route-link";
+import { paths } from "../lib/navigation";
 
 type Client = "codex" | "claude" | "cursor" | "vscode" | "other";
 type Screenshot = {
@@ -28,10 +30,20 @@ type Guide = {
   docs: string;
   steps: Step[];
   snippet?: { label: string; text: string; description: string };
-  screenshot?: Screenshot;
+  screenshots?: Screenshot[];
 };
 
 const screenshots = {
+  codexPlugins: {
+    src: "/guides/mcp/codex-create-plugin.webp",
+    alt: "Codex Plugins page with Add open and Create plugin in the menu.",
+    caption: "Codex · Customize → Plugins → Add → Create plugin",
+  },
+  codexForm: {
+    src: "/guides/mcp/codex-new-plugin.webp",
+    alt: "Codex New Plugin dialog with Name, Server URL, OAuth authentication, a confirmation checkbox, and Create.",
+    caption: "Codex · New Plugin → Server URL → OAuth",
+  },
   claude: {
     src: "/guides/mcp/claude-connector.webp",
     alt: "Claude Add custom connector dialog with Name and MCP server URL fields.",
@@ -59,7 +71,17 @@ function ClientLogo({ client, size = 18 }: { client: Client; size?: number }) {
         size={size}
       />
     );
-  return client === "other" ? <PlugFilled size={size} /> : <Code size={size} />;
+  if (client === "other") return <PlugFilled size={size} />;
+  return (
+    <img
+      className={`provider-logo ${client === "cursor" ? "monochrome" : ""}`}
+      src={`/logos/${client}.svg`}
+      width={size}
+      height={size}
+      alt=""
+      aria-hidden="true"
+    />
+  );
 }
 
 function makeGuides(url: string): Guide[] {
@@ -74,13 +96,14 @@ function makeGuides(url: string): Guide[] {
       label: "Codex",
       subtitle: "Give Codex access to your library in the app or terminal.",
       docs: "https://learn.chatgpt.com/docs/extend/mcp",
+      screenshots: [screenshots.codexPlugins, screenshots.codexForm],
       steps: [
         {
-          title: "Open MCP settings",
+          title: "Create a plugin",
           body: (
             <>
-              Open <strong>Settings → MCP servers</strong>, then choose{" "}
-              <strong>Add server</strong>.
+              In Codex, open <strong>Customize → Plugins</strong>. Choose{" "}
+              <strong>Add → Create plugin</strong>.
             </>
           ),
         },
@@ -88,27 +111,31 @@ function makeGuides(url: string): Guide[] {
           title: "Add Jevbox",
           body: (
             <>
-              Enter <strong>jevbox</strong> as the name, select{" "}
-              <strong>Streamable HTTP</strong>, and paste the MCP URL above.
+              Enter <strong>Jevbox</strong> as the name. Under{" "}
+              <strong>Connection</strong>, choose <strong>Server URL</strong>{" "}
+              and paste the MCP URL above. Set <strong>Authentication</strong>{" "}
+              to <strong>OAuth</strong>.
             </>
           ),
         },
         {
-          title: "Sign in to your library",
+          title: "Create the connection",
           body: (
             <>
-              Save, restart the connection, and select{" "}
-              <strong>Authenticate</strong>. Sign in to Jevbox and approve
-              search and document access.
+              Leave <strong>Advanced OAuth settings</strong> at their discovered
+              defaults. Review the connection, check{" "}
+              <strong>I understand and want to continue</strong>, and select{" "}
+              <strong>Create</strong>.
             </>
           ),
         },
         {
-          title: "Check the connection",
+          title: "Sign in and use Jevbox",
           body: (
             <>
-              Type <code>/mcp</code> in a chat and check that Jevbox is
-              connected. Then ask it to list your Jevbox organizations.
+              Connect the Jevbox plugin and follow the sign-in prompt to approve
+              search and document access. Enable it in a chat and ask Codex to
+              list your Jevbox organizations.
             </>
           ),
         },
@@ -116,7 +143,7 @@ function makeGuides(url: string): Guide[] {
       snippet: {
         label: "Or connect from the terminal",
         description:
-          "Use a current Codex CLI. Its MCP configuration is shared with the desktop app.",
+          "For the Codex CLI or IDE extension. Complete browser sign-in, then use /mcp in the CLI to check the connection.",
         text: `codex mcp add jevbox --url ${JSON.stringify(url)}\ncodex mcp login jevbox\ncodex mcp list`,
       },
     },
@@ -126,7 +153,7 @@ function makeGuides(url: string): Guide[] {
       subtitle:
         "Connect the Claude app, or use Claude Code for a local library.",
       docs: "https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp",
-      screenshot: screenshots.claude,
+      screenshots: [screenshots.claude],
       steps: [
         {
           title: "Open your connectors",
@@ -151,9 +178,9 @@ function makeGuides(url: string): Guide[] {
           title: "Authorize Jevbox",
           body: (
             <>
-              Continue through the connector setup, choose{" "}
-              <strong>Connect</strong>, and sign in to Jevbox to approve read
-              and search access.
+              Select <strong>Add</strong> to save the connector, then choose{" "}
+              <strong>Connect</strong> and sign in to Jevbox to approve read and
+              search access. Leave advanced OAuth fields empty.
             </>
           ),
         },
@@ -179,14 +206,15 @@ function makeGuides(url: string): Guide[] {
       label: "Cursor",
       subtitle: "Bring document search and source passages into Cursor Agent.",
       docs: "https://cursor.com/help/customization/mcp",
-      screenshot: screenshots.cursor,
+      screenshots: [screenshots.cursor],
       steps: [
         {
-          title: "Open MCP customization",
+          title: "Open your MCP configuration",
           body: (
             <>
-              Open <strong>Customize → MCPs → New MCP Server</strong>. Choose{" "}
-              <strong>User</strong> for a personal connection across projects.
+              Open <code>~/.cursor/mcp.json</code> for a personal connection
+              across projects. You can also open it from{" "}
+              <strong>Customize → MCPs → New MCP Server → User</strong>.
             </>
           ),
         },
@@ -195,7 +223,9 @@ function makeGuides(url: string): Guide[] {
           body: (
             <>
               Add the configuration below to <code>~/.cursor/mcp.json</code>,
-              merging it with any existing <code>mcpServers</code> entries.
+              merging it with any existing <code>mcpServers</code> entries. Use{" "}
+              <code>.cursor/mcp.json</code> in your project for a workspace
+              connection instead.
             </>
           ),
         },
@@ -231,7 +261,7 @@ function makeGuides(url: string): Guide[] {
       label: "VS Code",
       subtitle: "Make your library available to agents in VS Code.",
       docs: "https://code.visualstudio.com/docs/agent-customization/mcp-servers",
-      screenshot: screenshots.vscode,
+      screenshots: [screenshots.vscode],
       steps: [
         {
           title: "Open the server setup",
@@ -258,9 +288,9 @@ function makeGuides(url: string): Guide[] {
           title: "Trust and sign in",
           body: (
             <>
-              Review the configuration, trust the server, and complete the
-              Jevbox sign-in flow. Use <strong>MCP: List Servers</strong> to
-              check its status.
+              Review the configuration, then use{" "}
+              <strong>MCP: List Servers → jevbox → Start</strong>. Confirm trust
+              if prompted and complete the Jevbox sign-in flow.
             </>
           ),
         },
@@ -311,8 +341,9 @@ function makeGuides(url: string): Guide[] {
           body: (
             <>
               Use <strong>OAuth</strong> to sign in to Jevbox. If your client
-              only supports headers, create a personal API key above and add the
-              header below.
+              only supports headers, create a personal key in{" "}
+              <RouteLink href={paths.settings("api-keys")}>API keys</RouteLink>{" "}
+              and add the header below.
             </>
           ),
         },
@@ -337,7 +368,7 @@ function makeGuides(url: string): Guide[] {
   ];
 }
 
-function SetupPreview({ client, url }: { client: Client; url: string }) {
+function SetupPreview({ url }: { url: string }) {
   return (
     <figure className="mcp-preview">
       <div
@@ -345,10 +376,8 @@ function SetupPreview({ client, url }: { client: Client; url: string }) {
         aria-label="Illustrated MCP setup form"
       >
         <div className="mcp-preview-toolbar">
-          <ClientLogo client={client} size={16} />
-          <span>
-            {client === "codex" ? "Settings / MCP servers" : "MCP connections"}
-          </span>
+          <PlugFilled size={16} />
+          <span>MCP connections</span>
         </div>
         <div className="mcp-preview-form">
           <h4>Add MCP server</h4>
@@ -430,7 +459,13 @@ export function McpConnectionGuide({
               <p className="mcp-guide-note">
                 {local
                   ? "Your Jevbox address is local. Use the Claude Code command below, or deploy Jevbox to a public HTTPS address for Claude desktop and web."
-                  : "Claude desktop and web need a publicly reachable HTTPS address. Team and Enterprise owners add the connector before members can connect."}
+                  : "Claude desktop and web need a publicly reachable HTTPS address."}{" "}
+                For Team and Enterprise, an owner first adds it in{" "}
+                <strong>
+                  Organization settings → Connectors → Add → Custom → Web
+                </strong>
+                . Members then choose <strong>Connect</strong> under{" "}
+                <strong>Customize → Connectors</strong>.
               </p>
             )}
             <div className="mcp-guide-layout">
@@ -447,41 +482,48 @@ export function McpConnectionGuide({
                   </li>
                 ))}
               </ol>
-              {guide.screenshot ? (
-                <figure className="mcp-guide-screenshot">
-                  <button
-                    type="button"
-                    onClick={() => setScreenshot(guide.screenshot!)}
-                    aria-label={`Enlarge ${guide.label} setup screenshot`}
-                  >
-                    <img
-                      src={guide.screenshot.src}
-                      alt={guide.screenshot.alt}
-                      loading="lazy"
-                    />
-                    <span className="mcp-screenshot-zoom">
-                      <ArrowUpRight size={14} /> Enlarge
-                    </span>
-                  </button>
-                  <figcaption>
-                    {guide.screenshot.caption}
-                    {guide.screenshot.source && (
-                      <>
-                        {" "}
-                        ·{" "}
-                        <a
-                          href={guide.screenshot.source}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Source
-                        </a>
-                      </>
-                    )}
-                  </figcaption>
-                </figure>
+              {guide.screenshots ? (
+                <div className="mcp-guide-screenshots">
+                  {guide.screenshots.map((reference) => (
+                    <figure
+                      className="mcp-guide-screenshot"
+                      key={reference.src}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setScreenshot(reference)}
+                        aria-label={`Enlarge ${reference.caption} screenshot`}
+                      >
+                        <img
+                          src={reference.src}
+                          alt={reference.alt}
+                          loading="lazy"
+                        />
+                        <span className="mcp-screenshot-zoom">
+                          <ArrowUpRight size={14} /> Enlarge
+                        </span>
+                      </button>
+                      <figcaption>
+                        {reference.caption}
+                        {reference.source && (
+                          <>
+                            {" "}
+                            ·{" "}
+                            <a
+                              href={reference.source}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Source
+                            </a>
+                          </>
+                        )}
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
               ) : (
-                <SetupPreview client={guide.id} url={url} />
+                <SetupPreview url={url} />
               )}
             </div>
             {guide.snippet && (
@@ -535,8 +577,9 @@ export function McpConnectionGuide({
         <p>
           For sign-in errors, authenticate again or check that your API key is
           active. Search also requires your organization’s TypeSafe connection
-          and indexed documents. Revoke keys or disconnect OAuth apps on this
-          page.
+          and indexed documents. Manage keys in{" "}
+          <RouteLink href={paths.settings("api-keys")}>API keys</RouteLink> or
+          disconnect OAuth apps below.
         </p>
       </details>
       <Dialog

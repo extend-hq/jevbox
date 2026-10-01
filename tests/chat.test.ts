@@ -311,6 +311,42 @@ test("streaming exposes partial text, durable queue edits preserve order, and du
   );
   assert.equal(completed.turns.length, 0);
 });
+test("retrieval latency survives reload and excludes time spent generating", async () => {
+  hold = true;
+  const start = calls.length;
+  const chat = await newChat();
+  const started = performance.now();
+  await enqueue(chat, "Process question");
+  await waitFor(
+    () => state(chat),
+    (s) => s.turns[0]?.partialText.length > 0,
+  );
+  const retrievalUpperBound = Math.ceil(performance.now() - started);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  hold = false;
+  calls[start].release();
+  const completed = await waitFor(
+    () => state(chat),
+    (s) => s.messages.length === 2,
+  );
+  const answer = completed.messages[1];
+  assert.ok(answer.trace.length);
+  assert.ok(Number.isInteger(answer.retrievalDurationMs));
+  assert.ok(answer.retrievalDurationMs > 0);
+  assert.ok(answer.retrievalDurationMs <= retrievalUpperBound);
+  assert.equal(
+    (await state(chat)).messages[1].retrievalDurationMs,
+    answer.retrievalDurationMs,
+  );
+  const greeting = await newChat();
+  await enqueue(greeting, "Hello");
+  const withoutSearch = await waitFor(
+    () => state(greeting),
+    (s) => s.messages.length === 2,
+  );
+  assert.deepEqual(withoutSearch.messages[1].trace, []);
+  assert.equal(withoutSearch.messages[1].retrievalDurationMs, undefined);
+});
 test("Stop aborts generation and pauses successors until the stopped turn is removed", async () => {
   hold = true;
   const start = calls.length;

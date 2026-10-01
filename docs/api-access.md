@@ -1,6 +1,6 @@
 # API and MCP access
 
-Open **Organization → API keys** to create a personal key. All organization members can manage their own keys. The secret is returned only at creation; copy it before closing the dialog. Keys expire after at most one year and can be revoked immediately. Better Auth’s API Key plugin generates and hashes the secret, enforces expiry and shared rate limits, and handles revocation. Keys cannot act as browser sessions.
+Open **Settings → API keys** to create a personal key and view the API URL, copyable requests, parameters, and response documentation. MCP setup guides and connected apps are in **Settings → MCP**. All organization members can manage their own keys. The secret is returned only at creation; copy it before closing the dialog. Keys expire after at most one year and can be revoked immediately. Better Auth’s API Key plugin generates and hashes the secret, enforces expiry and shared rate limits, and handles revocation. Keys cannot act as browser sessions.
 
 A key authenticates as its creator. Each request supplies an organization ID, and the server checks the creator's current membership and SpiceDB permissions. A key can access multiple organizations that its creator currently belongs to. Administration never bypasses restricted document or ancestor permissions. Every key has full read and search access to content its creator can currently access. Keys have no separately configurable access scopes.
 
@@ -58,7 +58,7 @@ Discovery endpoints:
 
 The issuer is `<APP_ORIGIN>/api/auth`; endpoints for authorization, registration, token exchange, and revocation are advertised in its metadata. Tokens issued for `/mcp` cannot be used at `/api/v1` unless that resource was also authorized. Request `offline_access` to receive refresh tokens. Sign-in is at `/oauth/sign-in`, and the consent page is at `/oauth/consent`.
 
-**Connected apps** in the API keys tab lists personal OAuth grants. Disconnecting deletes the consent and its stored tokens and invalidates already-issued access tokens, including after a subsequent reconnect. Already downloaded content remains with its recipient.
+**Connected apps** in **Settings → MCP** lists personal OAuth grants. Disconnecting deletes the consent and its stored tokens and invalidates already-issued access tokens, including after a subsequent reconnect. Already downloaded content remains with its recipient.
 
 ## Operations
 

@@ -7,7 +7,7 @@ import {
   type Route,
 } from "../server/beam-search";
 import { createJev, retrievalLimits } from "../server/jev";
-import { buildIndex, flatten } from "../server/indexing";
+import { buildIndex, flatten, withLayoutSections } from "../server/indexing";
 import { createProviders } from "../server/providers";
 import { retrieveDocuments } from "../server/retrieval";
 import type { Resource, Store, Actor } from "../server/db";
@@ -459,8 +459,9 @@ test("category routes stay visible beside grouped top-level documents", async ()
 });
 
 test("sibling authorization runs concurrently within its bound and preserves menu order", async () => {
-  const resources = Array.from({ length: 32 }, (_, i) =>
-    document(`doc-${i}`, "# Section\nEvidence"),
+  const resources = Array.from(
+    { length: retrievalLimits.menuSize * 2 },
+    (_, i) => document(`doc-${i}`, "# Section\nEvidence"),
   );
   const { store } = storeFor(resources);
   let active = 0;
@@ -488,7 +489,7 @@ test("sibling authorization runs concurrently within its bound and preserves men
             assert.deepEqual(
               choices.filter((id) => id !== "none"),
               resources
-                .slice(0, 16)
+                .slice(0, retrievalLimits.menuSize)
                 .map((resource) => `document:${resource.id}`),
             );
             checked = true;
@@ -682,4 +683,234 @@ test("access revoked during scoring excludes results and retrieval paths", async
   );
   assert.deepEqual(result.results, []);
   assert.deepEqual(result.trace, []);
+});
+
+test("routing retains late headings in a folder with many documents", async () => {
+  const folder = { ...document("folder", ""), kind: "folder" as const };
+  const resources = [
+    folder,
+    ...Array.from({ length: 50 }, (_, i) =>
+      document(
+        `doc-${i}`,
+        i === 35
+          ? `${Array.from({ length: 20 }, (_, j) => `# Background topic ${j}\nUnrelated text.`).join("\n")}\n# Population estimate\nThe estimate is 739.`
+          : "# Other topic\nUnrelated text.",
+        folder.id,
+      ),
+    ),
+  ];
+  const { store } = storeFor(resources);
+  let sawOutline = false;
+  const result = await retrieveDocuments(
+    store,
+    actor,
+    "What is the population estimate?",
+    "key",
+    async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.questions.usefulness)
+        return Response.json({
+          answers: {
+            usefulness: {
+              type: "score",
+              score: body.state.includes("739") ? 3 : 0,
+            },
+          },
+        });
+      return Response.json({
+        answers: Object.fromEntries(
+          Object.entries(body.questions).map(
+            ([id, question]: [string, any]) => {
+              const chosen = Object.entries(question.criteria).find(
+                ([key, description]) =>
+                  key !== "none" &&
+                  String(description).includes("Population estimate"),
+              )?.[0];
+              if (chosen === "document:doc-35") sawOutline = true;
+              return [
+                id,
+                {
+                  probabilities: Object.fromEntries(
+                    Object.keys(question.criteria).map((key) => [
+                      key,
+                      Number(key === (chosen ?? "none")),
+                    ]),
+                  ),
+                },
+              ];
+            },
+          ),
+        ),
+      });
+    },
+  );
+  assert.equal(sawOutline, true);
+  assert.equal(result.results[0]?.documentId, "doc-35");
+  assert.match(result.results[0].content, /739/);
+  assert.ok(
+    result.trace.filter((step) => step.stage === "passage").length < 12,
+  );
+});
+
+test("layout repair assigns interleaved columns to their geometric section without changing source blocks", () => {
+  const heading = (
+    id: string,
+    content: string,
+    left: number,
+    top: number,
+    right: number,
+  ) => ({
+    id,
+    type: "section_heading",
+    content,
+    boundingBox: { left, top, right, bottom: top + 20 },
+    metadata: { page: { number: 1 } },
+  });
+  const text = (id: string, left: number, top: number) => ({
+    id,
+    type: "text",
+    content: `Paragraph ${id} contains source facts and the observed value 739.`,
+    boundingBox: { left, top, right: left + 90, bottom: top + 25 },
+    metadata: { page: { number: 1 } },
+  });
+  const blocks = [
+    heading("first-heading", "# First section", 0, 0, 210),
+    heading("second-heading", "# Second section", 0, 250, 210),
+    ...Array.from({ length: 8 }, (_, i) =>
+      text(`text-${i}`, i < 4 ? 0 : 120, 40 + (i % 4) * 35),
+    ),
+  ];
+  const parsed = buildIndex(
+    [{ content: blocks.map((block) => block.content).join("\n\n"), blocks }],
+    "extend",
+  );
+  const first = parsed.nodes[0];
+  const second = parsed.nodes[1];
+  assert.match(first.content, /text-7/);
+  assert.doesNotMatch(second.content, /739/);
+  assert.deepEqual(
+    first.passages!.flatMap((passage) => passage.blockIds),
+    ["first-heading", ...blocks.slice(2).map((block) => block.id)],
+  );
+  assert.deepEqual(
+    parsed.blocks.map((block) => block.id),
+    blocks.map((block) => block.id),
+  );
+  assert.equal(
+    parsed.markdown,
+    blocks.map((block) => block.content).join("\n\n"),
+  );
+  const original = structuredClone(parsed);
+  assert.deepEqual(withLayoutSections(parsed), parsed);
+  assert.deepEqual(parsed, original);
+});
+
+test("a large document cannot starve another document during recovery", async () => {
+  const branch = (id: string, probability: number): RouteNode<string> => ({
+    id,
+    scope: id,
+    describe: async () => String(probability),
+    children: Array.from({ length: 80 }, (_, i) => ({
+      id: `${id}-${i}`,
+      scope: id,
+      value: id,
+      describe: async () => id,
+      children: [],
+    })),
+  });
+  const traversal = createTraversal(
+    [branch("large", 0.99), branch("other", 0.01)],
+    {
+      choose: async (_query, menus) =>
+        new Map(
+          menus.map((menu) => [
+            menu.id,
+            {
+              ...Object.fromEntries(
+                menu.choices.map((choice) => [
+                  choice.id,
+                  menu.id === "library"
+                    ? Number(choice.text)
+                    : 1 / menu.choices.length,
+                ]),
+              ),
+              none: 0,
+            },
+          ]),
+        ),
+    },
+    "question",
+    (node) => !!node.value,
+    true,
+  );
+  const visited: string[] = [];
+  while (!traversal.exhausted && !visited.includes("other"))
+    visited.push(
+      ...(await traversal.walk()).flatMap((route) =>
+        route.node.value ? [route.node.value] : [],
+      ),
+    );
+  assert.ok(visited.includes("other"));
+  assert.ok(visited.filter((id) => id === "large").length < 20);
+});
+
+test("simultaneous checks share only in-flight work and revocation is rechecked after routing", async () => {
+  const resources = [
+    document("a", "# Root\n## First\nFacts.\n## Second\nFacts."),
+    document("b", "# Root\nFacts."),
+  ];
+  const { store, allowed } = storeFor(resources);
+  const active = new Map<string, number>();
+  const counts = new Map<string, number>();
+  store.permission = async (_actor, _kind, id) => {
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+    active.set(id, (active.get(id) ?? 0) + 1);
+    assert.equal(active.get(id), 1);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    active.set(id, active.get(id)! - 1);
+    return allowed.has(id);
+  };
+  const result = await retrieveDocuments(
+    store,
+    actor,
+    "question",
+    "key",
+    async (url, init) => {
+      const response = await jevFetch(url, init);
+      allowed.delete("a");
+      return response;
+    },
+  );
+  assert.ok(counts.get("a")! >= 2);
+  assert.ok(result.results.every((source) => source.documentId !== "a"));
+  assert.ok(result.trace.every((step) => step.resourceId !== "a"));
+});
+
+test("long source sections share the passage budget with other documents", async () => {
+  const { store } = storeFor([
+    document("long", "# Outline\n" + "Unrelated background. ".repeat(12000)),
+    document("other", "# Outline\nThe observed value is 739."),
+  ]);
+  let scored = 0;
+  const result = await retrieveDocuments(
+    store,
+    actor,
+    "What is the observed value?",
+    "key",
+    async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (!body.questions.usefulness) return choiceResponse(body);
+      scored++;
+      return Response.json({
+        answers: {
+          usefulness: {
+            type: "score",
+            score: body.state.includes("739") ? 2.49 : 0,
+          },
+        },
+      });
+    },
+  );
+  assert.equal(result.results[0]?.documentId, "other");
+  assert.ok(scored <= retrievalLimits.evidenceConcurrency);
 });

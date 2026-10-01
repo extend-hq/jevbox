@@ -2,6 +2,32 @@
 
 A full stack, permission-aware document library. Browse with Extend UI Finder, inspect document trees and parsed output, share with organization members, search the hierarchy with JEV, and ask source-grounded questions through the AI SDK.
 
+## See it in action
+
+### Chat, with the evidence beside you
+
+Ask questions across your library, follow inline citations, and preview the original source without leaving the conversation.
+
+![Jevbox chat with cited answers, attached documents, and an original-source preview](docs/screenshots/chat.png)
+
+### A Finder in three dimensions
+
+Explore folders and documents in a spatial library, then move closer to reveal their structure.
+
+![Jevbox's 3D Finder displaying a spatial library of documents in dark mode](docs/screenshots/finder-3d.png)
+
+### Your library, your view
+
+Switch between visual browsing, a compact outline, folder columns, and full-page previews.
+
+| Grid | List |
+| :---: | :---: |
+| ![Grid view with document covers and folders](docs/screenshots/finder-grid.png) | ![List view with nested folders and document metadata](docs/screenshots/finder-list.png) |
+| **Columns** | **Gallery** |
+| ![Columns view with a folder hierarchy and document preview](docs/screenshots/finder-columns.png) | ![Gallery view with a large document preview and thumbnail strip](docs/screenshots/finder-gallery.png) |
+
+<sub>Captured from the app using a demo workspace.</sub>
+
 ## Run locally
 
 Requires Node 24.6+, pnpm 10.15.1, and a running Docker engine with Compose.
@@ -17,7 +43,7 @@ pnpm dev
 
 `pnpm setup:local` creates `.env` and a stable encryption key. `pnpm services:up` starts PostgreSQL and SpiceDB in Docker and waits for both to be ready. `pnpm dev` then starts the app server, Vite frontend, and pg-boss consumers in your terminal. **`pnpm dev` does not start PostgreSQL or SpiceDB.** Keep that terminal open while using the app.
 
-On later days, start Docker and run `pnpm services:up` followed by `pnpm dev`. Open http://localhost:4310, create an organization, and configure **Organization settings → Connections**:
+On later days, start Docker and run `pnpm services:up` followed by `pnpm dev`. Open http://localhost:4310, create an organization, and configure **Settings → Connections**:
 
 - **Extend API key** for parsing PDFs, Office documents, and images. Plain text, Markdown, code, JSON, HTML, and CSV index locally.
 - **TypeSafe API key** for hierarchical beam search through categories, documents, and sections, followed by independent usefulness scoring of source passages. Search and document questions require this connection; there is no keyword or embedding fallback.
@@ -43,7 +69,7 @@ PostgreSQL stores accounts, sessions, document bytes, parsed output, and chats. 
 
 ## Capabilities
 
-- Personal API keys in **Organization → API keys**, a versioned read-only search/document API, and a permission-aware MCP server with API-key or OAuth authentication. See [API and MCP access](docs/api-access.md).
+- Personal API keys and REST usage documentation in **Settings → API keys**, with MCP connection guides and connected apps in **Settings → MCP**. The versioned read-only API and MCP server use current document permissions and accept API-key or OAuth authentication. See [API and MCP access](docs/api-access.md).
 
 - Better Auth email/password authentication with mailbox verification, password recovery, and signed HttpOnly session cookies.
 - Better Auth organizations and emailed invitations, admin/member role management, member removal, organization switching, and admin-only settings. Membership acceptance requires a verified matching email and atomic SpiceDB publication.

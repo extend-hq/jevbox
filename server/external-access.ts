@@ -12,7 +12,7 @@ import {
   type Actor,
   type Store,
 } from "./db";
-import { flatten, type ParsedDocument } from "./indexing";
+import { flatten, withLayoutSections, type ParsedDocument } from "./indexing";
 import type { createProviders } from "./providers";
 
 type Auth = ReturnType<typeof createAuthentication>["auth"];
@@ -276,7 +276,7 @@ export function createExternalAccess(
     if (doc.kind !== "document") throw new HttpError(404, "Document not found");
     if (doc.status !== "ready" || !doc.parsed)
       throw new HttpError(409, "Document is not indexed yet");
-    const parsed: ParsedDocument = JSON.parse(doc.parsed);
+    const parsed: ParsedDocument = withLayoutSections(JSON.parse(doc.parsed));
     const nodes = flatten(parsed.nodes);
     const node = input.nodeId
       ? nodes.find((n) => n.id === input.nodeId)

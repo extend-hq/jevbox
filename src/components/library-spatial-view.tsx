@@ -11,6 +11,12 @@ import type { ParsedBlock } from "../../shared/parsed-blocks";
 import type { FileSystemEntry, FileSystemFileItem } from "./extend/file-system";
 import { FOLDER_GLYPH_SVG } from "./extend/folder-glyph";
 import { layoutSpatialTree, type SpatialNode } from "../lib/spatial-tree";
+import {
+  createDetailThumbnailQueue,
+  detailThumbnailCandidates,
+  smallThumbnailCandidates,
+} from "../lib/detail-thumbnail-queue";
+import type { SpatialThumbnail } from "../lib/spatial-thumbnail-renderer";
 import "./library-spatial-view.css";
 
 type Entry = FileSystemEntry;
@@ -31,6 +37,10 @@ type Props = {
   loadDocumentStructure?: (
     file: FileSystemFileItem,
   ) => Promise<SpatialDocumentStructure | null>;
+  loadDetailThumbnail?: (
+    file: FileSystemFileItem,
+    signal: AbortSignal,
+  ) => Promise<SpatialThumbnail | null>;
 };
 type SceneHandle = {
   focus: (path?: string) => void;
@@ -1163,10 +1173,110 @@ export function LibrarySpatialView(props: Props) {
     let lastTime = performance.now();
     const width = () => Math.max(1, container.clientWidth);
     const height = () => Math.max(1, container.clientHeight);
+    const smallMaps = new Map<string, THREE.Texture>();
+    const detailMaps = new Map<string, THREE.Texture>();
+    const placeholderMaps = new Map(
+      [...floaters.values()].flatMap((floater) =>
+        floater.cover?.material.map
+          ? [[floater.node.path, floater.cover.material.map] as const]
+          : [],
+      ),
+    );
+    let nextDetailCheck = 0;
+
+    function reportThumbnail(
+      path: string,
+      map: THREE.Texture,
+      quality: string,
+    ) {
+      if (!container) return;
+      const image = map.image as { width?: number; height?: number };
+      const button = [
+        ...(container.parentElement?.querySelectorAll<HTMLElement>(
+          "[data-entry-path]",
+        ) ?? []),
+      ].find((item) => item.dataset.entryPath === path);
+      if (button) {
+        button.dataset.thumbnailQuality = quality;
+        button.dataset.thumbnailSize = `${image.width ?? 0}x${image.height ?? 0}`;
+      }
+      container.dataset.smallThumbnails = String(smallMaps.size);
+      container.dataset.detailThumbnails = String(detailMaps.size);
+    }
+    function applyThumbnail(path: string, map: THREE.Texture, quality: string) {
+      const cover = floaters.get(path)?.cover;
+      if (!cover) return;
+      cover.material.map = map;
+      cover.material.needsUpdate = true;
+      reportThumbnail(path, map, quality);
+    }
+    const detailQueue = createDetailThumbnailQueue<THREE.Texture>({
+      async load(path, signal) {
+        const entry = latest.current.items.find((item) => item.path === path);
+        if (entry?.kind !== "file" || !latest.current.loadDetailThumbnail)
+          return null;
+        const preview = await latest.current.loadDetailThumbnail(entry, signal);
+        if (!preview) return null;
+        try {
+          signal.throwIfAborted();
+          const map = await textureLoader.loadAsync(preview.url);
+          if (signal.aborted || disposed) {
+            map.dispose();
+            return null;
+          }
+          map.colorSpace = THREE.SRGBColorSpace;
+          return texture(map);
+        } finally {
+          preview.release();
+        }
+      },
+      apply(path, map) {
+        if (map) detailMaps.set(path, map);
+        else detailMaps.delete(path);
+        const next = map ?? smallMaps.get(path) ?? placeholderMaps.get(path);
+        if (next) applyThumbnail(path, next, map ? "detail" : "small");
+      },
+      dispose(map) {
+        textures.delete(map);
+        map.dispose();
+      },
+    });
+    function updateDetailThumbnails() {
+      if (!latest.current.loadDetailThumbnail) return;
+      const candidates = [];
+      for (const floater of floaters.values()) {
+        if (floater.node.kind !== "file") continue;
+        projected.copy(floater.group.position).project(camera);
+        worldPoint
+          .copy(floater.group.position)
+          .applyMatrix4(camera.matrixWorldInverse);
+        const depth = -worldPoint.z;
+        candidates.push({
+          path: floater.node.path,
+          visible:
+            projected.z > -1 &&
+            projected.z < 1 &&
+            Math.abs(projected.x) < 1.1 &&
+            Math.abs(projected.y) < 1.1,
+          focused:
+            (floater.node.path === latest.current.selectedPath && depth < 45) ||
+            floater.node.path === treePath,
+          pixels:
+            depth > 0
+              ? (floater.height * height() * pixelRatio) /
+                (2 * depth * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)))
+              : 0,
+          distance: depth,
+        });
+      }
+      const desired = detailThumbnailCandidates(candidates);
+      for (const path of desired) queueThumbnail(path);
+      detailQueue.update(desired);
+    }
 
     function queueThumbnail(path: string) {
       if (
-        activeLoads >= 3 ||
+        activeLoads >= 6 ||
         loaded.has(path) ||
         pending.has(path) ||
         attempted.has(path)
@@ -1198,9 +1308,16 @@ export function LibrarySpatialView(props: Props) {
           texture(map);
           const floater = floaters.get(path);
           if (floater?.cover) {
-            floater.cover.material.map?.dispose();
-            floater.cover.material.map = map;
-            floater.cover.material.needsUpdate = true;
+            const previous = placeholderMaps.get(path);
+            if (previous) {
+              textures.delete(previous);
+              previous.dispose();
+              placeholderMaps.delete(path);
+            }
+            smallMaps.set(path, map);
+            if (!detailMaps.has(path)) {
+              applyThumbnail(path, map, "small");
+            }
             const image = map.image as { width?: number; height?: number };
             const aspect =
               image.width && image.height ? image.width / image.height : 0.75;
@@ -1228,31 +1345,35 @@ export function LibrarySpatialView(props: Props) {
         });
     }
     function scheduleThumbnails() {
-      window.clearTimeout(thumbTimer);
+      if (thumbTimer) return;
       thumbTimer = window.setTimeout(() => {
+        thumbTimer = 0;
         if (disposed) return;
-        const candidates = [...floaters.values()]
-          .filter(({ node, base }) => {
-            if (node.kind !== "file") return false;
-            projected.copy(base).project(camera);
-            return (
-              projected.z < 1 &&
-              projected.z > -1 &&
-              Math.abs(projected.x) < 1.1 &&
-              Math.abs(projected.y) < 1.1
-            );
-          })
-          .sort((a, b) => {
-            if (a.node.path === latest.current.selectedPath) return -1;
-            if (b.node.path === latest.current.selectedPath) return 1;
-            return (
-              a.base.distanceToSquared(camera.position) -
-              b.base.distanceToSquared(camera.position)
-            );
-          })
-          .slice(0, 40);
-        for (const { node } of candidates) queueThumbnail(node.path);
-      }, 180);
+        const candidates = [...floaters.values()].flatMap(({ node, base }) => {
+          if (node.kind !== "file") return [];
+          projected.copy(base).project(camera);
+          return [
+            {
+              path: node.path,
+              focused: node.path === latest.current.selectedPath,
+              visible:
+                projected.z < 1 &&
+                projected.z > -1 &&
+                Math.abs(projected.x) < 1.1 &&
+                Math.abs(projected.y) < 1.1,
+              distance: base.distanceToSquared(camera.position),
+            },
+          ];
+        });
+        for (const path of smallThumbnailCandidates(
+          candidates,
+          attempted,
+          pending,
+        )) {
+          if (activeLoads >= 6) break;
+          queueThumbnail(path);
+        }
+      }, 30);
     }
 
     function pickTreeDocument() {
@@ -1348,6 +1469,10 @@ export function LibrarySpatialView(props: Props) {
       if (nextTree !== treePath) {
         treePath = nextTree;
         if (treePath) requestStructure(treePath);
+      }
+      if (now >= nextDetailCheck) {
+        nextDetailCheck = now + 250;
+        updateDetailThumbnails();
       }
       // Only one document's outline is ever shown: the rest vanish at once
       // rather than folding away alongside the new one.
@@ -1825,6 +1950,7 @@ export function LibrarySpatialView(props: Props) {
       cancelAnimationFrame(frame);
       window.clearTimeout(thumbTimer);
       window.clearTimeout(reframeTimer);
+      detailQueue.dispose();
       resize.disconnect();
       controls.dispose();
       renderer.domElement.removeEventListener("pointerdown", pointerDown);
