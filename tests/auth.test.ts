@@ -438,7 +438,7 @@ test("failed membership provisioning removes the credential account and can be r
   const cookie = await mailbox.signIn(base, input.email);
   assert.equal((await request("/me", undefined, cookie)).status, 200);
 });
-test("account throttling survives auth recreation and changing client IPs", async () => {
+test("native database rate limits survive auth recreation", async () => {
   let auth = createAuthentication(runtime.store, {
     directory,
     origin,
@@ -451,14 +451,20 @@ test("account throttling survives auth recreation and changing client IPs", asyn
         origin,
         sendAuthEmail: mailbox.sendAuthEmail,
       }).auth;
-    await assert.rejects(
-      auth.api.signInEmail({
-        body: { email: "throttled@local.test", password },
-        headers: new Headers({ "x-jevbox-client-ip": `192.0.2.${index + 1}` }),
+    const response = await auth.handler(
+      new Request(origin + "/api/auth/sign-in/email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: origin,
+          "x-jevbox-client-ip": "192.0.2.200",
+        },
+        body: JSON.stringify({ email: "throttled@local.test", password }),
       }),
-      (error: any) =>
-        error.status === (index < 10 ? "UNAUTHORIZED" : "TOO_MANY_REQUESTS"),
     );
+    assert.equal(response.status, index < 10 ? 401 : 429);
+    if (index === 10)
+      assert.ok(Number(response.headers.get("x-retry-after")) > 0);
   }
 });
 test("recovery responses do not wait for SMTP delivery", async () => {
@@ -603,8 +609,12 @@ test("plugin invitations deliver email and grant membership only after verified 
     .organization.id;
   for (const mode of ["expired", "canceled", "accepted"] as const) {
     const email = `invited-${mode}@local.test`;
-    const invitation = await request("/invitations", { email }, admin);
-    assert.equal(invitation.status, 201, await invitation.clone().text());
+    const invitation = await request(
+      "/auth/organization/invite-member",
+      { email, role: "member" },
+      admin,
+    );
+    assert.equal(invitation.status, 200, await invitation.clone().text());
     const { id: invitationId } = await invitation.json();
     assert.ok(
       mailbox.messages.some(
@@ -1017,5 +1027,96 @@ test("repeated native signup resends verification without recreating the organiz
       )
     ).length,
     1,
+  );
+});
+
+test("native member removal works after the member has signed out", async () => {
+  const signIn = await request("/auth/sign-in/email", {
+    email: "auth@local.test",
+    password: "updated-secure-password-456!",
+  });
+  assert.equal(signIn.status, 200);
+  const admin = signIn.headers
+    .getSetCookie()
+    .map((value) => value.split(";")[0])
+    .join("; ");
+  const email = "signed-out-member@local.test";
+  const invitationResponse = await request(
+    "/auth/organization/invite-member",
+    { email, role: "member" },
+    admin,
+  );
+  assert.equal(invitationResponse.status, 200);
+  const { id: invitationId } = await invitationResponse.json();
+  assert.equal(
+    (
+      await request("/auth/sign-up/email", {
+        name: "Member",
+        email,
+        password,
+        invite: invitationId,
+      })
+    ).status,
+    200,
+  );
+  const verification = new URL(
+    mailbox.messages.findLast(
+      (message) => message.kind === "verification" && message.to === email,
+    )!.url,
+  );
+  const verified = await fetch(
+    base + verification.pathname + verification.search,
+    { redirect: "manual" },
+  );
+  assert.equal(verified.status, 302);
+  const memberCookie = verified.headers
+    .getSetCookie()
+    .map((value) => value.split(";")[0])
+    .join("; ");
+  assert.equal(
+    (
+      await request(
+        "/auth/organization/accept-invitation",
+        { invitationId },
+        memberCookie,
+      )
+    ).status,
+    200,
+  );
+  const member = (
+    await (
+      await request("/auth/organization/list-members", undefined, admin)
+    ).json()
+  ).members.find(
+    (member: { user: { email: string } }) => member.user.email === email,
+  );
+  assert.ok(member);
+  assert.equal(
+    (
+      await request(
+        "/auth/organization/update-member-role",
+        { memberId: member.id, role: "admin" },
+        admin,
+      )
+    ).status,
+    200,
+  );
+  assert.equal((await request("/auth/sign-out", {}, memberCookie)).status, 200);
+  assert.deepEqual(
+    await (await runtime.auth.$context).internalAdapter.listSessions(
+      member.userId,
+    ),
+    [],
+  );
+  const removal = await request(
+    "/auth/organization/remove-member",
+    { memberIdOrEmail: member.id },
+    admin,
+  );
+  assert.equal(removal.status, 200, await removal.clone().text());
+  assert.ok(
+    !(await (
+      await request("/auth/organization/list-members", undefined, admin)
+    ).json()).members.some((current: { id: string }) => current.id === member.id),
   );
 });

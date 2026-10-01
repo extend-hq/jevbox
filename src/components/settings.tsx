@@ -1,3 +1,4 @@
+import { authClient, authData, organizationMembers } from "@/lib/auth-client";
 import { MessageSquareOutline } from "./icons";
 import { ChatProviderSetup, type ProviderDraft } from "./chat-provider-setup";
 import { notifySuccess } from "@/lib/notifications";
@@ -53,7 +54,7 @@ export function SettingsView({
   const action = useAction();
   const isAdmin = me.role === "admin";
   const refresh = async () => {
-    const m = await api<Member[]>("/members");
+    const m = await organizationMembers(me.organization.id);
     setMembers(m);
     if (isAdmin) {
       const s = await api("/settings");
@@ -468,12 +469,18 @@ export function SettingsView({
                       ]}
                       onChange={(role) =>
                         void action.run(async () => {
-                          await api(`/members/${m.id}`, {
-                            method: "PATCH",
-                            body: JSON.stringify({ role }),
-                          });
-                          setMembers(await api<Member[]>("/members"));
+                          authData(
+                            await authClient.organization.updateMemberRole({
+                              memberId: m.membershipId,
+                              role,
+                              organizationId: me.organization.id,
+                            }),
+                          );
+                          setMembers(
+                            await organizationMembers(me.organization.id),
+                          );
                           onSaved();
+                          notifySuccess("Role updated");
                         })
                       }
                     />
@@ -499,9 +506,15 @@ export function SettingsView({
                         size="sm"
                         onClick={() =>
                           void action.run(async () => {
-                            await api(`/members/${m.id}`, { method: "DELETE" });
+                            authData(
+                              await authClient.organization.removeMember({
+                                memberIdOrEmail: m.membershipId,
+                                organizationId: me.organization.id,
+                              }),
+                            );
                             setRemove("");
                             await refresh();
+                            notifySuccess("Member removed");
                           })
                         }
                       >
@@ -534,12 +547,19 @@ export function SettingsView({
                   if (action.busy) return;
                   const form = new FormData(e.currentTarget);
                   void action.run(async () => {
-                    const data = await api("/invitations", {
-                      method: "POST",
-                      body: JSON.stringify({ email: form.get("email") }),
-                    });
-                    setInvitation(data.url);
+                    const data = authData(
+                      await authClient.organization.inviteMember({
+                        email: String(form.get("email")),
+                        role: "member",
+                        organizationId: me.organization.id,
+                        resend: true,
+                      }),
+                    );
+                    setInvitation(
+                      `${location.origin}/login?invite=${encodeURIComponent(data.id)}`,
+                    );
                     setCopied(false);
+                    notifySuccess("Invitation created");
                   });
                 }}
               >

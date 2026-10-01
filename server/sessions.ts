@@ -1,23 +1,30 @@
 import { HttpError, type Actor, type Store } from "./db";
+import type { createAuthentication } from "./auth";
+import { isAPIError } from "better-auth/api";
 
-export async function authenticateToken(
+type Auth = ReturnType<typeof createAuthentication>["auth"];
+
+export async function sessionActor(
   store: Store,
-  token: string,
+  auth: Auth,
+  headers: Headers,
 ): Promise<Actor> {
-  const current = await store.one<{
-    user_id: string;
-    org_id: string;
-    role: string;
-  }>(
-    "SELECT s.user_id,s.org_id,m.role FROM auth_sessions s JOIN users u ON u.id=s.user_id JOIN members m ON m.org_id=s.org_id AND m.user_id=s.user_id WHERE s.id=? AND s.expires_at>now() AND u.email_verified=true",
-    token,
-  );
-  if (!current) throw new HttpError(401, "Please sign in");
+  const current = await auth.api.getSession({
+    headers,
+    query: { disableCookieCache: true },
+  });
+  if (!current?.user.emailVerified) throw new HttpError(401, "Please sign in");
+  const member = await auth.api.getActiveMember({ headers }).catch((error) => {
+    if (isAPIError(error) && [400, 401, 403].includes(error.statusCode))
+      return null;
+    throw error;
+  });
+  if (!member) throw new HttpError(401, "Please sign in");
   const actor = {
-    userId: current.user_id,
-    orgId: current.org_id,
-    role: current.role,
-    token,
+    userId: current.user.id,
+    orgId: member.organizationId,
+    role: member.role,
+    token: current.session.token,
   };
   if (
     !(await store.permission(
@@ -29,4 +36,16 @@ export async function authenticateToken(
   )
     throw new HttpError(401, "Please sign in");
   return actor;
+}
+
+export async function authenticateToken(
+  store: Store,
+  auth: Auth,
+  token: string,
+): Promise<Actor> {
+  return sessionActor(
+    store,
+    auth,
+    new Headers({ Authorization: `Bearer ${token}` }),
+  );
 }

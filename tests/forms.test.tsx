@@ -410,10 +410,11 @@ const settings = {
   providers: { openai: { configured: true, models: [], hasConfig: true } },
 };
 function settingsResponse(request: RequestCall) {
-  if (request.path === "/api/members") return json([]);
+  if (request.path === "/api/auth/organization/list-members")
+    return json({ members: [], total: 0 });
   if (request.path === "/api/settings") return json(settings);
-  if (request.path === "/api/invitations")
-    return json({ url: "https://app.test/?invite=token" });
+  if (request.path === "/api/auth/organization/invite-member")
+    return json({ id: "token" });
   throw new Error(`Unexpected request: ${request.path}`);
 }
 
@@ -482,11 +483,11 @@ test("invitations validate email locally before creating a link", async () => {
   await fill("email", "invited@example.test");
   await submit();
   const invite = requests.find((request) => request.method === "POST");
-  assert.equal(invite?.path, "/api/invitations");
+  assert.equal(invite?.path, "/api/auth/organization/invite-member");
   assert.equal(invite?.body.email, "invited@example.test");
   assert.equal(
     element<HTMLInputElement>('[aria-label="Invitation link"]').value,
-    "https://app.test/?invite=token",
+    `${location.origin}/login?invite=token`,
   );
 });
 

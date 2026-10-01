@@ -1,5 +1,4 @@
 import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
-import { requireMcpAuth } from "@better-auth/mcp";
 import { toNodeHandler } from "better-auth/node";
 import type { createAuthentication } from "./auth";
 import { Router } from "express";
@@ -110,28 +109,15 @@ export function createMcpRouter(
           );
           return protocol.fetch(request);
         };
-        if (/^Bearer jev_key_/i.test(req.headers.authorization ?? "")) {
-          const principal = await access.authenticate(req, "/mcp");
-          return serve(principal, () => access.authenticate(req, "/mcp"));
-        }
-        return requireMcpAuth(
-          auth,
-          async (_request, claims) => {
-            const principal = await access.principalFromClaims(claims, "/mcp");
-            return serve(principal, () =>
-              access.principalFromClaims(claims, "/mcp"),
-            );
-          },
-          {
-            resource: `${origin}/mcp`,
-            challengeScopes: ["documents:read", "search:read"],
-          },
-        )(request);
+        const principal = await access.authenticate(req, "/mcp");
+        return serve(principal, () => access.authenticate(req, "/mcp"));
       });
       await handler(req, res);
     } catch (error) {
-      if (error instanceof HttpError && [401, 403].includes(error.status))
-        res.set("WWW-Authenticate", access.challenge(req, error));
+      if ([401, 403].includes(access.status(error))) {
+        const header = access.challenge(req, error);
+        if (header) res.set("WWW-Authenticate", header);
+      }
       next(error);
     }
   });

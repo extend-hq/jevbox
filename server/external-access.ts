@@ -1,5 +1,15 @@
 import { Router, type Request } from "express";
-import { createLocalJWKSet, jwtVerify, type JWTPayload } from "jose";
+import {
+  createInsufficientScopeError,
+  DPOP_SIGNING_ALGORITHMS,
+  createDpopReplayStore,
+  enforceDpopBinding,
+  isDpopBindingError,
+  parseAccessTokenAuthorization,
+} from "better-auth/oauth2";
+import { APIError, isAPIError } from "better-auth/api";
+import { createResourceServerChallenge } from "@better-auth/oauth-provider";
+import { MemoryStore } from "express-rate-limit";
 import { z } from "zod";
 import { apiScopes, type ApiScope } from "../shared/api-access";
 import { createApiKeys } from "./api-keys";
@@ -48,96 +58,76 @@ export function createExternalAccess(
   auth: Auth,
   providers: ReturnType<typeof createProviders>,
   origin: string,
-  consume: ReturnType<typeof createAuthentication>["consume"],
+  validateOAuthToken: ReturnType<
+    typeof createAuthentication
+  >["validateOAuthToken"],
   rateLimits = true,
 ) {
-  const keys = createApiKeys(store, auth);
+  const keys = createApiKeys(auth);
+  const verifiedRequests = new WeakSet<Request>();
+  const searchLimits = new MemoryStore();
+  searchLimits.init({ windowMs: 60000 } as Parameters<MemoryStore["init"]>[0]);
   async function authenticate(
     req: Request,
     audience: "/mcp" | "/api/v1",
   ): Promise<Principal> {
-    const match = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i);
-    if (!match || match[1].length > 16000)
+    const authorization = parseAccessTokenAuthorization(
+      req.headers.authorization,
+    );
+    if (
+      !authorization?.token ||
+      authorization.token.length > 16000 ||
+      authorization.scheme === "Unknown"
+    )
       throw new HttpError(401, "Bearer credential required");
-    const token = match[1];
-    if (token.startsWith("jev_key_")) return keys.authenticate(token);
-    let payload;
+    if (
+      authorization.scheme === "Bearer" &&
+      authorization.token.startsWith("jev_key_")
+    )
+      return keys.authenticate(authorization.token);
     try {
-      const verified = await jwtVerify(
-        token,
-        createLocalJWKSet(await auth.api.getJwks()),
-        {
-          issuer: `${origin}/api/auth`,
-          audience: `${origin}${audience}`,
-          typ: "at+jwt",
-        },
-      );
-      payload = verified.payload;
-    } catch {
-      throw new HttpError(401, "Invalid or expired access token");
+      const payload = await validateOAuthToken(authorization.token);
+      const audiences = Array.isArray(payload.aud)
+        ? payload.aud
+        : [payload.aud];
+      if (!audiences.includes(`${origin}${audience}`))
+        throw new HttpError(401, "Access token is for another resource");
+      if (!verifiedRequests.has(req))
+        await enforceDpopBinding({
+          payload,
+          authorization,
+          proofJwt: req.get("DPoP"),
+          method: req.method,
+          url: new URL(req.originalUrl, origin).href,
+          replayStore: createDpopReplayStore(
+            (await auth.$context).internalAdapter,
+          ),
+        });
+      verifiedRequests.add(req);
+      if (
+        typeof payload.sub !== "string" ||
+        typeof payload.azp !== "string" ||
+        typeof payload.scope !== "string"
+      )
+        throw new HttpError(401, "Invalid access token");
+      return {
+        userId: payload.sub,
+        scopes: payload.scope.split(" ").filter(Boolean),
+        credentialId: `oauth:${payload.azp}:${payload.sub}`,
+      };
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new APIError("UNAUTHORIZED", {
+        message: isDpopBindingError(error)
+          ? error.message
+          : "Invalid or expired access token",
+        error: isDpopBindingError(error) ? error.code : "invalid_token",
+      });
     }
-    if (payload.cnf)
-      throw new HttpError(
-        401,
-        "Sender-constrained token requires MCP authentication",
-      );
-    return principalFromClaims(payload, audience);
-  }
-  async function principalFromClaims(
-    payload: JWTPayload,
-    audience: "/mcp" | "/api/v1",
-  ): Promise<Principal> {
-    if (
-      typeof payload.exp !== "number" ||
-      payload.exp <= Date.now() / 1000 ||
-      typeof payload.sub !== "string" ||
-      typeof payload.azp !== "string" ||
-      typeof payload.scope !== "string" ||
-      typeof payload.jevbox_issued_at !== "number"
-    )
-      throw new HttpError(401, "Invalid access token");
-    const user = await store.one(
-      "SELECT id FROM users WHERE id=? AND email_verified=true",
-      payload.sub,
-    );
-    const consent = await store.one<{ scopes: string; resources: string }>(
-      'SELECT c.scopes,c.resources FROM "oauthConsent" c JOIN "oauthClient" a ON a."clientId"=c."clientId" WHERE c."userId"=? AND c."clientId"=? AND COALESCE(a.disabled,false)=false',
-      payload.sub,
-      payload.azp,
-    );
-    const revocation = await store.one<{ revoked_at: string }>(
-      "SELECT revoked_at FROM oauth_revocations WHERE user_id=? AND client_id=?",
-      payload.sub,
-      payload.azp,
-    );
-    const scopes = payload.scope.split(" ").filter(Boolean);
-    if (
-      !user ||
-      !consent ||
-      (revocation &&
-        Number(revocation.revoked_at) >= payload.jevbox_issued_at) ||
-      !scopes.every((scope) => JSON.parse(consent.scopes).includes(scope)) ||
-      !JSON.parse(consent.resources || "[]").includes(`${origin}${audience}`)
-    )
-      throw new HttpError(401, "Authorization was revoked");
-    if (
-      typeof payload.sid === "string" &&
-      !(await store.one(
-        "SELECT id FROM auth_sessions WHERE id=? AND user_id=? AND expires_at>now()",
-        payload.sid,
-        payload.sub,
-      ))
-    )
-      throw new HttpError(401, "Authorization session expired");
-    return {
-      userId: payload.sub,
-      scopes,
-      credentialId: `oauth:${payload.azp}:${payload.sub}`,
-    };
   }
   function requireScope(principal: Principal, scope: ApiScope) {
     if (!principal.scopes.includes(scope))
-      throw new HttpError(403, `Required scope: ${scope}`);
+      throw createInsufficientScopeError([scope]);
   }
   async function actor(principal: Principal, orgId: string): Promise<Actor> {
     const member = await store.one<{ role: string }>(
@@ -164,7 +154,7 @@ export function createExternalAccess(
       [`search:key:${principal.credentialId}`, 20],
       [`search:org:${orgId}`, 100],
     ] as const) {
-      if (!(await consume(key, { window: 60, max })).allowed)
+      if ((await searchLimits.increment(key)).totalHits > max)
         throw new HttpError(
           429,
           "Search limit reached. Try again in a minute.",
@@ -321,14 +311,28 @@ export function createExternalAccess(
       children: node.children.map(outline),
     };
   }
-  function challenge(req: Request, error: HttpError) {
+  function status(error: unknown) {
+    return error instanceof HttpError
+      ? error.status
+      : isAPIError(error)
+        ? error.statusCode
+        : 500;
+  }
+  function challenge(req: Request, error: unknown) {
     const resource =
       req.originalUrl.split("?")[0].replace(/\/$/, "") === "/mcp"
         ? "mcp"
         : "api/v1";
-    const scope =
-      error.status === 403 ? `, scope="${apiScopes.join(" ")}"` : "";
-    return `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/${resource}", error="${error.status === 403 ? "insufficient_scope" : "invalid_token"}"${scope}`;
+    const nativeError =
+      error instanceof HttpError
+        ? new APIError("UNAUTHORIZED", { message: error.message })
+        : error;
+    return new Headers(
+      createResourceServerChallenge(nativeError, `${origin}/${resource}`, {
+        challengeScopes: apiScopes,
+        dpopSigningAlgorithms: DPOP_SIGNING_ALGORITHMS,
+      })?.headers,
+    ).get("WWW-Authenticate");
   }
   const router = Router();
   router.use(async (req, res, next) => {
@@ -336,8 +340,10 @@ export function createExternalAccess(
       await authenticate(req, "/api/v1");
       next();
     } catch (error) {
-      if (error instanceof HttpError && error.status === 401)
-        res.set("WWW-Authenticate", challenge(req, error));
+      if (status(error) === 401) {
+        const header = challenge(req, error);
+        if (header) res.set("WWW-Authenticate", header);
+      }
       next(error);
     }
   });
@@ -390,8 +396,10 @@ export function createExternalAccess(
       res: import("express").Response,
       next: import("express").NextFunction,
     ) => {
-      if (error instanceof HttpError && [401, 403].includes(error.status))
-        res.set("WWW-Authenticate", challenge(req, error));
+      if ([401, 403].includes(status(error))) {
+        const header = challenge(req, error);
+        if (header) res.set("WWW-Authenticate", header);
+      }
       if (error instanceof HttpError && error.status === 429)
         res.set("Retry-After", "60");
       next(error);
@@ -400,11 +408,11 @@ export function createExternalAccess(
   return {
     keys,
     authenticate,
-    principalFromClaims,
     organizations,
     search,
     read,
     router,
     challenge,
+    status,
   };
 }

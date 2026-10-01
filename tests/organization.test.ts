@@ -448,20 +448,25 @@ test("new branches use the selected naming model, are validated, and concurrent 
 test("a chosen upload folder constrains filing and inaccessible folder labels never leave the server", async () => {
   const cookie = await account();
   const email = `member-${++users}@local.test`;
-  const invitation = await req("/invitations", cookie, "POST", { email });
-  assert.equal(invitation.status, 201);
+  const invitation = await req(
+    "/auth/organization/invite-member",
+    cookie,
+    "POST",
+    { email, role: "member" },
+  );
+  assert.equal(invitation.status, 200);
   const member = await req("/auth/sign-up/email", "", "POST", {
     name: "Member",
     email,
     password: "a-secure-password-123!",
-    invite: new URL(invitation.data.url).searchParams.get("invite"),
+    invite: invitation.data.id,
   });
   assert.equal(member.status, 200);
   member.cookie = await mailbox.signIn(
     base,
     email,
     "a-secure-password-123!",
-    new URL(invitation.data.url).searchParams.get("invite")!,
+    invitation.data.id,
   );
   await folder(member.cookie, "Hidden category");
   const scope = await folder(cookie, "Chosen category");

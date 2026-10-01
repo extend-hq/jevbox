@@ -1,5 +1,6 @@
+import { authClient, authData } from "@/lib/auth-client";
 import { useEffect, useState } from "react";
-import { api, type Me } from "../lib/api";
+import { type Me } from "../lib/api";
 import { notifySuccess } from "../lib/notifications";
 import {
   scopeLabels,
@@ -18,7 +19,24 @@ export function McpView({ me }: { me: Me }) {
   const clipboard = useAction();
   const url = `${location.origin}/mcp`;
   async function refresh() {
-    setApps(await api<ConnectedApp[]>("/connected-apps"));
+    const consents = authData(await authClient.oauth2.getConsents());
+    setApps(
+      await Promise.all(
+        consents.map(async (consent) => {
+          const client = authData(
+            await authClient.oauth2.publicClient({
+              query: { client_id: consent.clientId },
+            }),
+          );
+          return {
+            id: consent.id,
+            name: client.client_name ?? "Connected application",
+            scopes: consent.scopes,
+            createdAt: new Date(consent.createdAt).toISOString(),
+          };
+        }),
+      ),
+    );
   }
   useEffect(() => {
     void action.run(refresh);
@@ -86,9 +104,9 @@ export function McpView({ me }: { me: Me }) {
                 disabled={action.busy}
                 onClick={() =>
                   void action.run(async () => {
-                    await api(`/connected-apps/${encodeURIComponent(app.id)}`, {
-                      method: "DELETE",
-                    });
+                    authData(
+                      await authClient.oauth2.deleteConsent({ id: app.id }),
+                    );
                     await refresh();
                     notifySuccess("Application disconnected");
                   })

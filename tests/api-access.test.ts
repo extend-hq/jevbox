@@ -1,6 +1,8 @@
 import { before, after, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { deriveDpopAth } from "better-auth/oauth2";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
@@ -10,7 +12,7 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { createApp } from "../server/app";
-import { hashPassword } from "../server/auth-passwords";
+import { hashPassword } from "better-auth/crypto";
 import { buildIndex } from "../server/indexing";
 import { testDatabase } from "./database";
 import { choiceResponse } from "./model-tools";
@@ -69,6 +71,7 @@ async function request(
   token: string,
   method = "GET",
   body?: unknown,
+  extraHeaders: Record<string, string> = {},
 ) {
   if (path === "/mcp" && body && typeof body === "object") {
     body = {
@@ -98,6 +101,7 @@ async function request(
             "Mcp-Method": String((body as { method?: string })?.method),
           }
         : {}),
+      ...extraHeaders,
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     redirect: "manual",
@@ -105,13 +109,14 @@ async function request(
 }
 async function key(auth = cookie) {
   const response = await session(
-    "/api-keys",
+    "/auth/api-key/create",
     "POST",
-    { name: "Integration", expiresInDays: 30 },
+    { name: "Integration", expiresIn: 30 * 86400 },
     auth,
   );
-  assert.equal(response.status, 201, await response.clone().text());
-  return response.json() as Promise<{ key: { id: string }; token: string }>;
+  assert.equal(response.status, 200, await response.clone().text());
+  const result = await response.json();
+  return { key: { id: result.id }, token: result.key };
 }
 async function login(email: string) {
   const response = await session(
@@ -242,22 +247,24 @@ test("keys are personal, hashed, shown once, expire, and cannot mutate or manage
     created.key.id,
   );
   assert.notEqual(stored!.token_hash, created.token);
-  const list = await session("/api-keys");
+  const list = await session("/auth/api-key/list");
   const body = await list.text();
   assert.ok(body.includes(created.key.id));
   assert.ok(!body.includes(created.token));
   assert.ok(!body.includes("token_hash"));
   assert.ok(
     !(
-      await (await session("/api-keys", "GET", undefined, otherCookie)).text()
+      await (
+        await session("/auth/api-key/list", "GET", undefined, otherCookie)
+      ).text()
     ).includes(created.key.id),
   );
   assert.equal(
     (
       await session(
-        `/api-keys/${created.key.id}`,
-        "DELETE",
-        undefined,
+        "/auth/api-key/update",
+        "POST",
+        { keyId: created.key.id, enabled: false },
         otherCookie,
       )
     ).status,
@@ -279,7 +286,7 @@ test("keys are personal, hashed, shown once, expire, and cannot mutate or manage
   );
   assert.equal(
     (
-      await session("/api-keys", "POST", {
+      await session("/auth/api-key/create", "POST", {
         name: "Invalid",
         scopes: ["documents:write"],
       })
@@ -388,7 +395,10 @@ test("revocation during retrieval and membership removal prevent returning evide
   onScore = async () => {
     if (!ran) {
       ran = true;
-      await session(`/api-keys/${created.key.id}`, "DELETE");
+      await session("/auth/api-key/update", "POST", {
+        keyId: created.key.id,
+        enabled: false,
+      });
     }
   };
   try {
@@ -458,7 +468,10 @@ test("MCP works through the official client with full read and search access", a
       arguments: { organizationId: orgId, id: data.results[0].id },
     });
     assert.match((fetched.structuredContent as any).text, /Readable passage/);
-    await session(`/api-keys/${created.key.id}`, "DELETE");
+    await session("/auth/api-key/update", "POST", {
+      keyId: created.key.id,
+      enabled: false,
+    });
     await assert.rejects(client.listTools());
   } finally {
     await client.close();
@@ -547,16 +560,18 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
     .map((value) => value.split(";")[0])
     .join("; ");
   assert.equal(consentURL.pathname, "/oauth/consent");
-  const preview = await session("/oauth/consent-request", "POST", {
-    oauthQuery: consentURL.search.slice(1),
+  const preview = await session("/auth/oauth2/public-client-prelogin", "POST", {
+    client_id: registration.client_id,
+    oauth_query: consentURL.search.slice(1),
   });
   assert.equal(preview.status, 200, await preview.clone().text());
   const tampered = new URLSearchParams(consentURL.search);
   tampered.set("scope", "documents:write");
   assert.notEqual(
     (
-      await session("/oauth/consent-request", "POST", {
-        oauthQuery: tampered.toString(),
+      await session("/auth/oauth2/public-client-prelogin", "POST", {
+        client_id: registration.client_id,
+        oauth_query: tampered.toString(),
       })
     ).status,
     200,
@@ -568,10 +583,13 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
   assert.equal(accept.status, 200, await accept.clone().text());
   const redirect = new URL((await accept.json()).url);
   assert.equal(redirect.searchParams.get("state"), "request-state");
-  async function exchange(body: URLSearchParams) {
+  async function exchange(body: URLSearchParams, proof?: string) {
     return fetch(base + "/api/auth/oauth2/token", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        ...(proof ? { DPoP: proof } : {}),
+      },
       body,
     });
   }
@@ -588,6 +606,13 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
   );
   assert.equal(tokensResponse.status, 200, await tokensResponse.clone().text());
   const tokens = await tokensResponse.json();
+  const storedTokens = await runtime.store.all<{ token: string }>(
+    'SELECT token FROM "oauthAccessToken" WHERE "clientId"=? AND "userId"=?',
+    registration.client_id,
+    userId,
+  );
+  assert.ok(storedTokens.length > 0);
+  assert.ok(storedTokens.every(({ token }) => token !== tokens.access_token));
   assert.ok(tokens.refresh_token);
   const rpc = await request("/mcp", tokens.access_token, "POST", {
     jsonrpc: "2.0",
@@ -609,21 +634,22 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
   );
   assert.equal(refresh.status, 200, await refresh.clone().text());
   const refreshed = await refresh.json();
-  const apps = await (await session("/connected-apps")).json();
+  const apps = await (await session("/auth/oauth2/get-consents")).json();
   assert.equal(apps.length, 1);
   assert.equal(
     (
       await session(
-        `/connected-apps/${apps[0].id}`,
-        "DELETE",
-        undefined,
+        "/auth/oauth2/delete-consent",
+        "POST",
+        { id: apps[0].id },
         otherCookie,
       )
     ).status,
-    404,
+    401,
   );
   assert.equal(
-    (await session(`/connected-apps/${apps[0].id}`, "DELETE")).status,
+    (await session("/auth/oauth2/delete-consent", "POST", { id: apps[0].id }))
+      .status,
     200,
   );
   assert.equal(
@@ -707,9 +733,98 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
     ).status,
     401,
   );
+  const authorizeBound = await fetch(
+    base +
+      "/api/auth/oauth2/authorize?" +
+      new URLSearchParams({
+        ...Object.fromEntries(params),
+        scope: "documents:read",
+      }),
+    { headers: { Cookie: cookie, Accept: "text/html" }, redirect: "manual" },
+  );
+  const boundCode = new URL(
+    authorizeBound.status === 302
+      ? authorizeBound.headers.get("location")!
+      : (await authorizeBound.json()).url,
+    origin,
+  ).searchParams.get("code");
+  assert.ok(boundCode);
+  const { publicKey, privateKey } = await generateKeyPair("ES256");
+  const jwk = await exportJWK(publicKey);
+  async function proof(url: string, token?: string) {
+    return new SignJWT({
+      htm: "POST",
+      htu: url,
+      jti: randomUUID(),
+      ...(token ? { ath: await deriveDpopAth(token) } : {}),
+    })
+      .setProtectedHeader({ alg: "ES256", typ: "dpop+jwt", jwk })
+      .setIssuedAt()
+      .sign(privateKey);
+  }
+  const boundResponse = await exchange(
+    new URLSearchParams({
+      client_id: registration.client_id,
+      grant_type: "authorization_code",
+      code: boundCode,
+      redirect_uri: "http://127.0.0.1:9900/callback",
+      code_verifier: verifier,
+      resource: origin + "/mcp",
+    }),
+    await proof(origin + "/api/auth/oauth2/token"),
+  );
+  assert.equal(boundResponse.status, 200, await boundResponse.clone().text());
+  const bound = await boundResponse.json();
+  assert.equal(bound.token_type, "DPoP");
+  const body = { jsonrpc: "2.0", id: 5, method: "tools/list" };
+  const bearerBound = await request("/mcp", bound.access_token, "POST", body);
+  assert.equal(bearerBound.status, 401);
+  assert.match(bearerBound.headers.get("www-authenticate")!, /^DPoP/);
+  const resourceProof = await proof(origin + "/mcp", bound.access_token);
+  const proofHeaders = {
+    Authorization: `DPoP ${bound.access_token}`,
+    DPoP: resourceProof,
+  };
+  assert.equal(
+    (await request("/mcp", bound.access_token, "POST", body, proofHeaders))
+      .status,
+    200,
+  );
+  assert.equal(
+    (await request("/mcp", bound.access_token, "POST", body, proofHeaders))
+      .status,
+    401,
+  );
+  const wrongResource = await request(
+    "/api/v1/organizations",
+    bound.access_token,
+    "GET",
+    undefined,
+    { Authorization: `DPoP ${bound.access_token}`, DPoP: resourceProof },
+  );
+  assert.equal(wrongResource.status, 401);
+  assert.equal((await session("/auth/sign-out", "POST", {})).status, 200);
+  assert.equal(
+    (await request("/mcp", fresh.access_token, "POST", body)).status,
+    401,
+  );
+  assert.equal(
+    (
+      await exchange(
+        new URLSearchParams({
+          client_id: registration.client_id,
+          grant_type: "refresh_token",
+          refresh_token: fresh.refresh_token,
+          resource: origin + "/mcp",
+        }),
+      )
+    ).status,
+    400,
+  );
+  cookie = await login("api@local.test");
 });
 
-test("plugin key permissions restrict tools and native key routes cannot bypass management", async () => {
+test("native key management enforces ownership and read-only permissions", async () => {
   const limited = await runtime.auth.api.createApiKey({
     body: {
       userId,
@@ -748,7 +863,7 @@ test("plugin key permissions restrict tools and native key routes cannot bypass 
           permissions: { documents: ["write"] },
         })
       ).status,
-      404,
+      400,
     );
   }
   assert.equal(

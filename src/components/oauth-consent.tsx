@@ -1,5 +1,6 @@
+import { authClient, authData } from "@/lib/auth-client";
 import { useEffect, useState } from "react";
-import { api, type Me } from "@/lib/api";
+import { type Me } from "@/lib/api";
 import { scopeLabels, type ApiScope } from "../../shared/api-access";
 import { Button } from "./coss/button";
 import { Brand, Loading, useAction } from "./common";
@@ -20,20 +21,24 @@ export function OAuthConsent({ me }: { me: Me }) {
   const action = useAction();
   useEffect(() => {
     void action.run(async () => {
-      setRequest(
-        await api("/oauth/consent-request", {
-          method: "POST",
-          body: JSON.stringify({ oauthQuery: query }),
+      const params = new URLSearchParams(query);
+      const client = authData(
+        await authClient.oauth2.publicClientPrelogin({
+          client_id: params.get("client_id") ?? "",
+          oauth_query: query,
         }),
       );
+      setRequest({
+        name: client.client_name ?? "Connected application",
+        scopes: (params.get("scope") ?? "").split(" ").filter(Boolean),
+      });
     });
   }, [query]);
   function consent(accept: boolean) {
     void action.run(async () => {
-      const result = await api<{ url: string }>("/auth/oauth2/consent", {
-        method: "POST",
-        body: JSON.stringify({ accept, oauth_query: query }),
-      });
+      const result = authData(
+        await authClient.oauth2.consent({ accept, oauth_query: query }),
+      );
       location.assign(result.url);
     });
   }

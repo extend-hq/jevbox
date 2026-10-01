@@ -3,7 +3,6 @@ import { createDownloadRouter } from "./downloads";
 import { createLinkSharingRouter } from "./link-sharing";
 import { createExternalAccess } from "./external-access";
 import { createMcpRouter } from "./mcp";
-import { createKeyManagement } from "./api-key-management";
 import { apiScopes } from "../shared/api-access";
 import {
   isAuthPage,
@@ -16,7 +15,7 @@ import { withLayoutSections } from "./indexing";
 import { describeThumbnail, enqueueThumbnail } from "./thumbnails";
 import { createWorkers } from "./workers";
 import { queues, type QueueName } from "./jobs";
-import { authenticateToken as sessionActor } from "./sessions";
+import { authenticateToken as tokenActor, sessionActor } from "./sessions";
 import { asyncFilter, asyncEvery } from "./async";
 import { fileMime, supportsIndex, extension } from "../shared/file-types";
 import { availableChatModels, validateProviderURL } from "./ai";
@@ -28,7 +27,7 @@ import express, {
 } from "express";
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
 import { createAuthentication } from "./auth";
-import { APIError } from "better-auth/api";
+import { isAPIError } from "better-auth/api";
 import type { SendAuthEmail } from "./auth-email";
 import multer from "multer";
 import { rateLimit, ipKeyGenerator } from "express-rate-limit";
@@ -51,12 +50,6 @@ import {
 } from "./providers";
 const digest = (s: string) => createHash("sha256").update(s).digest("hex");
 const now = () => new Date().toISOString();
-const email = z
-  .string()
-  .trim()
-  .email()
-  .max(254)
-  .transform((s) => s.toLowerCase());
 const name = z
   .string()
   .trim()
@@ -94,14 +87,14 @@ export async function createApp(options: {
     await store.close();
     throw error;
   }
-  const { auth, consume } = authentication;
+  const { auth } = authentication;
   const providers = createProviders(store, options.fetcher);
   const external = createExternalAccess(
     store,
     auth,
     providers,
     options.origin,
-    consume,
+    authentication.validateOAuthToken,
     options.rateLimits,
   );
   const app = express();
@@ -187,15 +180,9 @@ export async function createApp(options: {
   async function authenticate(req: Request): Promise<Actor> {
     const authenticated = (req as Partial<AuthedRequest>).actor;
     if (authenticated) return authenticateToken(authenticated.token);
-    const current = await auth.api.getSession({
-      headers: fromNodeHeaders(req.headers),
-      query: { disableCookieCache: true },
-    });
-    if (!current || !current.user.emailVerified)
-      throw new HttpError(401, "Please sign in");
-    return authenticateToken(current.session.id);
+    return sessionActor(store, auth, fromNodeHeaders(req.headers));
   }
-  const authenticateToken = (token: string) => sessionActor(store, token);
+  const authenticateToken = (token: string) => tokenActor(store, auth, token);
   async function enqueueFiling(resourceId: string) {
     const previous = await store.one<{ job_id: string | null }>(
       "SELECT job_id FROM document_filing WHERE resource_id=?",
@@ -230,11 +217,13 @@ export async function createApp(options: {
     };
   }
   const authHandler = toNodeHandler(async (request) => {
-    if (
-      ["GET", "HEAD"].includes(request.method) ||
-      (!new URL(request.url).pathname.startsWith("/api/auth/organization/") &&
-        new URL(request.url).pathname !== "/api/auth/sign-up/email")
-    )
+    const path = new URL(request.url).pathname;
+    const writesApplicationState =
+      path === "/api/auth/sign-up/email" ||
+      path.startsWith("/api/auth/organization/") ||
+      path.startsWith("/api/auth/api-key/") ||
+      path === "/api/auth/oauth2/delete-consent";
+    if (["GET", "HEAD"].includes(request.method) || !writesApplicationState)
       return auth.handler(request);
     let rejected: globalThis.Response | undefined;
     try {
@@ -242,7 +231,7 @@ export async function createApp(options: {
         const response = await auth.handler(request);
         if (response.status >= 400) {
           rejected = response;
-          throw new Error("Organization operation rejected");
+          throw new Error("Authentication operation rejected");
         }
         return response;
       });
@@ -295,33 +284,34 @@ export async function createApp(options: {
     }
   });
   const actor = (req: Request) => (req as AuthedRequest).actor;
-  app.use(
-    "/api",
-    createKeyManagement(store, authentication, external, authenticate, audit),
-  );
   async function admin(req: Request) {
     const a = await authenticate(req);
     if (!(await store.permission(a, "organization", a.orgId, "manage")))
       throw new HttpError(403, "Organization administrator required");
     return a;
   }
+
   app.get("/api/me", async (req, res) => {
     const a = actor(req);
     const settings = await getSettings(store, a.orgId);
+    const headers = fromNodeHeaders(req.headers);
+    const current = await auth.api.getSession({
+      headers,
+      query: { disableCookieCache: true },
+    });
+    if (!current) throw new HttpError(401, "Please sign in");
+    const organizations = (await auth.api.listOrganizations({ headers })).map(
+      ({ id, name }) => ({ id, name }),
+    );
     res.json({
-      user: await store.one(
-        "SELECT id,email,name FROM users WHERE id=?",
-        a.userId,
-      ),
-      organization: await store.one(
-        "SELECT id,name FROM orgs WHERE id=?",
-        a.orgId,
-      ),
+      user: {
+        id: current.user.id,
+        email: current.user.email,
+        name: current.user.name,
+      },
+      organization: organizations.find(({ id }) => id === a.orgId),
       role: a.role,
-      organizations: await store.all(
-        "SELECT o.id,o.name FROM orgs o JOIN members m ON o.id=m.org_id WHERE m.user_id=?",
-        a.userId,
-      ),
+      organizations,
       chatEnabled: availableChatModels(settings).length > 0,
       chatModels: availableChatModels(settings),
       defaultChatModel:
@@ -334,142 +324,6 @@ export async function createApp(options: {
       extendEnabled: Boolean(settings.extendKey),
     });
   });
-  app.post(
-    "/api/organization/switch",
-    mutation(async (req, res) => {
-      const orgId = id.parse(req.body.orgId);
-      const a = actor(req);
-      if (
-        !(await store.one(
-          "SELECT 1 FROM members WHERE org_id=? AND user_id=?",
-          orgId,
-          a.userId,
-        ))
-      )
-        throw new HttpError(404, "Organization not found");
-      await auth.api.setActiveOrganization({
-        body: { organizationId: orgId },
-        headers: fromNodeHeaders(req.headers),
-      });
-      return {
-        status: 200,
-        body: { ok: true },
-      };
-    }),
-  );
-  app.get("/api/members", async (req, res) => {
-    const result = await auth.api.listMembers({
-      query: { organizationId: actor(req).orgId, limit: 100 },
-      headers: fromNodeHeaders(req.headers),
-    });
-    res.json(
-      result.members.map((member) => ({
-        id: member.userId,
-        name: member.user.name,
-        email: member.user.email,
-        role: member.role,
-      })),
-    );
-  });
-  app.get("/api/invitations", async (req, res) => {
-    const a = await admin(req);
-    res.json(
-      await auth.api.listInvitations({
-        query: { organizationId: a.orgId },
-        headers: fromNodeHeaders(req.headers),
-      }),
-    );
-  });
-  app.post(
-    "/api/invitations",
-    mutation(async (req) => {
-      const a = await admin(req);
-      const address = email.parse(req.body.email);
-      const invite = await auth.api.createInvitation({
-        body: {
-          email: address,
-          role: "member",
-          organizationId: a.orgId,
-          resend: true,
-        },
-        headers: fromNodeHeaders(req.headers),
-      });
-      await audit(a, "invite.create");
-      return {
-        status: 201,
-        body: {
-          id: invite.id,
-          url: `${options.origin}${loginPath}?invite=${encodeURIComponent(invite.id)}`,
-          expiresInDays: 7,
-        },
-      };
-    }),
-  );
-  app.delete(
-    "/api/invitations/:id",
-    mutation(async (req) => {
-      const a = await admin(req);
-      const invitationId = id.parse(req.params.id);
-      if (
-        !(await store.one(
-          "SELECT id FROM invites WHERE id=? AND org_id=?",
-          invitationId,
-          a.orgId,
-        ))
-      )
-        throw new HttpError(404, "Invitation not found");
-      await auth.api.cancelInvitation({
-        body: { invitationId },
-        headers: fromNodeHeaders(req.headers),
-      });
-      await audit(a, "invite.cancel");
-      return { status: 200, body: { ok: true } };
-    }),
-  );
-  app.patch(
-    "/api/members/:id",
-    mutation(async (req) => {
-      const a = await admin(req);
-      const userId = id.parse(req.params.id);
-      const { role } = z
-        .object({ role: z.enum(["admin", "member"]) })
-        .strict()
-        .parse(req.body);
-      const member = await store.one<{ id: string }>(
-        "SELECT id FROM members WHERE org_id=? AND user_id=?",
-        a.orgId,
-        userId,
-      );
-      if (!member) throw new HttpError(404, "Member not found");
-      await auth.api.updateMemberRole({
-        body: { memberId: member.id, role, organizationId: a.orgId },
-        headers: fromNodeHeaders(req.headers),
-      });
-      await audit(a, "member.role");
-      return { status: 200, body: { ok: true } };
-    }),
-  );
-  app.delete(
-    "/api/members/:id",
-    mutation(async (req) => {
-      const a = await admin(req);
-      const userId = id.parse(req.params.id);
-      if (userId === a.userId)
-        throw new HttpError(400, "This membership cannot be removed");
-      const member = await store.one<{ id: string }>(
-        "SELECT id FROM members WHERE org_id=? AND user_id=?",
-        a.orgId,
-        userId,
-      );
-      if (!member) throw new HttpError(404, "Member not found");
-      await auth.api.removeMember({
-        body: { memberIdOrEmail: member.id, organizationId: a.orgId },
-        headers: fromNodeHeaders(req.headers),
-      });
-      await audit(a, "member.remove");
-      return { status: 200, body: { ok: true } };
-    }),
-  );
   app.get("/api/settings", async (req, res) => {
     const a = await admin(req);
     const s = await getSettings(store, a.orgId);
@@ -1332,7 +1186,7 @@ export async function createApp(options: {
         return res
           .status(400)
           .json({ error: "Upload must contain one file smaller than 30 MB" });
-      if (error instanceof APIError)
+      if (isAPIError(error))
         return res.status(error.statusCode).json({
           error: error.body?.message ?? "Authentication request rejected",
         });

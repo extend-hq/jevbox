@@ -307,7 +307,7 @@ export function createChatRuntime(
         "INSERT INTO chat_turns(id,chat_id,session_token,content,document_ids,attachments,selected_model,stream,regenerate_base) VALUES(?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?)",
         turnId,
         chatId,
-        a.token,
+        store.encrypt(a.token),
         input.content,
         JSON.stringify(input.documentIds),
         JSON.stringify(input.attachments),
@@ -336,7 +336,7 @@ export function createChatRuntime(
         controller.abort();
         controller.signal.throwIfAborted();
       }
-      const a = await authenticateToken(turn.session_token);
+      const a = await authenticateToken(store.decrypt(turn.session_token));
       const chat = await chatFor(a, turn.chat_id);
       await assertReadable(a, [...JSON.parse(chat.dependencies), ...deps]);
       return { a, chat };
@@ -945,7 +945,7 @@ export function createChatRuntime(
         });
         await store.run(
           "UPDATE chat_turns SET status='queued',session_token=?,error=NULL,error_status=NULL,partial_text='' WHERE id=?",
-          a.token,
+          store.encrypt(a.token),
           turn.id,
         );
       } else if (input.action) {

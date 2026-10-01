@@ -307,10 +307,6 @@ export async function createStore(
   }
   async function cleanupPermissions() {
     await transaction(async () => {
-      await run(
-        "DELETE FROM auth_throttle WHERE window_started < ?",
-        Date.now() - 86400000,
-      );
       const stale = await all<{ version: string }>(
         "SELECT version FROM authz_snapshots WHERE created < now() - interval '10 minutes' AND version NOT IN (SELECT authz_version FROM orgs WHERE authz_version IS NOT NULL) LIMIT 20",
       );

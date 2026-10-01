@@ -3,12 +3,7 @@ import {
   timingSafeEqual,
   type ScryptOptions,
 } from "node:crypto";
-import {
-  hashPassword,
-  verifyPassword as verifyNativePassword,
-} from "better-auth/crypto";
-
-export { hashPassword };
+import { verifyPassword as verifyNativePassword } from "better-auth/crypto";
 
 const scrypt = (
   password: string,
@@ -21,7 +16,7 @@ const scrypt = (
       error ? reject(error) : resolve(key),
     ),
   );
-export async function verifyPassword(password: string, hash: string) {
+export async function verifyImportedPassword(password: string, hash: string) {
   if (!/^(legacy_scrypt|scrypt)\$/.test(hash))
     return verifyNativePassword({ password, hash });
   const [salt, expected] = hash.slice(hash.indexOf("$") + 1).split(":");

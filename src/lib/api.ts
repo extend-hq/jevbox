@@ -121,6 +121,7 @@ export type Me = {
   extendEnabled: boolean;
 };
 export type Member = {
+  membershipId: string;
   id: string;
   name: string;
   email: string;

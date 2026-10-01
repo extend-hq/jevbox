@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { strFromU8, unzipSync } from "fflate";
 import { createApp } from "../server/app";
-import { hashPassword } from "../server/auth-passwords";
+import { hashPassword } from "better-auth/crypto";
 import { archiveEntries } from "../server/downloads";
 import type { Resource } from "../server/db";
 import { testDatabase } from "./database";

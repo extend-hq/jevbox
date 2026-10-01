@@ -8,7 +8,6 @@ export function mutationSuccessMessage(path: string, method: string) {
   if (method === "POST" && /^\/resources\/[^/]+\/move$/.test(path))
     return "Item moved";
   if (method === "POST" && path === "/folders") return "Folder created";
-  if (method === "POST" && path === "/invitations") return "Invitation created";
   if (method === "POST" && /^\/documents\/[^/]+\/retry$/.test(path))
     return "Indexing restarted";
   if (method === "PUT" && /^\/resources\/[^/]+\/access$/.test(path))
@@ -17,10 +16,6 @@ export function mutationSuccessMessage(path: string, method: string) {
     return "Changes saved";
   if (method === "DELETE" && /^\/resources\/[^/]+$/.test(path))
     return "Item deleted";
-  if (method === "PATCH" && /^\/members\/[^/]+$/.test(path))
-    return "Role updated";
-  if (method === "DELETE" && /^\/members\/[^/]+$/.test(path))
-    return "Member removed";
   if (method === "DELETE" && /^\/chats\/[^/]+$/.test(path))
     return "Conversation deleted";
 }

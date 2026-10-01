@@ -1,3 +1,4 @@
+import { organizationMembers } from "@/lib/auth-client";
 import { notifySuccess } from "@/lib/notifications";
 import {
   Select,
@@ -132,7 +133,7 @@ export function Sharing({
     setLoaded(false);
     void action.run(async () => {
       const [m, configs] = await Promise.all([
-        api<Member[]>("/members"),
+        organizationMembers(),
         Promise.all(
           resources.map(async (r) => ({
             ...(await api<AccessSettings>(`/resources/${r.id}/access`)),

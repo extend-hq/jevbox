@@ -1,5 +1,5 @@
 import { queues } from "../server/jobs";
-import { hashPassword } from "../server/auth-passwords";
+import { hashPassword } from "better-auth/crypto";
 import { testDatabase } from "../tests/database";
 import { createApp } from "../server/app";
 import { createServer } from "vite";

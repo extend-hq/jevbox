@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import { after, afterEach, beforeEach, test } from "node:test";
 import { JSDOM } from "jsdom";
 import type { Root } from "react-dom/client";
+const nativeFetch = globalThis.fetch;
+let requestFetch = nativeFetch;
+const delegateFetch: typeof fetch = (input, init) => requestFetch(input, init);
+Object.defineProperty(globalThis, "fetch", {
+  configurable: true,
+  get: () => delegateFetch,
+  set: (value: typeof fetch) => {
+    if (value !== delegateFetch) requestFetch = value;
+  },
+});
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
   url: "https://app.test/",
   pretendToBeVisual: true,
@@ -92,6 +102,7 @@ import type { IndexNode, Me, Resource } from "../src/lib/api";
 let root: Root;
 let host: HTMLDivElement;
 beforeEach(() => {
+  requestFetch = nativeFetch;
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -100,7 +111,14 @@ afterEach(async () => {
   await act(async () => root.unmount());
   document.body.replaceChildren();
 });
-after(() => dom.window.close());
+after(() => {
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    writable: true,
+    value: nativeFetch,
+  });
+  dom.window.close();
+});
 async function click(element: Element | null | undefined) {
   assert.ok(element);
   await act(async () =>
@@ -2424,13 +2442,26 @@ test("Sharing copies all selected links without overwriting mixed permissions", 
     },
   });
   globalThis.fetch = async (input, init) => {
-    const path = String(input);
+    const path = new URL(String(input), location.origin).pathname;
     if (init?.method === "PUT") writes.push(path);
-    if (path === "/api/members")
-      return Response.json([
-        { id: "owner", name: "Owner", email: "owner@app.test" },
-        { id: "person", name: "Person", email: "person@app.test" },
-      ]);
+    if (path.startsWith("/api/auth/organization/list-members"))
+      return Response.json({
+        members: [
+          {
+            id: "membership-owner",
+            userId: "owner",
+            role: "member",
+            user: { name: "Owner", email: "owner@app.test" },
+          },
+          {
+            id: "membership-person",
+            userId: "person",
+            role: "member",
+            user: { name: "Person", email: "person@app.test" },
+          },
+        ],
+        total: 3,
+      });
     return Response.json({
       ownerId: "owner",
       access: path.includes("first") ? "link" : "restricted",
@@ -2497,13 +2528,31 @@ test("Sharing applies permissions to every selected file and retries only failed
     },
   });
   globalThis.fetch = async (input, init) => {
-    const path = String(input);
-    if (path === "/api/members")
-      return Response.json([
-        { id: "owner", name: "Owner", email: "owner@app.test" },
-        { id: "person", name: "Person", email: "person@app.test" },
-        { id: "other", name: "Other", email: "other@app.test" },
-      ]);
+    const path = new URL(String(input), location.origin).pathname;
+    if (path.startsWith("/api/auth/organization/list-members"))
+      return Response.json({
+        members: [
+          {
+            id: "membership-owner",
+            userId: "owner",
+            role: "member",
+            user: { name: "Owner", email: "owner@app.test" },
+          },
+          {
+            id: "membership-person",
+            userId: "person",
+            role: "member",
+            user: { name: "Person", email: "person@app.test" },
+          },
+          {
+            id: "membership-other",
+            userId: "other",
+            role: "member",
+            user: { name: "Other", email: "other@app.test" },
+          },
+        ],
+        total: 3,
+      });
     const id = path.split("/")[3];
     if (init?.method === "PUT") {
       writes.push({ id, ...JSON.parse(String(init.body)) });
@@ -2619,9 +2668,10 @@ test("Sharing cannot save when access settings for any selected file fail to loa
   const originalFetch = globalThis.fetch;
   const writes: string[] = [];
   globalThis.fetch = async (input, init) => {
-    const path = String(input);
+    const path = new URL(String(input), location.origin).pathname;
     if (init?.method === "PUT") writes.push(path);
-    if (path === "/api/members") return Response.json([]);
+    if (path.startsWith("/api/auth/organization/list-members"))
+      return Response.json({ members: [], total: 0 });
     if (path.includes("second"))
       return Response.json({ error: "Access denied" }, { status: 403 });
     return Response.json({

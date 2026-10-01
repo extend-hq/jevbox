@@ -1,5 +1,6 @@
+import { authClient, authData } from "@/lib/auth-client";
 import { useEffect, useState } from "react";
-import { api, type Me } from "@/lib/api";
+import { type Me } from "@/lib/api";
 import { notifySuccess } from "@/lib/notifications";
 import { type ApiKeyInfo } from "../../shared/api-access";
 import { Button } from "./coss/button";
@@ -28,7 +29,24 @@ export function ApiKeysView({ me }: { me: Me }) {
   const action = useAction();
   const form = useAction();
   async function refresh() {
-    setKeys(await api<ApiKeyInfo[]>("/api-keys"));
+    const result = authData(
+      await authClient.apiKey.list({
+        query: { limit: 100, sortBy: "createdAt", sortDirection: "desc" },
+      }),
+    );
+    setKeys(
+      result.apiKeys.map((key) => ({
+        id: key.id,
+        name: key.name ?? "API key",
+        prefix: key.start ?? "jev_key_",
+        expiresAt: new Date(key.expiresAt!).toISOString(),
+        createdAt: new Date(key.createdAt).toISOString(),
+        lastUsedAt: key.lastRequest
+          ? new Date(key.lastRequest).toISOString()
+          : null,
+        revokedAt: key.enabled ? null : new Date(key.updatedAt).toISOString(),
+      })),
+    );
   }
   useEffect(() => {
     void action.run(refresh);
@@ -94,9 +112,12 @@ export function ApiKeysView({ me }: { me: Me }) {
                       disabled={action.busy}
                       onClick={() =>
                         void action.run(async () => {
-                          await api(`/api-keys/${key.id}`, {
-                            method: "DELETE",
-                          });
+                          authData(
+                            await authClient.apiKey.update({
+                              keyId: key.id,
+                              enabled: false,
+                            }),
+                          );
                           await refresh();
                           notifySuccess("API key revoked");
                         })
@@ -172,17 +193,13 @@ export function ApiKeysView({ me }: { me: Me }) {
                 event.preventDefault();
                 if (form.busy) return;
                 void form.run(async () => {
-                  const created = await api<{ key: ApiKeyInfo; token: string }>(
-                    "/api-keys",
-                    {
-                      method: "POST",
-                      body: JSON.stringify({
-                        name,
-                        expiresInDays: Number(expiry),
-                      }),
-                    },
+                  const created = authData(
+                    await authClient.apiKey.create({
+                      name,
+                      expiresIn: Number(expiry) * 86400,
+                    }),
                   );
-                  setToken(created.token);
+                  setToken(created.key);
                   await refresh();
                 });
               }}

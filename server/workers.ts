@@ -4,6 +4,8 @@ import { createThumbnailJobs, enqueueMissingThumbnails } from "./thumbnails";
 import { createProviders } from "./providers";
 import { createChatRuntime } from "./chat";
 import { authenticateToken } from "./sessions";
+import { createAuthentication } from "./auth";
+import { resolve } from "node:path";
 import {
   createAuthEmailSender,
   type SendAuthEmail,
@@ -25,6 +27,7 @@ export function createWorkers(
   store: Store,
   options: {
     origin: string;
+    directory?: string;
     fetcher?: typeof fetch;
     sendAuthEmail?: SendAuthEmail;
     chats?: ReturnType<typeof createChatRuntime>;
@@ -33,6 +36,7 @@ export function createWorkers(
   const providers = createProviders(store, options.fetcher);
   const thumbnails = createThumbnailJobs(store);
   const organization = createOrganization(store, options.fetcher);
+  let workerAuth: ReturnType<typeof createAuthentication>["auth"] | undefined;
   const chats =
     options.chats ??
     createChatRuntime(
@@ -41,7 +45,17 @@ export function createWorkers(
       async () => {
         throw new Error("Worker has no HTTP authentication");
       },
-      (token) => authenticateToken(store, token),
+      (token) =>
+        authenticateToken(
+          store,
+          (workerAuth ??= createAuthentication(store, {
+            ...options,
+            directory: resolve(
+              options.directory ?? process.env.DATA_DIR ?? ".data",
+            ),
+          }).auth),
+          token,
+        ),
     );
   const localDevelopment =
     process.env.AUTH_LOCAL_DEVELOPMENT === "true" &&

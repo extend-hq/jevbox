@@ -2,7 +2,8 @@ import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { betterAuth } from "better-auth";
-import { jwt, organization } from "better-auth/plugins";
+import { bearer, organization } from "better-auth/plugins";
+import { getOAuthProviderApi } from "@better-auth/oauth-provider";
 import { adminAc, memberAc } from "better-auth/plugins/organization/access";
 import { apiKey } from "@better-auth/api-key";
 import { mcp } from "@better-auth/mcp";
@@ -13,8 +14,10 @@ import {
   APIError,
   createAuthMiddleware,
   getSessionFromCtx,
+  isAPIError,
 } from "better-auth/api";
-import { hashPassword, verifyPassword } from "./auth-passwords";
+import { hashPassword } from "better-auth/crypto";
+import { verifyImportedPassword } from "./password-migration";
 import { createAuthEmailSender, type SendAuthEmail } from "./auth-email";
 import type { Store } from "./db";
 import { z } from "zod";
@@ -59,42 +62,21 @@ export function createAuthentication(
     throw new Error("BETTER_AUTH_SECRET must contain at least 32 characters");
   if (!options.sendAuthEmail) createAuthEmailSender(localDevelopment);
   const sendEmail: SendAuthEmail = (message) => store.jobs.email(message);
-  async function consume(key: string, rule: { window: number; max: number }) {
-    const now = Date.now();
-    const result = await store.authDb.query<{
-      count: number;
-      window_started: number;
-    }>(
-      `INSERT INTO auth_throttle(key,count,window_started) VALUES($1,1,$2)
-       ON CONFLICT(key) DO UPDATE SET
-       count=CASE WHEN auth_throttle.window_started <= $3 THEN 1 ELSE auth_throttle.count+1 END,
-       window_started=CASE WHEN auth_throttle.window_started <= $3 THEN $2 ELSE auth_throttle.window_started END
-       RETURNING count,window_started`,
-      [digest(key), now, now - rule.window * 1000],
-    );
-    const row = result.rows[0];
-    return {
-      allowed: row.count <= rule.max,
-      retryAfter: Math.max(
-        1,
-        Math.ceil((row.window_started + rule.window * 1000 - now) / 1000),
-      ),
-    };
-  }
   async function keepAdministrator(member: {
     organizationId: string;
     role: string;
   }) {
     if (
       member.role === "admin" &&
-      Number(
-        (
-          await store.one<{ count: number }>(
-            "SELECT count(*) AS count FROM members WHERE org_id=? AND role='admin'",
-            member.organizationId,
-          )
-        )?.count,
-      ) <= 1
+      (await (
+        await auth.$context
+      ).adapter.count({
+        model: "member",
+        where: [
+          { field: "organizationId", value: member.organizationId },
+          { field: "role", value: "admin" },
+        ],
+      })) <= 1
     )
       throw new APIError("BAD_REQUEST", {
         message: "Keep at least one organization admin",
@@ -113,16 +95,10 @@ export function createAuthentication(
       "/organization/create",
       "/organization/add-member",
       "/organization/delete",
-      "/api-key/create",
-      "/api-key/update",
-      "/api-key/delete",
-      "/api-key/list",
-      "/api-key/get",
       "/oauth2/update-consent",
-      "/oauth2/delete-consent",
     ],
     plugins: [
-      jwt(),
+      bearer(),
       organization({
         allowUserToCreateOrganization: false,
         disableOrganizationDeletion: true,
@@ -171,28 +147,44 @@ export function createAuthentication(
           },
           beforeRemoveMember: async ({ member }) => keepAdministrator(member),
           afterRemoveMember: async ({ member }) => {
-            await store.run(
-              "DELETE FROM auth_sessions WHERE org_id=? AND user_id=?",
-              member.organizationId,
-              member.userId,
-            );
+            const { internalAdapter, adapter } = await auth.$context;
+            const sessions = (await internalAdapter.listSessions(member.userId))
+              .filter(
+                (session) =>
+                  (
+                    session as typeof session & {
+                      activeOrganizationId?: string;
+                    }
+                  ).activeOrganizationId === member.organizationId,
+              )
+              .map((session) => session.token);
+            if (sessions.length)
+              await internalAdapter.deleteSessions(sessions);
             await store.run(
               "DELETE FROM grants WHERE user_id=? AND resource_id IN (SELECT id FROM resources WHERE org_id=?)",
               member.userId,
               member.organizationId,
             );
-            await store.run(
-              "UPDATE invites SET status='canceled' WHERE org_id=? AND inviter_id=? AND status='pending'",
-              member.organizationId,
-              member.userId,
-            );
+            await adapter.updateMany({
+              model: "invitation",
+              where: [
+                { field: "organizationId", value: member.organizationId },
+                { field: "inviterId", value: member.userId },
+                { field: "status", value: "pending" },
+              ],
+              update: { status: "canceled" },
+            });
           },
           beforeAcceptInvitation: async ({ invitation }) => {
-            const inviter = await store.one<{ role: string }>(
-              "SELECT role FROM members WHERE org_id=? AND user_id=?",
-              invitation.organizationId,
-              invitation.inviterId,
-            );
+            const inviter = await (
+              await auth.$context
+            ).adapter.findOne<{ role: string }>({
+              model: "member",
+              where: [
+                { field: "organizationId", value: invitation.organizationId },
+                { field: "userId", value: invitation.inviterId },
+              ],
+            });
             if (
               !inviter ||
               !(await store.permission(
@@ -234,6 +226,7 @@ export function createAuthentication(
       }),
       cimd({ fetchClientMetadataResource, metadataProfile: "mcp-2026-07-28" }),
       mcp({
+        disableJwtPlugin: true,
         resource: `${options.origin}/mcp`,
         loginPage: "/login",
         consentPage: "/oauth/consent",
@@ -268,7 +261,7 @@ export function createAuthentication(
             throw new APIError("FORBIDDEN", {
               message: "Verified account required",
             });
-          return { jevbox_issued_at: Date.now() };
+          return {};
         },
       }),
     ],
@@ -329,15 +322,7 @@ export function createAuthentication(
       revokeSessionsOnPasswordReset: true,
       resetPasswordTokenExpiresIn: 3600,
       password: {
-        verify: async ({ password, hash }) => {
-          const valid = await verifyPassword(password, hash);
-          if (valid && /^(legacy_scrypt|scrypt)\$/.test(hash))
-            await store.authPool.query(
-              "UPDATE auth_accounts SET password=$1,updated_at=now() WHERE password=$2 AND provider_id='credential'",
-              [await hashPassword(password), hash],
-            );
-          return valid;
-        },
+        verify: ({ password, hash }) => verifyImportedPassword(password, hash),
       },
       sendResetPassword: async ({ user, url }) =>
         sendEmail({ to: user.email, kind: "password-reset", url }),
@@ -372,7 +357,13 @@ export function createAuthentication(
       enabled: options.rateLimits !== false,
       window: 60,
       max: 100,
-      customStorage: { consume },
+      storage: "database",
+      customRules: {
+        "/sign-in/email": { window: 900, max: 10 },
+        "/request-password-reset": { window: 900, max: 5 },
+        "/send-verification-email": { window: 900, max: 5 },
+        "/api-key/create": { window: 3600, max: 20 },
+      },
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
@@ -402,10 +393,16 @@ export function createAuthentication(
               message: "Invalid registration details",
             });
           const invitation = input.data.invite
-            ? await store.one<{ email: string }>(
-                "SELECT email FROM invites WHERE id=? AND status='pending' AND expires_at>now()",
-                input.data.invite,
-              )
+            ? await (
+                await auth.$context
+              ).adapter.findOne<{ email: string }>({
+                model: "invitation",
+                where: [
+                  { field: "id", value: input.data.invite },
+                  { field: "status", value: "pending" },
+                  { field: "expiresAt", operator: "gt", value: new Date() },
+                ],
+              })
             : undefined;
           if (input.data.invite && invitation?.email !== input.data.email)
             throw new APIError("BAD_REQUEST", {
@@ -427,7 +424,8 @@ export function createAuthentication(
                   digest(input.data.bootstrapToken);
               if (
                 !approved ||
-                (await store.one("SELECT id FROM users LIMIT 1"))
+                (await (await auth.$context).internalAdapter.listUsers(1))
+                  .length > 0
               )
                 throw new APIError("FORBIDDEN", {
                   message:
@@ -458,7 +456,11 @@ export function createAuthentication(
           ctx.path.startsWith("/organization/") &&
           (ctx.request || ctx.headers)
         ) {
-          const session = await getSessionFromCtx(ctx);
+          const session = await auth.api.getSession({
+            headers: ctx.headers ?? ctx.request?.headers ?? new Headers(),
+            query: { disableCookieCache: true },
+          });
+          ctx.context.session = session;
           if (!session?.user.emailVerified)
             throw new APIError("UNAUTHORIZED", {
               message: "Verified account required",
@@ -478,24 +480,39 @@ export function createAuthentication(
                 .activeOrganizationId;
             if (ctx.body?.invitationId)
               orgId = (
-                await store.one<{ org_id: string }>(
-                  "SELECT org_id FROM invites WHERE id=?",
-                  ctx.body.invitationId,
-                )
-              )?.org_id;
+                await (
+                  await auth.$context
+                ).adapter.findOne<{ organizationId: string }>({
+                  model: "invitation",
+                  where: [{ field: "id", value: ctx.body.invitationId }],
+                })
+              )?.organizationId;
             if (ctx.body?.organizationSlug ?? ctx.query?.organizationSlug)
               orgId = (
-                await store.one<{ id: string }>(
-                  "SELECT id FROM orgs WHERE slug=?",
-                  ctx.body?.organizationSlug ?? ctx.query?.organizationSlug,
-                )
+                await (
+                  await auth.$context
+                ).adapter.findOne<{ id: string }>({
+                  model: "organization",
+                  where: [
+                    {
+                      field: "slug",
+                      value:
+                        ctx.body?.organizationSlug ??
+                        ctx.query?.organizationSlug,
+                    },
+                  ],
+                })
               )?.id;
             if (orgId) {
-              const member = await store.one<{ role: string }>(
-                "SELECT role FROM members WHERE org_id=? AND user_id=?",
-                orgId,
-                session.user.id,
-              );
+              const member = await (
+                await auth.$context
+              ).adapter.findOne<{ role: string }>({
+                model: "member",
+                where: [
+                  { field: "organizationId", value: orgId },
+                  { field: "userId", value: session.user.id },
+                ],
+              });
               const manages = [
                 "/organization/invite-member",
                 "/organization/cancel-invitation",
@@ -525,26 +542,127 @@ export function createAuthentication(
           if (ctx.body?.role && !["admin", "member"].includes(ctx.body.role))
             throw new APIError("BAD_REQUEST", { message: "Invalid role" });
         }
-        if (
-          options.rateLimits !== false &&
-          [
-            "/sign-in/email",
-            "/request-password-reset",
-            "/send-verification-email",
-          ].includes(ctx.path)
-        ) {
-          const address = String(ctx.body?.email ?? "")
-            .trim()
-            .toLowerCase();
-          const limit = await consume(`${ctx.path}:${address}`, {
-            window: 900,
-            max: ctx.path === "/sign-in/email" ? 10 : 5,
+        if (ctx.path === "/oauth2/delete-consent") {
+          const consent = await auth.api.getOAuthConsent({
+            headers: ctx.headers,
+            query: { id: ctx.body.id },
           });
-          if (!limit.allowed)
-            throw new APIError("TOO_MANY_REQUESTS", {
-              message: "Too many attempts. Try again later.",
+          const { adapter } = await auth.$context;
+          for (const model of ["oauthAccessToken", "oauthRefreshToken"])
+            await adapter.deleteMany({
+              model,
+              where: [
+                { field: "userId", value: consent.userId },
+                { field: "clientId", value: consent.clientId },
+              ],
             });
         }
+        if (ctx.path.startsWith("/api-key/") && (ctx.request || ctx.headers)) {
+          const session = await auth.api.getSession({
+            headers: ctx.headers ?? ctx.request?.headers ?? new Headers(),
+            query: { disableCookieCache: true },
+          });
+          ctx.context.session = session;
+          if (!session?.user.emailVerified)
+            throw new APIError("UNAUTHORIZED", {
+              message: "Verified account required",
+            });
+          if (ctx.path === "/api-key/create") {
+            const input = z
+              .object({
+                name: z
+                  .string()
+                  .trim()
+                  .min(1)
+                  .max(80)
+                  .regex(/^[^\x00-\x1f]+$/),
+                expiresIn: z
+                  .number()
+                  .int()
+                  .min(86400)
+                  .max(365 * 86400)
+                  .optional(),
+              })
+              .strict()
+              .safeParse(ctx.body);
+            if (!input.success)
+              throw new APIError("BAD_REQUEST", {
+                message: "Invalid API key details",
+              });
+            const keys = await auth.api.listApiKeys({
+              headers: ctx.headers,
+              query: { limit: 100 },
+            });
+            if (
+              keys.apiKeys.filter(
+                (key) =>
+                  key.enabled && key.expiresAt && key.expiresAt > new Date(),
+              ).length >= 20
+            )
+              throw new APIError("CONFLICT", {
+                message: "Revoke a key before creating another.",
+              });
+          }
+          if (
+            ctx.path === "/api-key/update" &&
+            !z
+              .object({ keyId: z.string(), enabled: z.literal(false) })
+              .strict()
+              .safeParse(ctx.body).success
+          )
+            throw new APIError("BAD_REQUEST", {
+              message: "Only key revocation is permitted",
+            });
+          if (
+            ctx.path === "/api-key/delete" &&
+            !z.object({ keyId: z.string() }).strict().safeParse(ctx.body)
+              .success
+          )
+            throw new APIError("BAD_REQUEST", {
+              message: "Invalid API key details",
+            });
+        }
+      }),
+      after: createAuthMiddleware(async (ctx) => {
+        if (isAPIError(ctx.context.returned)) return;
+        if (ctx.path === "/sign-in/email" && ctx.context.newSession) {
+          const { internalAdapter } = await auth.$context;
+          const found = await internalAdapter.findUserByEmail(ctx.body.email);
+          if (found) {
+            const account = await internalAdapter.findCredentialAccount(
+              found.user.id,
+            );
+            if (
+              account?.password &&
+              /^(legacy_scrypt|scrypt)\$/.test(account.password)
+            )
+              await internalAdapter.updatePassword(
+                found.user.id,
+                await hashPassword(ctx.body.password),
+              );
+          }
+        }
+        const actions: Record<string, string> = {
+          "/organization/invite-member": "invite.create",
+          "/organization/cancel-invitation": "invite.cancel",
+          "/organization/update-member-role": "member.role",
+          "/organization/remove-member": "member.remove",
+          "/api-key/create": "api-key.create",
+          "/api-key/update": "api-key.revoke",
+          "/api-key/delete": "api-key.revoke",
+          "/oauth2/delete-consent": "oauth.disconnect",
+        };
+        const action = actions[ctx.path];
+        if (!action) return;
+        const session = await getSessionFromCtx(ctx);
+        if (session?.session.activeOrganizationId)
+          await store.run(
+            "INSERT INTO audit(org_id,user_id,action,created) VALUES(?,?,?,?)",
+            session.session.activeOrganizationId,
+            session.user.id,
+            action,
+            new Date().toISOString(),
+          );
       }),
     },
     databaseHooks: {
@@ -563,16 +681,34 @@ export function createAuthentication(
         },
       },
       session: {
-        create: {
+        delete: {
           before: async (session) => {
-            const member = await store.one<{ org_id: string }>(
-              "SELECT org_id FROM members WHERE user_id=? ORDER BY org_id LIMIT 1",
-              session.userId,
-            );
+            const { adapter } = await auth.$context;
+            for (const model of ["oauthAccessToken", "oauthRefreshToken"])
+              await adapter.deleteMany({
+                model,
+                where: [{ field: "sessionId", value: session.id }],
+              });
+          },
+        },
+        create: {
+          before: async (
+            session,
+          ): Promise<{
+            data: typeof session & { activeOrganizationId: string | null };
+          }> => {
+            const [member] = await (
+              await auth.$context
+            ).adapter.findMany<{ organizationId: string }>({
+              model: "member",
+              where: [{ field: "userId", value: session.userId }],
+              sortBy: { field: "organizationId", direction: "asc" },
+              limit: 1,
+            });
             return {
               data: {
                 ...session,
-                activeOrganizationId: member?.org_id ?? null,
+                activeOrganizationId: member?.organizationId ?? null,
               },
             };
           },
@@ -580,5 +716,15 @@ export function createAuthentication(
       },
     },
   });
-  return { auth, consume };
+  async function validateOAuthToken(token: string) {
+    const context = await auth.$context;
+    const plugin = auth.options.plugins.find(
+      (plugin) => plugin.id === "oauth-provider",
+    )!;
+    return getOAuthProviderApi(
+      { context } as Parameters<typeof getOAuthProviderApi>[0],
+      plugin.options as Parameters<typeof getOAuthProviderApi>[1],
+    ).requireActiveAccessToken(token);
+  }
+  return { auth, validateOAuthToken };
 }

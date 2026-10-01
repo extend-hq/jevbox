@@ -186,13 +186,16 @@ before(async () => {
   base = `http://127.0.0.1:${address.port}`;
   owner = await signup("owner@local.test");
   outsider = await signup("outside@local.test");
-  const invitation = await req("/invitations", owner, "POST", {
-    email: "member@local.test",
-  });
-  member = await signup(
-    "member@local.test",
-    new URL(invitation.data.url).searchParams.get("invite")!,
+  const invitation = await req(
+    "/auth/organization/invite-member",
+    owner,
+    "POST",
+    {
+      role: "member",
+      email: "member@local.test",
+    },
   );
+  member = await signup("member@local.test", invitation.data.id);
   const me = (await req("/me", member)).data;
   memberId = me.user.id;
   orgId = me.organization.id;
@@ -492,9 +495,12 @@ test("unsafe provider endpoints and ambient file credentials are rejected", asyn
 });
 test("invitations are single-use, email-bound, and never allow role escalation", async () => {
   const invitation = (
-    await req("/invitations", owner, "POST", { email: "new@local.test" })
+    await req("/auth/organization/invite-member", owner, "POST", {
+      email: "new@local.test",
+      role: "member",
+    })
   ).data;
-  const token = new URL(invitation.url).searchParams.get("invite")!;
+  const token = invitation.id;
   assert.equal(
     (
       await req("/auth/organization/accept-invitation", outsider, "POST", {
@@ -515,7 +521,13 @@ test("invitations are single-use, email-bound, and never allow role escalation",
   );
 });
 test("membership removal invalidates sessions and grants immediately", async () => {
-  await req("/members/" + memberId, owner, "DELETE");
+  await req("/auth/organization/remove-member", owner, "POST", {
+    memberIdOrEmail: (await runtime.store.one<{ id: string }>(
+      "SELECT id FROM members WHERE user_id=? AND org_id=?",
+      memberId,
+      orgId,
+    ))!.id,
+  });
   assert.equal((await req("/me", member)).status, 401);
   assert.equal((await req("/resources", member)).status, 401);
   assert.equal(
@@ -852,18 +864,30 @@ test("only admins manage organization roles, and the last admin is preserved", a
   const adminCookie = await signup("roles-admin@local.test");
   const self = (await req("/me", adminCookie)).data;
   assert.equal(self.role, "admin");
-  const invitation = await req("/invitations", adminCookie, "POST", {
-    email: "roles-member@local.test",
-  });
+  const invitation = await req(
+    "/auth/organization/invite-member",
+    adminCookie,
+    "POST",
+    {
+      role: "member",
+      email: "roles-member@local.test",
+    },
+  );
   const memberCookie = await signup(
     "roles-member@local.test",
-    new URL(invitation.data.url).searchParams.get("invite")!,
+    invitation.data.id,
   );
   const other = (await req("/me", memberCookie)).data;
   assert.equal(other.role, "member");
   assert.equal(
     (
-      await req(`/members/${other.user.id}`, memberCookie, "PATCH", {
+      await req("/auth/organization/update-member-role", memberCookie, "POST", {
+        memberId: (await runtime.store.one<{ id: string }>(
+          "SELECT id FROM members WHERE user_id=? AND org_id=?",
+          other.user.id,
+          self.organization.id,
+        ))!.id,
+        organizationId: self.organization.id,
         role: "admin",
       })
     ).status,
@@ -871,7 +895,13 @@ test("only admins manage organization roles, and the last admin is preserved", a
   );
   assert.equal(
     (
-      await req(`/members/${self.user.id}`, adminCookie, "PATCH", {
+      await req("/auth/organization/update-member-role", adminCookie, "POST", {
+        memberId: (await runtime.store.one<{ id: string }>(
+          "SELECT id FROM members WHERE user_id=? AND org_id=?",
+          self.user.id,
+          self.organization.id,
+        ))!.id,
+        organizationId: self.organization.id,
         role: "member",
       })
     ).status,
@@ -879,7 +909,13 @@ test("only admins manage organization roles, and the last admin is preserved", a
   );
   assert.equal(
     (
-      await req(`/members/${other.user.id}`, adminCookie, "PATCH", {
+      await req("/auth/organization/update-member-role", adminCookie, "POST", {
+        memberId: (await runtime.store.one<{ id: string }>(
+          "SELECT id FROM members WHERE user_id=? AND org_id=?",
+          other.user.id,
+          self.organization.id,
+        ))!.id,
+        organizationId: self.organization.id,
         role: "owner",
       })
     ).status,
@@ -887,11 +923,17 @@ test("only admins manage organization roles, and the last admin is preserved", a
   );
   assert.equal(
     (
-      await req(`/members/${other.user.id}`, outsider, "PATCH", {
+      await req("/auth/organization/update-member-role", outsider, "POST", {
+        memberId: (await runtime.store.one<{ id: string }>(
+          "SELECT id FROM members WHERE user_id=? AND org_id=?",
+          other.user.id,
+          self.organization.id,
+        ))!.id,
+        organizationId: self.organization.id,
         role: "admin",
       })
     ).status,
-    404,
+    403,
   );
   const privateId = await upload(
     adminCookie,
@@ -899,7 +941,13 @@ test("only admins manage organization roles, and the last admin is preserved", a
   );
   assert.equal(
     (
-      await req(`/members/${other.user.id}`, adminCookie, "PATCH", {
+      await req("/auth/organization/update-member-role", adminCookie, "POST", {
+        memberId: (await runtime.store.one<{ id: string }>(
+          "SELECT id FROM members WHERE user_id=? AND org_id=?",
+          other.user.id,
+          self.organization.id,
+        ))!.id,
+        organizationId: self.organization.id,
         role: "admin",
       })
     ).status,
@@ -912,7 +960,13 @@ test("only admins manage organization roles, and the last admin is preserved", a
   );
   assert.equal(
     (
-      await req(`/members/${self.user.id}`, adminCookie, "PATCH", {
+      await req("/auth/organization/update-member-role", adminCookie, "POST", {
+        memberId: (await runtime.store.one<{ id: string }>(
+          "SELECT id FROM members WHERE user_id=? AND org_id=?",
+          self.user.id,
+          self.organization.id,
+        ))!.id,
+        organizationId: self.organization.id,
         role: "member",
       })
     ).status,
@@ -921,7 +975,13 @@ test("only admins manage organization roles, and the last admin is preserved", a
   assert.equal((await req("/settings", adminCookie)).status, 403);
   assert.equal(
     (
-      await req(`/members/${other.user.id}`, memberCookie, "PATCH", {
+      await req("/auth/organization/update-member-role", memberCookie, "POST", {
+        memberId: (await runtime.store.one<{ id: string }>(
+          "SELECT id FROM members WHERE user_id=? AND org_id=?",
+          other.user.id,
+          self.organization.id,
+        ))!.id,
+        organizationId: self.organization.id,
         role: "member",
       })
     ).status,
@@ -1002,14 +1062,12 @@ test("chat attachments scope retrieval and reject unauthorized IDs before outbou
 test("revoking an attached document hides its saved conversation and attachment names", async () => {
   const cookie = await signup("attachment-owner@local.test");
   const invitation = (
-    await req("/invitations", cookie, "POST", {
+    await req("/auth/organization/invite-member", cookie, "POST", {
+      role: "member",
       email: "attachment-reader@local.test",
     })
   ).data;
-  const reader = await signup(
-    "attachment-reader@local.test",
-    new URL(invitation.url).searchParams.get("invite")!,
-  );
+  const reader = await signup("attachment-reader@local.test", invitation.id);
   const readerId = (await req("/me", reader)).data.user.id;
   await req("/settings", cookie, "PUT", {
     provider: "openai",
@@ -1083,13 +1141,16 @@ test("SpiceDB denial and service failures never fall back to SQL ownership", asy
 test("partial SpiceDB writes cannot publish a grant and retry is consistent across connections", async () => {
   const cookie = await signup("snapshot-owner@local.test");
   const me = (await req("/me", cookie)).data;
-  const invitation = await req("/invitations", cookie, "POST", {
-    email: "snapshot-member@local.test",
-  });
-  const reader = await signup(
-    "snapshot-member@local.test",
-    new URL(invitation.data.url).searchParams.get("invite")!,
+  const invitation = await req(
+    "/auth/organization/invite-member",
+    cookie,
+    "POST",
+    {
+      role: "member",
+      email: "snapshot-member@local.test",
+    },
   );
+  const reader = await signup("snapshot-member@local.test", invitation.data.id);
   const readerMe = (await req("/me", reader)).data;
   const rid = await upload(cookie, "# Private\nSnapshot content.");
   await runtime.store.transaction(async () => {
@@ -1349,11 +1410,13 @@ test("folder subtree moves replace SpiceDB parent and inherited edges and revoke
   const readers: { session: string; id: string }[] = [];
   for (const label of ["source", "target"]) {
     const email = `graph-${label}-${suffix}@local.test`;
-    const invitation = await req("/invitations", cookie, "POST", { email });
-    const session = await signup(
-      email,
-      new URL(invitation.data.url).searchParams.get("invite")!,
+    const invitation = await req(
+      "/auth/organization/invite-member",
+      cookie,
+      "POST",
+      { email, role: "member" },
     );
+    const session = await signup(email, invitation.data.id);
     readers.push({ session, id: (await req("/me", session)).data.user.id });
   }
   const createFolder = async (name: string, parentId: string | null = null) => {
@@ -1572,13 +1635,16 @@ test("startup rebuilds committed permission snapshots after SpiceDB relationship
 
 test("resource moves require ownership and destination write access and atomically update inherited permissions", async () => {
   const cookie = await signup("move-owner@local.test");
-  const invitation = await req("/invitations", cookie, "POST", {
-    email: "move-member@local.test",
-  });
-  const viewer = await signup(
-    "move-member@local.test",
-    new URL(invitation.data.url).searchParams.get("invite")!,
+  const invitation = await req(
+    "/auth/organization/invite-member",
+    cookie,
+    "POST",
+    {
+      role: "member",
+      email: "move-member@local.test",
+    },
   );
+  const viewer = await signup("move-member@local.test", invitation.data.id);
   const viewerId = (await req("/me", viewer)).data.user.id;
   const source = (await req("/folders", cookie, "POST", { name: "Source" }))
     .data.id;
@@ -1918,13 +1984,16 @@ test("single folder deletion recursively removes its nested documents", async ()
 });
 
 test("recursive deletion checks descendant permissions before deleting anything", async () => {
-  const invitation = await req("/invitations", owner, "POST", {
-    email: "recursive@local.test",
-  });
-  const collaborator = await signup(
-    "recursive@local.test",
-    new URL(invitation.data.url).searchParams.get("invite")!,
+  const invitation = await req(
+    "/auth/organization/invite-member",
+    owner,
+    "POST",
+    {
+      role: "member",
+      email: "recursive@local.test",
+    },
   );
+  const collaborator = await signup("recursive@local.test", invitation.data.id);
   const collaboratorId = (await req("/me", collaborator)).data.user.id;
   const parent = (await req("/folders", owner, "POST", { name: "Shared" })).data
     .id;
