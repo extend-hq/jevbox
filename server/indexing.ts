@@ -28,9 +28,120 @@ export type ParsedDocument = {
   indexedAt: string;
   version?: number;
   summary?: string;
+  passageVersion?: number;
 };
 
 export function splitPassages(content: string, size = 2400, overlap = 200) {
+  const structured = [...content.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/gi)];
+  if (!structured.length) return splitText(content, size, overlap);
+  const passages: { content: string; start: number; end: number }[] = [];
+  let offset = 0;
+  const text = (end: number) => {
+    for (const passage of splitText(content.slice(offset, end), size, overlap))
+      passages.push({
+        ...passage,
+        start: passage.start + offset,
+        end: passage.end + offset,
+      });
+  };
+  for (const match of structured) {
+    text(match.index);
+    const table = match[0];
+    const rows = [...table.matchAll(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi)];
+    const opening = table.match(/^<table\b[^>]*>/i)![0];
+    const caption =
+      table.match(/<caption\b[^>]*>[\s\S]*?<\/caption>/i)?.[0] ?? "";
+    const head = table.match(/<thead\b[^>]*>[\s\S]*?<\/thead>/i);
+    const headers = head
+      ? rows.filter(
+          (row) =>
+            row.index >= head.index! &&
+            row.index < head.index! + head[0].length,
+        )
+      : rows.filter(
+          (row, index) =>
+            index === 0 ||
+            (/<th\b/i.test(row[0]) &&
+              rows
+                .slice(0, index)
+                .every((previous) => /<th\b/i.test(previous[0]))),
+        );
+    const body = rows.filter((row) => !headers.includes(row));
+    const before =
+      content
+        .slice(offset, match.index)
+        .trim()
+        .split(/\n\s*\n/)
+        .at(-1)
+        ?.slice(-320) ?? "";
+    const after = content
+      .slice(
+        match.index + table.length,
+        structured.find((next) => next.index > match.index)?.index,
+      )
+      .trim()
+      .split(/\n\s*\n/)[0]
+      .slice(0, 500);
+    const prefix = `${before ? `${before}\n\n` : ""}${opening}${caption}<thead>${headers.map((row) => row[0]).join("")}</thead><tbody>`;
+    const suffix = `</tbody></table>${after ? `\n\n${after}` : ""}`;
+    if (!body.length || /<table\b/i.test(table.slice(opening.length))) {
+      for (const passage of splitText(table, size, overlap))
+        passages.push({
+          ...passage,
+          start: passage.start + match.index,
+          end: passage.end + match.index,
+        });
+    } else {
+      let group: typeof rows = [];
+      let length = prefix.length + suffix.length;
+      const emit = () => {
+        if (!group.length) return;
+        passages.push({
+          content: prefix + group.map((row) => row[0]).join("") + suffix,
+          start: before
+            ? content.lastIndexOf(before, match.index)
+            : match.index + group[0].index,
+          end: after
+            ? content.indexOf(after, match.index + table.length) + after.length
+            : match.index + group.at(-1)!.index + group.at(-1)![0].length,
+        });
+        group = [];
+        length = prefix.length + suffix.length;
+      };
+      for (let index = 0; index < body.length;) {
+        let end = index + 1;
+        for (
+          let current = index;
+          current < end && current < body.length;
+          current++
+        ) {
+          const spans = [
+            ...body[current][0].matchAll(/\browspan\s*=\s*["']?(\d+)/gi),
+          ];
+          end = Math.min(
+            body.length,
+            Math.max(
+              end,
+              ...spans.map((span) => current + Math.max(1, Number(span[1]))),
+            ),
+          );
+        }
+        const unit = body.slice(index, end);
+        const unitLength = unit.reduce((sum, row) => sum + row[0].length, 0);
+        if (group.length && length + unitLength > size) emit();
+        group.push(...unit);
+        length += unitLength;
+        index = end;
+      }
+      emit();
+    }
+    offset = match.index + table.length;
+  }
+  text(content.length);
+  return passages;
+}
+
+function splitText(content: string, size: number, overlap: number) {
   const passages: { content: string; start: number; end: number }[] = [];
   for (let start = 0; start < content.length;) {
     let end = Math.min(start + size, content.length);
@@ -219,6 +330,7 @@ export function buildIndex(
     node.summary = `Pages ${node.page}–${node.endPage}. Sections: ${[node.title, ...flatten(node.children).map((child) => child.title)].join("; ")}`;
   return withLayoutSections({
     version: 1,
+    passageVersion: 2,
     source,
     pages: Math.max(
       ...chunks.map((c, i) => c.metadata?.pageRange?.end ?? i + 1),
@@ -232,6 +344,24 @@ export function buildIndex(
       .map((node) => node.title)
       .join("; ")}`,
   });
+}
+
+export function withSearchPassages(input: ParsedDocument): ParsedDocument {
+  const parsed = withLayoutSections(input);
+  if (parsed.passageVersion === 2) return parsed;
+  const upgrade = (node: IndexNode): IndexNode => {
+    const copy: IndexNode = {
+      ...node,
+      content: "",
+      links: [],
+      blocks: [],
+      passages: [],
+      children: node.children.map(upgrade),
+    };
+    append(copy, node.content, node.page, node.endPage, node.blocks);
+    return copy;
+  };
+  return { ...parsed, passageVersion: 2, nodes: parsed.nodes.map(upgrade) };
 }
 
 export function withLayoutSections(parsed: ParsedDocument): ParsedDocument {

@@ -11,6 +11,7 @@ import type { ParsedBlock } from "../../shared/parsed-blocks";
 import type { FileSystemEntry, FileSystemFileItem } from "./extend/file-system";
 import { FOLDER_GLYPH_SVG } from "./extend/folder-glyph";
 import { layoutSpatialTree, type SpatialNode } from "../lib/spatial-tree";
+import { occludesSpatialFocus } from "../lib/spatial-focus";
 import {
   createDetailThumbnailQueue,
   detailThumbnailCandidates,
@@ -45,6 +46,7 @@ type Props = {
 type SceneHandle = {
   focus: (path?: string) => void;
   fly: (amount: number) => void;
+  invalidate: () => void;
 };
 
 const SHEET_WIDTH = 2.25;
@@ -1409,6 +1411,52 @@ export function LibrarySpatialView(props: Props) {
       return best;
     }
 
+    const focusBounds = new THREE.Box3();
+    const candidateBounds = new THREE.Box3();
+    const viewMatrix = new THREE.Matrix4();
+    function boundsInView(
+      floater: Floater,
+      bounds: THREE.Box3,
+      withTree = false,
+    ) {
+      const halfWidth = (floater.width * floater.scale) / 2;
+      const halfHeight = (floater.height * floater.scale) / 2;
+      const stack = Math.max(0, floater.sheets.length - 1);
+      const labelHalfWidth = floater.label.geometry.parameters.width / 2;
+      bounds.min.set(
+        Math.min(-halfWidth, -labelHalfWidth),
+        floater.label.position.y - floater.label.geometry.parameters.height / 2,
+        -stack * 0.06,
+      );
+      bounds.max.set(
+        Math.max(halfWidth + stack * STACK_STEP, labelHalfWidth),
+        halfHeight,
+        0.02,
+      );
+      const tree = withTree ? trees.get(floater.node.path) : undefined;
+      if (tree?.group.visible) {
+        bounds.max.x = Math.max(
+          bounds.max.x,
+          halfWidth + TREE_GAP + tree.width,
+        );
+        bounds.min.y = Math.min(bounds.min.y, halfHeight - tree.height);
+      }
+      viewMatrix.multiplyMatrices(
+        camera.matrixWorldInverse,
+        floater.group.matrixWorld,
+      );
+      return bounds.applyMatrix4(viewMatrix);
+    }
+    function isVisible(object: THREE.Object3D) {
+      for (
+        let current: THREE.Object3D | null = object;
+        current;
+        current = current.parent
+      )
+        if (!current.visible) return false;
+      return true;
+    }
+
     function draw(now: number) {
       frame = 0;
       if (disposed) return;
@@ -1527,6 +1575,33 @@ export function LibrarySpatialView(props: Props) {
       // child, easing through the level between them.
       cameraUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
       scene.updateMatrixWorld(true);
+      const selected = floaters.get(selectedPath ?? "\0");
+      let selectedDepth: number | null = null;
+      if (selected?.node.kind === "file") {
+        projected.copy(selected.group.position).project(camera);
+        if (
+          projected.z > -1 &&
+          projected.z < 1 &&
+          Math.abs(projected.x) < 1.2 &&
+          Math.abs(projected.y) < 1.2
+        ) {
+          boundsInView(selected, focusBounds, true);
+          projected
+            .copy(selected.group.position)
+            .applyMatrix4(camera.matrixWorldInverse);
+          selectedDepth = -projected.z;
+        }
+      }
+      for (const floater of floaters.values()) {
+        floater.group.visible =
+          selectedDepth === null ||
+          floater === selected ||
+          !occludesSpatialFocus(
+            focusBounds,
+            boundsInView(floater, candidateBounds),
+            camera.near,
+          );
+      }
       if (pointerInside && !moving) {
         raycaster.setFromCamera(pointer, camera);
         updateHover(hoverHit());
@@ -1534,7 +1609,11 @@ export function LibrarySpatialView(props: Props) {
       links.forEach(([parent, child], i) => {
         parent.body.localToWorld(linkFrom.set(0, -parent.height / 2, 0));
         child.body.localToWorld(linkTo.set(0, child.height / 2, 0));
-        linkVisibility.fill(1, i * LINK_SEGMENTS, (i + 1) * LINK_SEGMENTS);
+        linkVisibility.fill(
+          parent.group.visible && child.group.visible ? 1 : 0,
+          i * LINK_SEGMENTS,
+          (i + 1) * LINK_SEGMENTS,
+        );
         const bend = Math.max(1, Math.abs(linkFrom.y - linkTo.y) * 0.55);
         bezier.v0.copy(linkFrom);
         bezier.v1.copy(linkFrom).addScaledVector(cameraUp, -bend);
@@ -1555,32 +1634,23 @@ export function LibrarySpatialView(props: Props) {
       ).data.needsUpdate = true;
       visibilityAttribute.needsUpdate = true;
 
-      // Autofocus: whatever is directly in front of the camera (including
-      // the open outline), otherwise the selected document if it's in view,
-      // otherwise the orbit target.
-      let focusGoal = camera.position.distanceTo(controls.target);
+      // Keep the selected depth sharp while its sightline is cleared.
+      let focusGoal =
+        selectedDepth ?? camera.position.distanceTo(controls.target);
       focusTargets.length = 0;
-      focusTargets.push(...pickables);
+      focusTargets.push(...pickables.filter(isVisible));
       const openTree = treePath ? trees.get(treePath) : undefined;
-      if (openTree?.group.visible)
+      if (openTree && isVisible(openTree.group))
         for (const child of openTree.group.children)
           if (child instanceof THREE.Mesh && !(child instanceof LineSegments2))
             focusTargets.push(child);
       centerRay.setFromCamera(center, camera);
       const hit = centerRay.intersectObjects(focusTargets, false)[0];
-      const selected = floaters.get(selectedPath ?? "\0");
-      if (hit && hit.distance >= 3) focusGoal = hit.distance;
-      else if (selected) {
-        projected.copy(selected.group.position).project(camera);
-        if (
-          projected.z > -1 &&
-          projected.z < 1 &&
-          Math.abs(projected.x) < 0.75 &&
-          Math.abs(projected.y) < 0.75
-        )
-          focusGoal = camera.position.distanceTo(selected.group.position);
-      }
-      focusDistance += (focusGoal - focusDistance) * Math.min(1, delta * 4);
+      if (selectedDepth === null && hit && hit.distance >= 3)
+        focusGoal = hit.distance;
+      focusDistance +=
+        (focusGoal - focusDistance) *
+        (reducedMotion ? 1 : Math.min(1, delta * 4));
       focusDistance = Math.max(1.5, focusDistance);
       dofMaterial.uniforms.focus.value = focusDistance;
       dofMaterial.uniforms.aperture.value =
@@ -1802,7 +1872,9 @@ export function LibrarySpatialView(props: Props) {
     const hoverPoint = new THREE.Vector3();
     function rayHit() {
       let object: THREE.Object3D | null =
-        raycaster.intersectObjects(pickables, false)[0]?.object ?? null;
+        raycaster
+          .intersectObjects(pickables, false)
+          .find((hit) => isVisible(hit.object))?.object ?? null;
       while (object && object.userData.path === undefined)
         object = object.parent;
       return object?.userData.path as string | undefined;
@@ -1815,7 +1887,7 @@ export function LibrarySpatialView(props: Props) {
       const next = rayHit();
       if (next || !hovered) return next;
       const floater = floaters.get(hovered);
-      if (!floater) return next;
+      if (!floater || !floater.group.visible) return next;
       projected
         .copy(floater.group.position)
         .applyMatrix4(camera.matrixWorldInverse);
@@ -1935,6 +2007,7 @@ export function LibrarySpatialView(props: Props) {
     handle.current = {
       focus,
       fly: (amount) => fly(amount),
+      invalidate,
     };
     void folderArt.ready.then(invalidate);
     if (
@@ -1978,6 +2051,7 @@ export function LibrarySpatialView(props: Props) {
     if (previousSelection.current === props.selectedPath) return;
     previousSelection.current = props.selectedPath;
     if (props.selectedPath) handle.current?.focus(props.selectedPath);
+    handle.current?.invalidate();
   }, [props.selectedPath]);
 
   function openNode(node: SpatialNode) {

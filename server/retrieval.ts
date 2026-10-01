@@ -10,11 +10,12 @@ import {
 } from "./db";
 import {
   flatten,
-  withLayoutSections,
+  withSearchPassages,
   type IndexNode,
   type ParsedDocument,
 } from "./indexing";
 import type { RetrievalStep } from "../shared/retrieval";
+import { searchMetadata } from "./search-metadata";
 
 export type RetrievedSource = {
   documentId: string;
@@ -101,10 +102,10 @@ export async function retrieveDocuments(
     });
   };
   const resources = await readable(
-    await store.all<Resource>(
+    await store.all<Resource & { outline_only?: boolean }>(
       documentIds.length && !options?.preserveFolders
         ? "SELECT * FROM resources WHERE org_id=? AND id=ANY(?::text[]) ORDER BY created DESC"
-        : "SELECT * FROM resources WHERE org_id=? ORDER BY created DESC",
+        : "SELECT id,org_id,owner_id,parent_id,kind,name,description,access,mime,size,status,created,true AS outline_only,CASE WHEN parsed IS NULL THEN NULL ELSE json_build_object('summary',left(search_outline,1200))::text END AS parsed FROM resources WHERE org_id=? ORDER BY created DESC",
       actor.orgId,
       ...(documentIds.length && !options?.preserveFolders ? [documentIds] : []),
     ),
@@ -180,7 +181,10 @@ export async function retrieveDocuments(
       scope: doc.id,
       describe: async () =>
         (await canRead(doc.id))
-          ? `${node.title}\n${node.summary}`.slice(0, 1200)
+          ? `${node.title}\nPages ${node.page}–${node.endPage}\n${node.summary}`.slice(
+              0,
+              1200,
+            )
           : undefined,
       children: bounded(
         node.children.map((child) => section(doc, child, node.id)),
@@ -216,28 +220,56 @@ export async function retrieveDocuments(
     byParent.set(resource.parent_id, children);
   }
   const eligible = new Set(docs.map((doc) => doc.id));
-  function resourceNode(resource: Resource): RouteNode<Value> | undefined {
+  function resourceNode(
+    resource: Resource & { outline_only?: boolean },
+  ): RouteNode<Value> | undefined {
     if (resource.kind === "document") {
       if (!eligible.has(resource.id)) return;
-      const parsed: ParsedDocument = withLayoutSections(
-        JSON.parse(resource.parsed!),
-      );
+      const outline = JSON.parse(resource.parsed!) as Partial<ParsedDocument>;
+      let children: RouteNode<Value>[] | undefined;
+      const loadChildren = async () => {
+        signal?.throwIfAborted();
+        if (!(await canRead(resource.id))) return [];
+        if (!children) {
+          const current = resource.outline_only
+            ? await store.one<Resource>(
+                "SELECT * FROM resources WHERE id=? AND org_id=?",
+                resource.id,
+                actor.orgId,
+              )
+            : resource;
+          if (
+            !current?.parsed ||
+            current.status !== "ready" ||
+            !(await canRead(resource.id))
+          )
+            return [];
+          const parsed = withSearchPassages(
+            JSON.parse(current.parsed) as ParsedDocument,
+          );
+          children = bounded(
+            [...parsed.nodes, searchMetadata(parsed, query)].map((node) =>
+              section(current, node),
+            ),
+            `document:${resource.id}`,
+          );
+        }
+        return children;
+      };
       return {
         id: `document:${resource.id}`,
         scope: resource.id,
         describe: async () =>
           (await canRead(resource.id))
             ? `${resource.name}\n${
-                parsed.summary ??
-                flatten(parsed.nodes)
+                outline.summary ??
+                flatten(outline.nodes ?? [])
                   .map((node) => node.title)
                   .join("; ")
               }`.slice(0, 1200)
             : undefined,
-        children: bounded(
-          parsed.nodes.map((node) => section(resource, node)),
-          `document:${resource.id}`,
-        ),
+        children: [],
+        loadChildren,
         value: {
           step: {
             stage: "document",
@@ -256,10 +288,35 @@ export async function retrieveDocuments(
     if (!children.length) return;
     return {
       id: `category:${resource.id}`,
-      describe: async () =>
-        (await canRead(resource.id))
-          ? `${resource.name}\n${resource.description}`.slice(0, 600)
-          : undefined,
+      describe: async () => {
+        if (!(await canRead(resource.id))) return;
+        const outlines = (
+          await Promise.all(children.map((child) => child.describe()))
+        ).filter((outline): outline is string => outline !== undefined);
+        const siblings = (byParent.get(resource.parent_id) ?? []).length;
+        const budget = Math.min(
+          16000,
+          Math.floor(
+            (retrievalLimits.routingCharacters - 8192) /
+              Math.max(1, Math.min(retrievalLimits.menuSize, siblings)),
+          ),
+        );
+        const prefix =
+          `${resource.name}\n${resource.description.slice(0, 600)}\nContained sources:\n`.slice(
+            0,
+            budget,
+          );
+        const size = Math.max(
+          0,
+          Math.floor(
+            (budget - prefix.length - outlines.length) /
+              Math.max(1, outlines.length),
+          ),
+        );
+        return (
+          prefix + outlines.map((outline) => outline.slice(0, size)).join("\n")
+        );
+      },
       children: bounded(children, `category:${resource.id}`),
       value: {
         step: {
@@ -293,6 +350,7 @@ export async function retrieveDocuments(
   const candidates: Omit<RetrievedSource, "score">[] = [];
   const passageCounts = new Map<string, number>();
   let scored = 0;
+  let coverageChecked = "";
   while ((!traversal.exhausted || candidates.length) && scored < maxPassages) {
     signal?.throwIfAborted();
     const routes = traversal.exhausted ? [] : await traversal.walk();
@@ -348,7 +406,10 @@ export async function retrieveDocuments(
               page: source.page,
               routeScore: source.routeScore,
             });
-            const score = await jev.score(query, source.content);
+            const score = await jev.score(
+              query,
+              `Source: ${source.name}\nSection: ${source.title}\nPages: ${source.page}–${source.endPage}\n\n${source.content}`,
+            );
             return score >= retrievalLimits.minimumScore &&
               (await canRead(source.documentId))
               ? { ...source, score }
@@ -363,14 +424,44 @@ export async function retrieveDocuments(
       );
     }
     const accessible = await readable(results, (source) => source.documentId);
-    if (
-      accessible.length >= retrievalLimits.minimumUsefulResults ||
-      (options?.recoverRoutes !== false &&
-        accessible.some(
-          (source) => source.score >= retrievalLimits.sufficientScore,
-        ))
-    )
+    if (options?.recoverRoutes === false) {
+      if (accessible.length >= retrievalLimits.minimumUsefulResults) break;
+    } else if (
+      accessible.some(
+        (source) => source.score >= retrievalLimits.sufficientScore,
+      )
+    ) {
       break;
+    } else if (accessible.length >= retrievalLimits.minimumUsefulResults) {
+      const evidence = accessible
+        .toSorted((a, b) => b.score - a.score || b.routeScore - a.routeScore)
+        .slice(0, maxResults);
+      const identity = evidence
+        .map((source) => `${source.documentId}:${source.passageId}`)
+        .join("|");
+      if (identity !== coverageChecked) {
+        coverageChecked = identity;
+        const score = await evidenceSlot(async () => {
+          signal?.throwIfAborted();
+          const approved = await readable(
+            evidence,
+            (source) => source.documentId,
+          );
+          if (!approved.length) return 0;
+          return jev.score(
+            query,
+            approved
+              .map(
+                (source) =>
+                  `Source: ${source.name}\nSection: ${source.title}\nPages: ${source.page}–${source.endPage}\n${source.content}`,
+              )
+              .join("\n\n")
+              .slice(0, retrievalLimits.contextCharacters),
+          );
+        });
+        if (score >= retrievalLimits.sufficientScore) break;
+      }
+    }
   }
   const accessible = await readable(
     [

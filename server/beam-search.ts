@@ -4,6 +4,7 @@ export type RouteNode<T> = {
   id: string;
   describe: () => Promise<string | undefined>;
   children: RouteNode<T>[];
+  loadChildren?: () => Promise<RouteNode<T>[]>;
   scope?: string;
   value?: T;
 };
@@ -100,11 +101,14 @@ export function createTraversal<T>(
                 (evidenceVisits.get(route.node.scope) ?? 0) + 1,
               );
           }
-          if (!route.node.children.length) continue;
+          const children = route.node.loadChildren
+            ? await route.node.loadChildren()
+            : route.node.children;
+          if (!children.length) continue;
           if (++expansions > retrievalLimits.expansions) break;
           const choices = (
             await Promise.all(
-              route.node.children.map(async (node) => {
+              children.map(async (node) => {
                 const text = await node.describe();
                 return text === undefined ? [] : [{ id: node.id, text, node }];
               }),

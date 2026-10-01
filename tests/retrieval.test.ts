@@ -94,6 +94,113 @@ test("attached retrieval loads only the requested resources before scoring", asy
   assert.equal(result.results[0]?.documentId, selected.id);
 });
 
+test("library retrieval opens full indexes only for explored outline branches", async () => {
+  const resources = Array.from({ length: 9 }, (_, i) =>
+    document(`source-${i}`, "# Section\nSupported facts."),
+  );
+  const { store } = storeFor(resources);
+  const reads: string[] = [];
+  store.all = async (sql: string) => {
+    assert.match(sql, /search_outline/);
+    assert.doesNotMatch(sql, /SELECT \*/);
+    return resources.map((resource) => ({
+      ...resource,
+      outline_only: true,
+      parsed: JSON.stringify({ summary: "Supported facts." }),
+    })) as never;
+  };
+  store.one = async (sql: string, id: string, orgId: string) => {
+    if (sql.startsWith("SELECT * FROM resources")) {
+      assert.match(sql, /id=\? AND org_id=\?/);
+      assert.equal(orgId, actor.orgId);
+      reads.push(id);
+    }
+    return resources.find((resource) => resource.id === id) as never;
+  };
+  const result = await retrieveDocuments(
+    store,
+    actor,
+    "What facts are supported?",
+    "key",
+    jevFetch,
+  );
+  assert.ok(result.results.length > 0);
+  assert.ok(reads.length <= retrievalLimits.beamWidth);
+  assert.equal(new Set(reads).size, reads.length);
+});
+
+test("revoked outline branches cannot load their full indexes", async () => {
+  const resources = [
+    document("a", "# Section\nPrivate facts."),
+    document("b", "# Section\nSupported facts."),
+  ];
+  const { store, allowed } = storeFor(resources);
+  const reads: string[] = [];
+  store.all = async () =>
+    resources.map((resource) => ({
+      ...resource,
+      outline_only: true,
+      parsed: JSON.stringify({ summary: resource.name }),
+    })) as never;
+  store.one = async (sql: string, id: string) => {
+    if (sql.startsWith("SELECT * FROM resources")) reads.push(id);
+    return resources.find((resource) => resource.id === id) as never;
+  };
+  const result = await retrieveDocuments(
+    store,
+    actor,
+    "What facts are supported?",
+    "key",
+    async (input, init) => {
+      const response = await jevFetch(input, init);
+      allowed.delete("a");
+      return response;
+    },
+  );
+  assert.ok(!reads.includes("a"));
+  assert.ok(result.results.every((source) => source.documentId !== "a"));
+});
+
+test("wide category menus bound their authorized child outlines", async () => {
+  const resources: Resource[] = [];
+  for (let i = 0; i < retrievalLimits.menuSize; i++) {
+    const folder = {
+      ...document(`folder-${i}`, ""),
+      kind: "folder" as const,
+      parsed: null,
+      description: "Context ".repeat(200),
+    };
+    resources.push(folder);
+    for (let j = 0; j < 2; j++)
+      resources.push(
+        document(
+          `source-${i}-${j}`,
+          `# ${"Topic ".repeat(180)}\nSupported facts.`,
+          folder.id,
+        ),
+      );
+  }
+  const { store } = storeFor(resources);
+  let rootChecked = false;
+  await retrieveDocuments(
+    store,
+    actor,
+    "What facts are supported?",
+    "key",
+    async (input, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.questions.route_0?.criteria["category:folder-0"]) {
+        rootChecked = true;
+        assert.ok(
+          String(init?.body).length < retrievalLimits.routingCharacters,
+        );
+      }
+      return jevFetch(input, init);
+    },
+  );
+  assert.equal(rootChecked, true);
+});
+
 test("indexing continues sections across pages and ignores headings inside code fences", () => {
   const parsed = buildIndex(
     [
@@ -359,7 +466,7 @@ test("a none routing decision defers branches until their passages can be scored
       });
     },
   );
-  assert.equal(scored.length, 2);
+  assert.equal(scored.length, 6);
   assert.deepEqual(
     result.results.map((source) => source.documentId),
     ["b"],
@@ -401,7 +508,7 @@ test("candidate sections score every passage without a passage routing gate", as
       });
     },
   );
-  assert.equal(scored.length, expected.length);
+  assert.equal(scored.length, expected.length + 2);
   assert.equal(result.results.length, 1);
   assert.match(result.results[0].content, /739/);
 });
@@ -927,7 +1034,7 @@ test("long source sections share the passage budget with other documents", async
         answers: {
           usefulness: {
             type: "score",
-            score: body.state.includes("739") ? 2.49 : 0,
+            score: body.state.includes("739") ? 3 : 0,
           },
         },
       });
