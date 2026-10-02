@@ -233,7 +233,7 @@ export function createWorkers(
   return {
     handle,
     async start(names: QueueName[] = Object.values(queues)) {
-      await store.files.ready();
+      if (names.length) await store.files.ready();
       if (names.includes(queues.thumbnail))
         await enqueueMissingThumbnails(store);
       for (const name of names) {

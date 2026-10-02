@@ -14,6 +14,7 @@ with urlopen("https://render.com/schema/render.yaml.json", timeout=30) as respon
 services = {service["name"]: service for service in blueprint["services"]}
 databases = {database["name"]: database for database in blueprint["databases"]}
 groups = {group["name"]: group for group in blueprint["envVarGroups"]}
+external_groups = {"jevbox-app"}
 regions = {service["region"] for service in services.values()} | {
     database["region"] for database in databases.values()
 }
@@ -34,7 +35,7 @@ for service in services.values():
             assert variable["fromDatabase"]["name"] in databases
             assert variable["fromDatabase"]["property"] == "connectionString"
         if "fromGroup" in variable:
-            assert variable["fromGroup"] in groups
+            assert variable["fromGroup"] in groups or variable["fromGroup"] in external_groups
 
 web = next(service for service in services.values() if service["type"] == "web")
 worker = next(service for service in services.values() if service["type"] == "worker")
@@ -43,14 +44,40 @@ assert worker["dockerCommand"].endswith(" worker")
 worker_env = {v.get("key"): v for v in worker["envVars"]}
 web_env = {v.get("key"): v for v in web["envVars"]}
 assert worker_env["DATABASE_URL"]["fromDatabase"] == web_env["DATABASE_URL"]["fromDatabase"]
-assert worker_env["ENCRYPTION_KEY"]["fromService"]["envVarKey"] == "ENCRYPTION_KEY"
-assert worker_env["ENCRYPTION_KEY"]["fromService"]["name"] == web["name"]
-assert web_env["ENCRYPTION_KEY"].get("sync") is False
-assert web_env["FILE_STORAGE"]["value"] == worker_env["FILE_STORAGE"]["value"] == "s3"
-for key in ["S3_BUCKET", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]:
-    assert web_env[key].get("sync") is False
-    assert worker_env[key]["fromService"]["name"] == web["name"]
-    assert worker_env[key]["fromService"]["envVarKey"] == key
+shared_keys = {
+    "ENCRYPTION_KEY",
+    "FILE_STORAGE",
+    "S3_BUCKET",
+    "AWS_REGION",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "S3_PREFIX",
+    "S3_ENDPOINT",
+    "S3_FORCE_PATH_STYLE",
+    "SMTP_HOST",
+    "SMTP_PORT",
+    "SMTP_SECURE",
+    "SMTP_USER",
+    "SMTP_PASSWORD",
+    "AUTH_EMAIL_FROM",
+}
+assert "jevbox-app" not in groups
+for service in [web, worker]:
+    links = {
+        variable["fromGroup"]
+        for variable in service["envVars"]
+        if "fromGroup" in variable
+    }
+    assert links == {"jevbox-app", "jevbox-authorization"}
+    assert not (
+        shared_keys & {variable.get("key") for variable in service["envVars"]}
+    ), "Service values must not override shared settings"
+assert web_env["ALLOW_SIGNUP"].get("sync") is False
+assert not any(
+    variable.get("fromGroup") == "jevbox-app"
+    for variable in services["jevbox-spicedb"]["envVars"]
+)
 
 for manifest_path in sys.argv[1:]:
     manifests = list(yaml.safe_load_all(Path(manifest_path).read_text()))
@@ -89,4 +116,6 @@ for manifest_path in sys.argv[1:]:
         else:
             assert ingress["spec"]["tls"][0]["secretName"]
 
-print("Render schema, private wiring, and Kubernetes manifests verified")
+print("Render schema and environment wiring verified")
+if len(sys.argv) > 1:
+    print("Kubernetes manifests verified")

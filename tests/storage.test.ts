@@ -10,6 +10,7 @@ import { createApp } from "../server/app";
 import {
   createObjectStorage,
   createFileStorage,
+  storageFailureDetails,
 } from "../server/object-storage";
 import { createProviders } from "../server/providers";
 import { queues } from "../server/jobs";
@@ -217,6 +218,73 @@ test("S3 configuration requires complete settings and permits IAM credentials", 
   });
   assert.ok(roleStorage);
   roleStorage.close();
+});
+
+test("storage diagnostics retain AWS status and region without raw credentials or URLs", () => {
+  const details = storageFailureDetails("HeadBucket", {
+    name: "Forbidden",
+    message: "secret-access-key signed-url",
+    stack: "secret-stack",
+    credentials: { secretAccessKey: "secret-access-key" },
+    $metadata: { httpStatusCode: 403, requestId: "request-id" },
+    $response: {
+      headers: {
+        "x-amz-bucket-region": "us-east-2",
+        authorization: "secret-access-key",
+      },
+      body: "secret-response",
+    },
+  });
+  assert.deepEqual(details, {
+    operation: "HeadBucket",
+    code: "Forbidden",
+    status: 403,
+    bucketRegion: "us-east-2",
+    requestId: "request-id",
+  });
+  assert.doesNotMatch(JSON.stringify(details), /secret|signed-url/);
+  assert.deepEqual(
+    storageFailureDetails("HeadBucket", {
+      name: "https://signed-url",
+      $metadata: { requestId: "https://signed-url" },
+    }),
+    { operation: "HeadBucket", code: "UnknownError" },
+  );
+});
+
+test("a web-only process stays alive during an S3 outage and readiness fails closed", async () => {
+  unavailable = true;
+  let web: Awaited<ReturnType<typeof createApp>> | undefined;
+  let listener: ReturnType<typeof runtime.app.listen> | undefined;
+  try {
+    const before = calls.length;
+    web = await createApp({
+      directory,
+      databaseUrl: database.url,
+      origin,
+      workers: [],
+      rateLimits: false,
+      sendAuthEmail: mailbox.sendAuthEmail,
+    });
+    assert.equal(calls.length, before);
+    listener = web.app.listen(0, "127.0.0.1");
+    await new Promise<void>((resolve) => listener!.once("listening", resolve));
+    const address = listener.address();
+    assert.ok(address && typeof address !== "string");
+    assert.equal(
+      (await fetch(`http://127.0.0.1:${address.port}/health/live`)).status,
+      200,
+    );
+    assert.equal(
+      (await fetch(`http://127.0.0.1:${address.port}/health/ready`)).status,
+      503,
+    );
+  } finally {
+    unavailable = false;
+    if (listener)
+      await new Promise<void>((resolve) => listener!.close(() => resolve()));
+    await web?.close();
+  }
 });
 
 test("uploads use signed S3 requests and downloads retain ranges and authorization", async () => {

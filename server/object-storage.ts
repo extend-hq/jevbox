@@ -8,6 +8,37 @@ import {
 } from "@aws-sdk/client-s3";
 import { HttpError } from "./errors";
 
+export function storageFailureDetails(operation: string, error: unknown) {
+  const failure = error as {
+    name?: unknown;
+    code?: unknown;
+    $metadata?: { httpStatusCode?: unknown; requestId?: unknown };
+    $response?: { headers?: Record<string, unknown> };
+  } | null;
+  const safeCode = (value: unknown) =>
+    typeof value === "string" && /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(value)
+      ? value
+      : undefined;
+  const bucketRegion = failure?.$response?.headers?.["x-amz-bucket-region"];
+  const requestId = failure?.$metadata?.requestId;
+  const status = failure?.$metadata?.httpStatusCode;
+  return {
+    operation,
+    code: safeCode(failure?.code) ?? safeCode(failure?.name) ?? "UnknownError",
+    ...(typeof status === "number" && status >= 100 && status <= 599
+      ? { status }
+      : {}),
+    ...(typeof bucketRegion === "string" &&
+    /^[a-z0-9-]{3,32}$/.test(bucketRegion)
+      ? { bucketRegion }
+      : {}),
+    ...(typeof requestId === "string" &&
+    /^[a-zA-Z0-9_-]{1,128}$/.test(requestId)
+      ? { requestId }
+      : {}),
+  };
+}
+
 export type ObjectStorage = {
   bucket: string;
   prefix: string;
@@ -63,18 +94,26 @@ export function createObjectStorage(
     requestChecksumCalculation: "WHEN_REQUIRED",
     maxAttempts: 3,
   });
-  async function send(operation: () => Promise<unknown>) {
+  function unavailable(operation: string, error: unknown) {
+    console.error("File storage request failed", {
+      ...storageFailureDetails(operation, error),
+      bucket,
+      region: env.AWS_REGION,
+    });
+    return new HttpError(503, "File storage is unavailable. Please retry.");
+  }
+  async function send(name: string, operation: () => Promise<unknown>) {
     try {
       return await operation();
-    } catch {
-      throw new HttpError(503, "File storage is unavailable. Please retry.");
+    } catch (error) {
+      throw unavailable(name, error);
     }
   }
   return {
     bucket,
     prefix,
     async put(key, body, mime) {
-      await send(() =>
+      await send("PutObject", () =>
         client.send(
           new PutObjectCommand({
             Bucket: bucket,
@@ -94,19 +133,19 @@ export function createObjectStorage(
         );
         if (!result.Body) throw new Error("Empty storage response");
         return Buffer.from(await result.Body.transformToByteArray());
-      } catch {
-        throw new HttpError(503, "File storage is unavailable. Please retry.");
+      } catch (error) {
+        throw unavailable("GetObject", error);
       }
     },
     async delete(bucket, key) {
-      await send(() =>
+      await send("DeleteObject", () =>
         client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }), {
           abortSignal: AbortSignal.timeout(20_000),
         }),
       );
     },
     async ready() {
-      await send(() =>
+      await send("HeadBucket", () =>
         client.send(new HeadBucketCommand({ Bucket: bucket }), {
           abortSignal: AbortSignal.timeout(20_000),
         }),

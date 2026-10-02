@@ -12,8 +12,16 @@ Give a dedicated IAM principal these permissions, replacing `YOUR_BUCKET`:
 {
   "Version": "2012-10-17",
   "Statement": [
-    { "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::YOUR_BUCKET" },
-    { "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], "Resource": "arn:aws:s3:::YOUR_BUCKET/jevbox/*" }
+    {
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::YOUR_BUCKET"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::YOUR_BUCKET/jevbox/*"
+    }
   ]
 }
 ```
@@ -30,9 +38,21 @@ AWS_ACCESS_KEY_ID=YOUR_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY=YOUR_SECRET_ACCESS_KEY
 ```
 
-Set the actual bucket region. The Blueprint prompts for the four bucket/AWS variables on the web service with `sync: false`, preserving dashboard values on subsequent syncs. The worker references those values from the web service. Push the code and manually sync the updated Blueprint to install this wiring; for an existing deployment, supply the variables before deploying the new image. When changing credentials later, update/redeploy both services or sync the worker references. A missing bucket, denied permissions, or unreachable storage makes `/health/ready` return 503; the worker checks bucket access before starting consumers.
+Set the actual bucket region. Add these variables to the dashboard-managed **`jevbox-app`** environment group before creating or syncing the Blueprint. The web service and worker both link to this group through `fromGroup`; code pushes and Blueprint syncs preserve its dashboard values. Also populate the group's existing encryption key and SMTP settings as described in [Render deployment](deployment.md#render). Group edits trigger deploys of linked services with auto-deploys enabled, without another Blueprint sync.
 
-The default object prefix is `jevbox`. If setting `S3_PREFIX`, use the same value on both processes and update the IAM object resource accordingly. Distinct installations sharing a bucket should have distinct prefixes and scoped IAM policies. Configure optional `S3_ENDPOINT`, `S3_FORCE_PATH_STYLE`, and `AWS_SESSION_TOKEN` on both Render services when needed; these optional settings are not managed by the AWS-specific Blueprint.
+For an existing deployment, copy the current shared values into the group, sync the updated Blueprint to link it, then remove the individual shared variables from **both** services. Render preserves individual values omitted from the Blueprint, and those values override the group. Keep the existing `ENCRYPTION_KEY` unchanged. Confirm both services deploy after removing duplicates. See [Render's environment group behavior](https://render.com/docs/configure-environment-variables#environment-groups).
+
+A missing bucket, denied permissions, or unreachable storage makes `/health/ready` return 503; the web process still starts to expose its probes, and the worker checks bucket access before starting consumers.
+
+### Troubleshooting bucket access
+
+Look for `File storage request failed` in the service logs. Diagnostics include the S3 operation, AWS error code and HTTP status when available, configured bucket/region, the bucket region returned by AWS, and a request ID. Raw error messages, credentials, response bodies, and signed URLs are omitted. Client responses remain generic.
+
+For `HeadBucket`, a 403 can mean invalid credentials or missing `s3:ListBucket` permission; a 404 can indicate an incorrect bucket name. This operation returns generic HTTP errors without a detailed body, so its status alone cannot identify every cause. Check the full bucket name, region, and attached IAM policy. For account Regional namespace buckets, use the complete name including the account/region suffix in both `S3_BUCKET` and IAM resources. Compare `bucketRegion` with `AWS_REGION` when AWS supplies it. See [AWS HeadBucket behavior](https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadBucket.html).
+
+Verify `jevbox-app` is linked to both services and that neither service has individual storage variables overriding it. Populate and link the group before removing old variables. Confirm both services have deployed with the updated group. Keep Block Public Access enabled; authenticated IAM access does not need a public bucket.
+
+The default object prefix is `jevbox`. If setting `S3_PREFIX`, update the IAM object resource accordingly. Distinct installations sharing a bucket should have distinct prefixes and scoped IAM policies. Put optional `S3_PREFIX`, `S3_ENDPOINT`, `S3_FORCE_PATH_STYLE`, and `AWS_SESSION_TOKEN` in `jevbox-app` when needed so both Render services receive the same settings.
 
 ## Kubernetes
 

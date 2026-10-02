@@ -80,6 +80,7 @@ services:
     maxShutdownDelaySeconds: 45
     envVars:
       - fromGroup: jevbox-authorization
+      - fromGroup: jevbox-app
       - key: APP_ORIGIN
         fromService:
           name: jevbox-web
@@ -96,35 +97,11 @@ services:
           name: jevbox-spicedb
           type: pserv
           property: hostport
-      - key: ENCRYPTION_KEY
-        sync: false
-      - key: FILE_STORAGE
-        value: s3
-      - key: S3_BUCKET
-        sync: false
-      - key: AWS_REGION
-        sync: false
-      - key: AWS_ACCESS_KEY_ID
-        sync: false
-      - key: AWS_SECRET_ACCESS_KEY
-        sync: false
       - key: BETTER_AUTH_SECRET
         generateValue: true
       - key: BOOTSTRAP_TOKEN
         generateValue: true
       - key: ALLOW_SIGNUP
-        sync: false
-      - key: SMTP_HOST
-        sync: false
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_SECURE
-        value: "false"
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASSWORD
-        sync: false
-      - key: AUTH_EMAIL_FROM
         sync: false
 
   - type: worker
@@ -159,6 +136,7 @@ services:
     maxShutdownDelaySeconds: 45
     envVars:
       - fromGroup: jevbox-authorization
+      - fromGroup: jevbox-app
       - key: DATABASE_URL
         fromDatabase:
           name: jevbox-app-db
@@ -173,63 +151,6 @@ services:
           name: jevbox-web
           type: web
           envVarKey: RENDER_EXTERNAL_URL
-      - key: ENCRYPTION_KEY
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: ENCRYPTION_KEY
-      - key: FILE_STORAGE
-        value: s3
-      - key: S3_BUCKET
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: S3_BUCKET
-      - key: AWS_REGION
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: AWS_REGION
-      - key: AWS_ACCESS_KEY_ID
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: AWS_ACCESS_KEY_ID
-      - key: AWS_SECRET_ACCESS_KEY
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: AWS_SECRET_ACCESS_KEY
-      - key: SMTP_HOST
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: SMTP_HOST
-      - key: SMTP_PORT
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: SMTP_PORT
-      - key: SMTP_SECURE
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: SMTP_SECURE
-      - key: SMTP_USER
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: SMTP_USER
-      - key: SMTP_PASSWORD
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: SMTP_PASSWORD
-      - key: AUTH_EMAIL_FROM
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: AUTH_EMAIL_FROM
 
 databases:
   - name: jevbox-app-db
