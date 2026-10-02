@@ -2,6 +2,10 @@
 
 A full stack, permission-aware document library. Browse with Extend UI Finder, inspect document trees and parsed output, share with organization members, search the hierarchy with JEV, and ask source-grounded questions through the AI SDK.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/extend-hq/jevbox)
+
+[Render setup requirements](docs/deployment.md#render): prepare the shared environment group, private S3 bucket, and SMTP credentials before deploying.
+
 ## See it in action
 
 ### Chat, with the evidence beside you
@@ -97,6 +101,8 @@ Native chat adapters: OpenAI, Anthropic, Google Gemini, Azure OpenAI, Amazon Bed
 AI Gateway offers its model catalog; OpenAI-compatible endpoints support additional services. Any further AI SDK language provider can be installed through the server extension registry. See [provider configuration](docs/providers.md). Speech/image-only providers are not chat models.
 
 ## Deploy
+
+The **Deploy to Render** button opens Render's Blueprint setup directly for this repository's [`render.yaml`](render.yaml). After completing the [Render setup requirements](docs/deployment.md#render), review and approve the three paid services (web, worker, and SpiceDB) and two PostgreSQL databases. Render prompts for the signup setting and generates the bootstrap and SpiceDB tokens. The Blueprint enables automatic service deploys from `main` after CI passes.
 
 [Deployment guide](docs/deployment.md) includes Docker, cloud-neutral Helm, and AWS/EKS Terraform. Deployment requires an explicit target account, region, namespace, image, domain, and secret.
 
