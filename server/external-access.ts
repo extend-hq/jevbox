@@ -24,6 +24,7 @@ import {
 } from "./db";
 import { flatten, withLayoutSections, type ParsedDocument } from "./indexing";
 import type { createProviders } from "./providers";
+import { uploadInput, decodeUpload, type createUploads } from "./uploads";
 
 type Auth = ReturnType<typeof createAuthentication>["auth"];
 export type Principal = {
@@ -62,6 +63,7 @@ export function createExternalAccess(
     typeof createAuthentication
   >["validateOAuthToken"],
   rateLimits = true,
+  uploads: ReturnType<typeof createUploads>,
 ) {
   const keys = createApiKeys(auth);
   const verifiedRequests = new WeakSet<Request>();
@@ -187,6 +189,29 @@ export function createExternalAccess(
       }
     }
     return { organizations: result };
+  }
+  async function upload(
+    principal: Principal,
+    body: unknown,
+    revalidate: () => Promise<Principal>,
+  ) {
+    requireScope(principal, "documents:write");
+    const input = uploadInput.parse(body);
+    const a = await actor(principal, input.organizationId);
+    await uploads.checkParent(a, input.parentId ?? null);
+    await uploads.admit(a);
+    const result = await uploads.save(
+      a,
+      input.filename,
+      decodeUpload(input.contentBase64),
+      input.parentId ?? null,
+      async () => {
+        const current = await revalidate();
+        requireScope(current, "documents:write");
+        return actor(current, a.orgId);
+      },
+    );
+    return { ...result, url: `${origin}${documentPath(result.id)}` };
   }
   async function search(
     principal: Principal,
@@ -369,6 +394,32 @@ export function createExternalAccess(
       res.off("close", cancel);
     }
   });
+  async function uploadActor(req: Request) {
+    const principal = await authenticate(req, "/api/v1");
+    requireScope(principal, "documents:write");
+    const orgId = organizationId.parse(req.query.organizationId);
+    const parentId = z.string().uuid().optional().parse(req.query.parentId);
+    const a = await actor(principal, orgId);
+    await uploads.checkParent(a, parentId ?? null);
+    return a;
+  }
+  router.post(
+    "/documents",
+    uploads.multipart(uploadActor),
+    async (req, res) => {
+      if (!req.file) throw new HttpError(400, "Choose a document");
+      const result = await uploads.save(
+        await uploadActor(req),
+        req.file.originalname,
+        req.file.buffer,
+        z.string().uuid().optional().parse(req.query.parentId) ?? null,
+        () => uploadActor(req),
+      );
+      res
+        .status(201)
+        .json({ ...result, url: `${origin}${documentPath(result.id)}` });
+    },
+  );
   router.get("/documents/:id", async (req, res) =>
     res.json(
       await read(
@@ -411,6 +462,7 @@ export function createExternalAccess(
     organizations,
     search,
     read,
+    upload,
     router,
     challenge,
     status,

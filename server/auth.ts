@@ -220,7 +220,7 @@ export function createAuthentication(
           maxRequests: 180,
         },
         permissions: {
-          defaultPermissions: { documents: ["read"], search: ["read"] },
+          defaultPermissions: { documents: ["read", "write"], search: ["read"] },
         },
       }),
       cimd({ fetchClientMetadataResource, metadataProfile: "mcp-2026-07-28" }),

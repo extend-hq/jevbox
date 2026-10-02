@@ -184,13 +184,14 @@ An existing cluster on AWS, GCP, Azure, or another provider can use Helm directl
 
 Before creating or syncing the Blueprint, create an environment group named **`jevbox-app`** in the Render Dashboard and populate its shared settings:
 
-| Variables                                       | Values                                                                    |
-| ----------------------------------------------- | ------------------------------------------------------------------------- |
-| `FILE_STORAGE`, `S3_BUCKET`, `AWS_REGION`       | `s3`, the complete bucket name, and its AWS region                        |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`    | Scoped IAM credentials for that bucket                                    |
-| `ENCRYPTION_KEY`                                | Existing deployment key, or `openssl rand -hex 32` for a new installation |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`         | Relay hostname, `587`, `false` for STARTTLS                               |
-| `SMTP_USER`, `SMTP_PASSWORD`, `AUTH_EMAIL_FROM` | Existing SMTP credentials and verified sender                             |
+| Variables                                       | Values                                                                                           |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `FILE_STORAGE`, `S3_BUCKET`, `AWS_REGION`       | `s3`, the complete bucket name, and its AWS region                                               |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`    | Scoped IAM credentials for that bucket                                                           |
+| `ENCRYPTION_KEY`                                | Existing deployment key, or `openssl rand -hex 32` for a new installation                        |
+| `BETTER_AUTH_SECRET`                            | Existing web service secret, or a random secret of at least 32 characters for a new installation |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`         | Relay hostname, `587`, `false` for STARTTLS                                                      |
+| `SMTP_USER`, `SMTP_PASSWORD`, `AUTH_EMAIL_FROM` | Existing SMTP credentials and verified sender                                                    |
 
 Create a private bucket and scoped IAM credentials first, following [file storage](storage.md). Use an SMTP provider that supports STARTTLS on port 587 and verify the sender before deploying. Preserve the current `ENCRYPTION_KEY` when moving an existing installation; generating a replacement makes its encrypted provider credentials unreadable.
 
@@ -200,7 +201,7 @@ The group is managed in the dashboard, so code pushes and Blueprint syncs do not
 
 For an existing deployment, copy the shared values from the web service into `jevbox-app`, sync the updated Blueprint to link both services, and remove the corresponding individual variables from **both** services. Render preserves variables omitted from the Blueprint, and individual service values override group values. Keep the group populated and linked before removing those duplicates. Remove every individual key listed in the table, including `FILE_STORAGE`, `SMTP_PORT`, and `SMTP_SECURE`, plus any optional `S3_*` or `AWS_SESSION_TOKEN` settings moved to the group. Redeploy both services once the migration is complete.
 
-The initial Blueprint flow prompts for the web-only `ALLOW_SIGNUP` setting. Set it to `false` for invitation-only registration or `true` to allow public registration. This setting uses `sync: false`, so subsequent Blueprint syncs preserve its dashboard value. Better Auth, bootstrap, and shared SpiceDB secrets are generated automatically; keep them stable and save the encryption key separately.
+The initial Blueprint flow prompts for the web-only `ALLOW_SIGNUP` setting. Set it to `false` for invitation-only registration or `true` to allow public registration. This setting uses `sync: false`, so subsequent Blueprint syncs preserve its dashboard value. Bootstrap and shared SpiceDB secrets are generated automatically; keep all secrets stable and save the encryption key separately.
 
 Both services' `APP_ORIGIN` values directly reference the web service's `RENDER_EXTERNAL_URL`, including any generated hostname suffix. The startup wrapper constructs SpiceDB's HTTP URL from its private `hostport` reference. SpiceDB runs its database migrations before serving, with small connection pools. The database references use direct private connections, preserving pg-boss's LISTEN/NOTIFY connection. SpiceDB uses an unencrypted database connection inside Render's private network; both databases reject public connections. See [Render's connection guidance](https://render.com/docs/postgresql-creating-connecting).
 
@@ -211,6 +212,8 @@ For an existing Blueprint, push the updated configuration to `main` and select *
 The web and worker use the same app build filters because their image includes both the web app and the thumbnail renderer. Changes to application source, shared code, public assets, dependencies, build configuration, licenses, or their startup wrapper deploy both services. SpiceDB deploys for changes to its Dockerfile or startup wrapper. Changes to `render.yaml` or `.dockerignore` match all three services; docs-only and tests-only changes skip service builds. Services deploy independently, so coordinated manual upgrades should still deploy SpiceDB first when its version changes. Preview environments remain disabled.
 
 All processes have a 45-second shutdown window. Keep one web instance because API rate limits are currently local to that process. To use a custom domain, add it in Render and replace both services' `APP_ORIGIN` references in the Blueprint with the same `value` containing the exact HTTPS origin, then sync. Set `renderSubdomainPolicy: disabled` on the web service to restrict access to the custom domain. Configure `TRUST_PROXY_CIDRS` only with verified proxy source ranges; leaving it unset is safe but clients share IP rate limits behind the proxy.
+
+Set `BETTER_AUTH_SECRET` in `jevbox-app` so the web service and worker authenticate the same sessions. For an existing deployment, copy the current web secret into the group and remove the web service's individual override after the group is linked. Keep the existing value stable. Workers validate authentication configuration at startup; a missing secret stops startup with a clear configuration error.
 
 Validate configuration before syncing:
 

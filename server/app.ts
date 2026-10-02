@@ -4,6 +4,7 @@ import { createLinkSharingRouter } from "./link-sharing";
 import { createExternalAccess } from "./external-access";
 import { createMcpRouter } from "./mcp";
 import { apiScopes } from "../shared/api-access";
+import { createUploads } from "./uploads";
 import {
   isAuthPage,
   loginPath,
@@ -17,7 +18,7 @@ import { createWorkers } from "./workers";
 import { queues, type QueueName } from "./jobs";
 import { authenticateToken as tokenActor, sessionActor } from "./sessions";
 import { asyncFilter, asyncEvery } from "./async";
-import { fileMime, supportsIndex, extension } from "../shared/file-types";
+import { supportsIndex, extension } from "../shared/file-types";
 import { availableChatModels, validateProviderURL } from "./ai";
 import { providerCatalog } from "../shared/providers";
 import express, {
@@ -89,6 +90,7 @@ export async function createApp(options: {
   }
   const { auth } = authentication;
   const providers = createProviders(store, options.fetcher);
+  const uploads = createUploads(store);
   const external = createExternalAccess(
     store,
     auth,
@@ -96,6 +98,7 @@ export async function createApp(options: {
     options.origin,
     authentication.validateOAuthToken,
     options.rateLimits,
+    uploads,
   );
   const app = express();
   app.disable("x-powered-by");
@@ -271,6 +274,18 @@ export async function createApp(options: {
       }),
     );
   app.all("/api/auth/{*path}", authHandler);
+  app.use("/mcp", async (req, res, next) => {
+    try {
+      const principal = await external.authenticate(req, "/mcp");
+      uploads.reserve(req, res, principal.userId, 3 * 1024 * 1024);
+      express.json({ limit: "3mb", inflate: false })(req, res, next);
+    } catch (error) {
+      const header = external.challenge(req, error);
+      if (header && external.status(error) === 401)
+        res.set("WWW-Authenticate", header);
+      next(error);
+    }
+  });
   app.use(express.json({ limit: "1mb" }));
   app.use("/api/v1", external.router);
   app.use("/mcp", createMcpRouter(external, auth, options.origin));
@@ -670,56 +685,21 @@ export async function createApp(options: {
       };
     }),
   );
-  const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 30 * 1024 * 1024, files: 1, fields: 1 },
-  });
   app.post(
     "/api/documents",
-    upload.single("file"),
-    mutation(async (req, res) => {
-      const a = actor(req);
-      const file = req.file;
-      if (!file) throw new HttpError(400, "Choose a document");
-      const filename = name.parse(file.originalname);
-      const mime = fileMime(filename);
-      if (!file.size) throw new HttpError(400, "The document is empty");
+    uploads.multipart(authenticate),
+    async (req, res) => {
+      if (!req.file) throw new HttpError(400, "Choose a document");
       const parentId = req.body.parentId ? id.parse(req.body.parentId) : null;
-      if (
-        parentId &&
-        (await requireResource(store, a, parentId, "write")).kind !== "folder"
-      )
-        throw new HttpError(400, "Invalid parent");
-      const rid = randomUUID();
-      await store.transaction(async () => {
-        await store.run(
-          "INSERT INTO resources(id,org_id,owner_id,parent_id,kind,name,mime,size,status,created) VALUES(?,?,?,?,'document',?,?,?,?,?)",
-          rid,
-          a.orgId,
-          a.userId,
-          parentId,
-          filename,
-          mime,
-          file.size,
-          supportsIndex(filename) ? "queued" : "stored",
-          now(),
-        );
-        await store.files.write("document", rid, file.buffer, mime);
-        await enqueueThumbnail(store, rid);
-        if (supportsIndex(filename))
-          await store.run(
-            "INSERT INTO document_filing(resource_id,scope_id) VALUES(?,?)",
-            rid,
-            parentId,
-          );
-        if (supportsIndex(filename)) await enqueueIndex(store, rid);
-        await audit(a, "document.upload", rid);
-      });
-      return {
-        status: 201,
-        body: { id: rid },
-      };
-    }),
+      const result = await uploads.save(
+        await authenticate(req),
+        req.file.originalname,
+        req.file.buffer,
+        parentId,
+        () => authenticate(req),
+      );
+      res.status(201).json({ id: result.id });
+    },
   );
   app.get("/api/resources/:id", async (req, res) => {
     const a = actor(req);
@@ -1343,8 +1323,29 @@ export async function createApp(options: {
           .json({ error: error.issues[0]?.message ?? "Invalid input" });
       if (error instanceof multer.MulterError)
         return res
-          .status(400)
-          .json({ error: "Upload must contain one file smaller than 30 MB" });
+          .status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400)
+          .json({
+            error:
+              "Upload must contain one file at most 30 MiB and valid metadata",
+          });
+      if (
+        error &&
+        typeof error === "object" &&
+        "type" in error &&
+        error.type === "entity.too.large"
+      )
+        return res
+          .status(413)
+          .json({ error: "Request body exceeds its size limit" });
+      if (
+        error &&
+        typeof error === "object" &&
+        "type" in error &&
+        error.type === "encoding.unsupported"
+      )
+        return res
+          .status(415)
+          .json({ error: "Compressed request bodies are not supported" });
       if (isAPIError(error))
         return res.status(error.statusCode).json({
           error: error.body?.message ?? "Authentication request rejected",

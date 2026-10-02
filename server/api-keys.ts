@@ -27,6 +27,8 @@ export function createApiKeys(auth: Auth) {
       const scopes = ["documents", "search"]
         .filter((resource) => permissions?.[resource]?.includes("read"))
         .map((resource) => `${resource}:read`);
+      if (permissions?.documents?.includes("write"))
+        scopes.push("documents:write");
       return { userId: key.referenceId, scopes, credentialId: key.id };
     },
   };

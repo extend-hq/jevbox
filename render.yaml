@@ -97,8 +97,6 @@ services:
           name: jevbox-spicedb
           type: pserv
           property: hostport
-      - key: BETTER_AUTH_SECRET
-        generateValue: true
       - key: BOOTSTRAP_TOKEN
         generateValue: true
       - key: ALLOW_SIGNUP

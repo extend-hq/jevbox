@@ -45,6 +45,7 @@ worker_env = {v.get("key"): v for v in worker["envVars"]}
 web_env = {v.get("key"): v for v in web["envVars"]}
 assert worker_env["DATABASE_URL"]["fromDatabase"] == web_env["DATABASE_URL"]["fromDatabase"]
 shared_keys = {
+    "BETTER_AUTH_SECRET",
     "ENCRYPTION_KEY",
     "FILE_STORAGE",
     "S3_BUCKET",

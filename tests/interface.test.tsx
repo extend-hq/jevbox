@@ -716,7 +716,8 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
       "",
     );
     const send = button("Queue message");
-    assert.ok(send?.querySelector('[data-slot="button-loading-indicator"]'));
+    assert.ok(send);
+    assert.ok(send.querySelector('[data-slot="button-loading-indicator"]'));
     assert.equal(send.querySelectorAll("svg").length, 1);
     await act(async () => {
       listeners.get("snapshot")?.({ data: JSON.stringify(snapshot) });

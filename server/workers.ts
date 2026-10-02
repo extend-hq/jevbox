@@ -36,27 +36,24 @@ export function createWorkers(
   const providers = createProviders(store, options.fetcher);
   const thumbnails = createThumbnailJobs(store);
   const organization = createOrganization(store, options.fetcher);
-  let workerAuth: ReturnType<typeof createAuthentication>["auth"] | undefined;
   const chats =
     options.chats ??
-    createChatRuntime(
-      store,
-      providers,
-      async () => {
-        throw new Error("Worker has no HTTP authentication");
-      },
-      (token) =>
-        authenticateToken(
-          store,
-          (workerAuth ??= createAuthentication(store, {
-            ...options,
-            directory: resolve(
-              options.directory ?? process.env.DATA_DIR ?? ".data",
-            ),
-          }).auth),
-          token,
+    (() => {
+      const auth = createAuthentication(store, {
+        ...options,
+        directory: resolve(
+          options.directory ?? process.env.DATA_DIR ?? ".data",
         ),
-    );
+      }).auth;
+      return createChatRuntime(
+        store,
+        providers,
+        async () => {
+          throw new Error("Worker has no HTTP authentication");
+        },
+        (token) => authenticateToken(store, auth, token),
+      );
+    })();
   const localDevelopment =
     process.env.AUTH_LOCAL_DEVELOPMENT === "true" &&
     ["localhost", "127.0.0.1", "[::1]"].includes(
