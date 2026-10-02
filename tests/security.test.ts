@@ -1,3 +1,4 @@
+import { isScoreRequest, scoreContents, scoreResponse } from "./model-tools";
 import { runJobs, waitForJobs } from "./jobs";
 import { authMailbox } from "./auth-mailbox";
 import {
@@ -58,12 +59,8 @@ const fakeFetch: typeof fetch = async (input, init) => {
       },
     });
   if (url.includes("typesafe")) {
-    if (body.questions.usefulness)
-      return scoreContext
-        ? scoreContext(body)
-        : Response.json({
-            answers: { usefulness: { type: "score", score: 3 } },
-          });
+    if (isScoreRequest(body))
+      return scoreContext ? scoreContext(body) : scoreResponse(body, 3);
     return choiceResponse(body);
   }
   if (url.includes("openai")) {
@@ -793,14 +790,9 @@ test("tree search finds deeply nested content beyond summary and excerpt limits"
       "\nUNIQUEDEEPTERM",
   );
   scoreContext = async (body) =>
-    Response.json({
-      answers: {
-        usefulness: {
-          type: "score",
-          score: body.state.includes("UNIQUEDEEPTERM") ? 3 : 0,
-        },
-      },
-    });
+    scoreResponse(body, (content) =>
+      content.includes("UNIQUEDEEPTERM") ? 3 : 0,
+    );
   try {
     const result = await req("/search", cookie, "POST", {
       query: "UNIQUEDEEPTERM",
@@ -1136,6 +1128,331 @@ test("SpiceDB denial and service failures never fall back to SQL ownership", asy
     runtime.store.authorization.check = original;
   }
   assert.equal((await req(`/resources/${rid}`, cookie)).status, 200);
+});
+
+async function sharingWorkspace() {
+  const suffix = randomUUID();
+  const owner = await signup(`sharing-owner-${suffix}@local.test`);
+  const invitation = await req(
+    "/auth/organization/invite-member",
+    owner,
+    "POST",
+    {
+      role: "member",
+      email: `sharing-member-${suffix}@local.test`,
+    },
+  );
+  const member = await signup(
+    `sharing-member-${suffix}@local.test`,
+    invitation.data.id,
+  );
+  const me = (await req("/me", member)).data;
+  return { owner, member, memberId: me.user.id, orgId: me.organization.id };
+}
+
+test("batch sharing checks permissions together and publishes one snapshot for folders and files", async () => {
+  const { owner, member, memberId } = await sharingWorkspace();
+  const folderId = (
+    await req("/folders", owner, "POST", { name: "Batch category" })
+  ).data.id;
+  const documentId = await upload(owner, "# Content\nShared content.");
+  const resourceIds = [folderId, documentId];
+  const before = await runtime.store.one<{ count: number }>(
+    "SELECT count(*) FROM authz_snapshots",
+  );
+  const checkBulk = runtime.store.authorization.checkBulk;
+  const write = runtime.store.authorization.write;
+  const checks: string[][] = [];
+  let publications = 0;
+  let links: string[] = [];
+  try {
+    runtime.store.authorization.checkBulk = async (
+      version,
+      kind,
+      ids,
+      permission,
+      userId,
+      subjectKind,
+    ) => {
+      checks.push(ids);
+      return checkBulk(version, kind, ids, permission, userId, subjectKind);
+    };
+    runtime.store.authorization.write = async (relationships) => {
+      publications++;
+      return write(relationships);
+    };
+    const loaded = await req("/resources/access-batch", owner, "POST", {
+      ids: [documentId, folderId, documentId],
+    });
+    assert.equal(loaded.status, 200);
+    assert.deepEqual(
+      loaded.data.items.map((item: { resourceId: string }) => item.resourceId),
+      [documentId, folderId],
+    );
+    assert.ok(
+      loaded.data.items.every(
+        (item: { access: string; shareUrl: string | null }) =>
+          item.access === "restricted" && item.shareUrl === null,
+      ),
+    );
+    const result = await req("/resources/access-batch", owner, "PUT", {
+      items: resourceIds.map((resourceId) => ({
+        resourceId,
+        access: "link",
+        grants: [
+          {
+            userId: memberId,
+            role: resourceId === folderId ? "viewer" : "editor",
+          },
+        ],
+      })),
+    });
+    assert.equal(result.status, 200);
+    assert.deepEqual(checks, [[documentId, folderId], resourceIds]);
+    assert.equal(publications, 1);
+    assert.equal(
+      (await runtime.store.one<{ count: number }>(
+        "SELECT count(*) FROM authz_snapshots",
+      ))!.count,
+      before!.count + 1,
+    );
+    links = result.data.items.map(
+      (item: { shareUrl: string }) => item.shareUrl,
+    );
+    assert.ok(links.every((url) => url.startsWith(`${origin}/s/`)));
+    assert.notEqual(links[0], links[1]);
+    assert.equal(result.data.items[0].grants[0].role, "viewer");
+    assert.equal(result.data.items[1].grants[0].role, "editor");
+    const repeated = await req("/resources/access-batch", owner, "PUT", {
+      items: resourceIds.map((resourceId) => ({
+        resourceId,
+        access: "link",
+        grants: [],
+      })),
+    });
+    assert.equal(repeated.status, 200);
+    assert.deepEqual(
+      repeated.data.items.map((item: { shareUrl: string }) => item.shareUrl),
+      links,
+    );
+  } finally {
+    runtime.store.authorization.checkBulk = checkBulk;
+    runtime.store.authorization.write = write;
+  }
+  assert.equal((await req(`/resources/${documentId}`, member)).status, 404);
+  const tokens = links.map((url) => new URL(url).pathname.split("/").at(-1));
+  for (const token of tokens)
+    assert.equal((await req(`/shared/${token}`)).status, 200);
+  const revoked = await req("/resources/access-batch", owner, "PUT", {
+    items: resourceIds.map((resourceId) => ({
+      resourceId,
+      access: "restricted",
+      grants: [],
+    })),
+  });
+  assert.equal(revoked.status, 200);
+  assert.ok(
+    revoked.data.items.every(
+      (item: { shareUrl: string | null }) => item.shareUrl === null,
+    ),
+  );
+  for (const token of tokens)
+    assert.equal((await req(`/shared/${token}`)).status, 404);
+});
+
+test("batch sharing validates all resources and grants before making any changes", async () => {
+  const { owner, member, memberId, orgId } = await sharingWorkspace();
+  const first = (
+    await req("/folders", owner, "POST", { name: "First category" })
+  ).data.id;
+  const second = (
+    await req("/folders", owner, "POST", { name: "Second category" })
+  ).data.id;
+  const foreign = (
+    await req("/folders", outsider, "POST", { name: "Other category" })
+  ).data.id;
+  const items = [first, second].map((resourceId) => ({
+    resourceId,
+    access: "link",
+    grants: [],
+  }));
+  const ownerId = (await req("/me", owner)).data.user.id;
+  const before = await runtime.store.one(
+    "SELECT authz_version FROM orgs WHERE id=?",
+    orgId,
+  );
+  assert.equal(
+    (
+      await req("/resources/access-batch", member, "POST", {
+        ids: [first, second],
+      })
+    ).status,
+    404,
+  );
+  assert.equal(
+    (await req("/resources/access-batch", member, "PUT", { items })).status,
+    404,
+  );
+  assert.equal(
+    (
+      await req("/resources/access-batch", owner, "PUT", {
+        items: [items[0], { ...items[1], resourceId: foreign }],
+      })
+    ).status,
+    404,
+  );
+  assert.equal(
+    (
+      await req("/resources/access-batch", owner, "PUT", {
+        items: [
+          items[0],
+          { ...items[1], grants: [{ userId: ownerId, role: "viewer" }] },
+        ],
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await req("/resources/access-batch", owner, "PUT", {
+        items: [items[0], { ...items[1], access: "inherit" }],
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await req("/resources/access-batch", owner, "PUT", {
+        items: [items[0], items[0]],
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await req("/resources/access-batch", owner, "PUT", {
+        items: [
+          items[0],
+          {
+            ...items[1],
+            grants: [
+              { userId: memberId, role: "viewer" },
+              { userId: memberId, role: "editor" },
+            ],
+          },
+        ],
+      })
+    ).status,
+    400,
+  );
+  assert.deepEqual(
+    await runtime.store.one("SELECT authz_version FROM orgs WHERE id=?", orgId),
+    before,
+  );
+  const loaded = await req("/resources/access-batch", owner, "POST", {
+    ids: [first, second],
+  });
+  assert.equal(loaded.status, 200);
+  assert.ok(
+    loaded.data.items.every(
+      (item: { access: string; shareUrl: string | null; grants: unknown[] }) =>
+        item.access === "restricted" &&
+        item.shareUrl === null &&
+        item.grants.length === 0,
+    ),
+  );
+  assert.equal(
+    (await runtime.store.one<{ count: number }>(
+      "SELECT count(*) FROM audit WHERE action='resource.share' AND resource_id=ANY(?::text[])",
+      [first, second],
+    ))!.count,
+    0,
+  );
+});
+
+test("batch sharing rolls back every item when SpiceDB checks or writes fail and can retry", async () => {
+  const { owner, memberId, orgId } = await sharingWorkspace();
+  const first = (
+    await req("/folders", owner, "POST", { name: "First category" })
+  ).data.id;
+  const second = (
+    await req("/folders", owner, "POST", { name: "Second category" })
+  ).data.id;
+  const items = [first, second].map((resourceId) => ({
+    resourceId,
+    access: "link",
+    grants: [{ userId: memberId, role: "viewer" }],
+  }));
+  const before = await runtime.store.one(
+    "SELECT authz_version FROM orgs WHERE id=?",
+    orgId,
+  );
+  const checkBulk = runtime.store.authorization.checkBulk;
+  const write = runtime.store.authorization.write;
+  try {
+    runtime.store.authorization.checkBulk = async () => [true, false];
+    assert.equal(
+      (await req("/resources/access-batch", owner, "PUT", { items })).status,
+      404,
+    );
+    runtime.store.authorization.checkBulk = async () => {
+      throw new HttpError(503, "Permission service unavailable");
+    };
+    assert.equal(
+      (
+        await req("/resources/access-batch", owner, "POST", {
+          ids: [first, second],
+        })
+      ).status,
+      503,
+    );
+    assert.equal(
+      (await req("/resources/access-batch", owner, "PUT", { items })).status,
+      503,
+    );
+    runtime.store.authorization.checkBulk = checkBulk;
+    runtime.store.authorization.write = async (relationships) => {
+      await write(relationships.slice(0, 10));
+      throw new HttpError(503, "Permission service unavailable");
+    };
+    assert.equal(
+      (await req("/resources/access-batch", owner, "PUT", { items })).status,
+      503,
+    );
+  } finally {
+    runtime.store.authorization.checkBulk = checkBulk;
+    runtime.store.authorization.write = write;
+  }
+  assert.deepEqual(
+    await runtime.store.one("SELECT authz_version FROM orgs WHERE id=?", orgId),
+    before,
+  );
+  const loaded = await req("/resources/access-batch", owner, "POST", {
+    ids: [first, second],
+  });
+  assert.equal(loaded.status, 200);
+  assert.ok(
+    loaded.data.items.every(
+      (item: { access: string; shareUrl: string | null; grants: unknown[] }) =>
+        item.access === "restricted" &&
+        item.shareUrl === null &&
+        item.grants.length === 0,
+    ),
+  );
+  assert.equal(
+    (await runtime.store.one<{ count: number }>(
+      "SELECT count(*) FROM audit WHERE action='resource.share' AND resource_id=ANY(?::text[])",
+      [first, second],
+    ))!.count,
+    0,
+  );
+  const retried = await req("/resources/access-batch", owner, "PUT", { items });
+  assert.equal(retried.status, 200);
+  assert.ok(
+    retried.data.items.every(
+      (item: { shareUrl: string | null }) => item.shareUrl,
+    ),
+  );
 });
 
 test("partial SpiceDB writes cannot publish a grant and retry is consistent across connections", async () => {
@@ -1730,15 +2047,20 @@ async function contextFixture() {
 test("search and chat independently filter full excerpts by usefulness", async () => {
   const { cookie, documentId } = await contextFixture();
   scoreContext = async (body) => {
-    assert.equal(typeof body.state, "string");
-    assert.equal(body.questions.usefulness.type, "score");
-    assert.equal(body.questions.usefulness.criteria.length, 4);
-    const score = body.state.includes("TOPIC_ONLY")
-      ? 1.49
-      : body.state.includes("PARTIAL_EVIDENCE")
-        ? 1.5
-        : 3;
-    return Response.json({ answers: { usefulness: { type: "score", score } } });
+    assert.deepEqual(body.state, { question: "What is the answer?" });
+    for (const question of Object.values(body.questions) as any[]) {
+      assert.equal(question.type, "score");
+      assert.equal(question.criteria.length, 4);
+    }
+    return scoreResponse(body, (content) =>
+      content.includes("TOPIC_ONLY")
+        ? 1.49
+        : content.includes("PARTIAL_EVIDENCE")
+          ? 1.5
+          : content.includes("SPECIFIC_ANSWER")
+            ? 3
+            : 0,
+    );
   };
   try {
     outbound.length = 0;
@@ -1753,10 +2075,14 @@ test("search and chat independently filter full excerpts by usefulness", async (
     assert.ok(
       search.data.results.every((s: any) => s.documentId === documentId),
     );
-    const scoring = outbound.filter((r) => r.body?.questions?.usefulness);
-    assert.equal(scoring.length, 3);
+    const scoring = outbound.filter((r) => isScoreRequest(r.body ?? {}));
+    assert.equal(scoring.length, 1);
     assert.ok(
-      scoring.some((r) => r.body.state.indexOf("SPECIFIC_ANSWER") > 1200),
+      scoring.some((r) =>
+        scoreContents(r.body).some(
+          (content) => content.indexOf("SPECIFIC_ANSWER") > 1200,
+        ),
+      ),
     );
     const chat = (await req("/chats", cookie, "POST")).data.id;
     outbound.length = 0;
@@ -1789,10 +2115,7 @@ test("search and chat independently filter full excerpts by usefulness", async (
 
 test("empty search results reach the model without rejected excerpts", async () => {
   const { cookie, documentId } = await contextFixture();
-  scoreContext = async () =>
-    Response.json({
-      answers: { usefulness: { type: "score", score: 1 } },
-    });
+  scoreContext = async (body) => scoreResponse(body, 1);
   try {
     const search = await req("/search", cookie, "POST", {
       query: "What is the answer?",
@@ -1836,10 +2159,7 @@ test("context filter failures never send unfiltered excerpts to chat", async () 
   const { cookie, documentId } = await contextFixture();
   try {
     for (const invalid of [undefined, "3", -1, 3.01]) {
-      scoreContext = async () =>
-        Response.json({
-          answers: { usefulness: { type: "score", score: invalid } },
-        });
+      scoreContext = async (body) => scoreResponse(body, () => invalid);
       const search = await req("/search", cookie, "POST", {
         query: "What is the answer?",
       });
@@ -1874,16 +2194,14 @@ test("context scoring rechecks permissions and excludes revoked results", async 
     token: "test-only",
   };
   let calls = 0;
-  scoreContext = async () => {
+  scoreContext = async (body) => {
     calls++;
     await runtime.store.run(
       "DELETE FROM members WHERE org_id=? AND user_id=?",
       actor.orgId,
       actor.userId,
     );
-    return Response.json({
-      answers: { usefulness: { type: "score", score: 3 } },
-    });
+    return scoreResponse(body, 3);
   };
   try {
     const result = await createProviders(runtime.store, fakeFetch).retrieve(

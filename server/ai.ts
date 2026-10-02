@@ -277,7 +277,11 @@ export async function generateAnswer(
       maxOutputTokens: execution?.maxOutputTokens ?? 2000,
       maxRetries: 1,
       ...(provider === "openai"
-        ? { providerOptions: { openai: { store: false } } }
+        ? {
+            providerOptions: {
+              openai: { store: false, parallelToolCalls: true },
+            },
+          }
         : {}),
       ...(execution?.searchDocuments
         ? {

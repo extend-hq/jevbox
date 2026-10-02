@@ -1,3 +1,37 @@
+export function isScoreRequest(body: any): boolean {
+  return Object.values(body.questions ?? {}).some(
+    (question: any) => question.type === "score",
+  );
+}
+
+export function scoreContents(body: any): string[] {
+  return Object.values(body.questions)
+    .filter((question: any) => question.type === "score")
+    .map((question: any) => question.instructions.evidence ?? body.state);
+}
+
+export function scoreResponse(
+  body: any,
+  score: number | string | undefined | ((content: string) => unknown) = 3,
+): Response {
+  return Response.json({
+    answers: Object.fromEntries(
+      Object.entries(body.questions)
+        .filter(([, question]: [string, any]) => question.type === "score")
+        .map(([id, question]: [string, any]) => [
+          id,
+          {
+            type: "score",
+            score:
+              typeof score === "function"
+                ? score(question.instructions.evidence ?? body.state)
+                : score,
+          },
+        ]),
+    ),
+  });
+}
+
 export function choiceResponse(body: any): Response {
   return Response.json({
     answers: Object.fromEntries(
@@ -67,7 +101,10 @@ export function responseEvent(event: Record<string, unknown>): string {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
-export function searchToolResponse(body: any): Response | undefined {
+export function searchToolResponse(
+  body: any,
+  queries?: string[],
+): Response | undefined {
   if (!body.tools?.some((tool: any) => tool.name === "search_documents"))
     return;
   const lastUser = body.input.findLastIndex(
@@ -78,20 +115,20 @@ export function searchToolResponse(body: any): Response | undefined {
     .slice(lastUser + 1)
     .filter((message: any) => message.type === "function_call_output");
   if (/^(hello|hi|thanks)[!. ]*$/i.test(question) || toolResults.length) return;
-  const call = {
-    id: "search-call",
-    call_id: "search-call",
+  const calls = (queries ?? [question]).map((query, index) => ({
+    id: `search-call-${index}`,
+    call_id: `search-call-${index}`,
     type: "function_call",
     name: "search_documents",
-    arguments: JSON.stringify({ query: question }),
+    arguments: JSON.stringify({ query }),
     status: "completed",
-  };
+  }));
   if (!body.stream)
     return Response.json({
       id: "tool-response",
       created_at: 1,
       model: body.model,
-      output: [call],
+      output: calls,
       usage: responseUsage,
     });
   return new Response(
@@ -99,22 +136,27 @@ export function searchToolResponse(body: any): Response | undefined {
       type: "response.created",
       response: { id: "tool-response", created_at: 1, model: body.model },
     }) +
-      responseEvent({
-        type: "response.output_item.added",
-        output_index: 0,
-        item: { ...call, arguments: "" },
-      }) +
-      responseEvent({
-        type: "response.function_call_arguments.delta",
-        item_id: call.id,
-        output_index: 0,
-        delta: call.arguments,
-      }) +
-      responseEvent({
-        type: "response.output_item.done",
-        output_index: 0,
-        item: call,
-      }) +
+      calls
+        .map(
+          (call, index) =>
+            responseEvent({
+              type: "response.output_item.added",
+              output_index: index,
+              item: { ...call, arguments: "" },
+            }) +
+            responseEvent({
+              type: "response.function_call_arguments.delta",
+              item_id: call.id,
+              output_index: index,
+              delta: call.arguments,
+            }) +
+            responseEvent({
+              type: "response.output_item.done",
+              output_index: index,
+              item: call,
+            }),
+        )
+        .join("") +
       responseEvent({
         type: "response.completed",
         response: { usage: responseUsage },

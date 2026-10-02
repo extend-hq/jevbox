@@ -1,3 +1,4 @@
+import { isScoreRequest, scoreResponse } from "./model-tools";
 import { runJobs, waitForJobs } from "./jobs";
 import { authMailbox } from "./auth-mailbox";
 import { test, before, after } from "node:test";
@@ -7,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createApp } from "../server/app";
+import { HttpError } from "../server/db";
 import { testDatabase } from "./database";
 import {
   searchToolResponse,
@@ -26,16 +28,22 @@ let directory: string,
   other: string,
   documentId: string;
 let hold = true;
+let parallelQueries: string[] | undefined;
+let onScore:
+  ((body: any, signal?: AbortSignal | null) => Promise<void>) | undefined;
 const calls: { body: any; release: () => void; aborted: boolean }[] = [];
 const fetcher: typeof fetch = async (_url, init) => {
   const body = JSON.parse(String(init?.body));
-  if (String(_url).includes("typesafe"))
-    return body.questions.usefulness
-      ? Response.json({ answers: { usefulness: { type: "score", score: 3 } } })
-      : choiceResponse(body);
+  if (String(_url).includes("typesafe")) {
+    if (isScoreRequest(body)) {
+      await onScore?.(body, init?.signal);
+      return scoreResponse(body, 3);
+    }
+    return choiceResponse(body);
+  }
   assert.equal(String(_url), "https://api.openai.com/v1/responses");
   assert.equal(body.store, false);
-  const toolResponse = searchToolResponse(body);
+  const toolResponse = searchToolResponse(body, parallelQueries);
   if (toolResponse) return toolResponse;
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -317,6 +325,186 @@ test("streaming exposes partial text, durable queue edits preserve order, and du
   );
   assert.equal(completed.turns.length, 0);
 });
+test("independent search tools overlap, identical in-flight queries share work, and citations stay stable", async () => {
+  hold = false;
+  parallelQueries = ["First question", "Second question", "First question"];
+  const started = new Set<string>();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  onScore = async (body) => {
+    started.add(body.state.question);
+    await gate;
+  };
+  const chat = await newChat();
+  const firstCall = calls.length;
+  try {
+    await enqueue(chat, "Compare the documented processes");
+    await waitFor(
+      async () => started.size,
+      (size) => size === 2,
+    );
+    assert.deepEqual([...started].sort(), [
+      "First question",
+      "Second question",
+    ]);
+    release();
+    const completed = await waitFor(
+      () => state(chat),
+      (s) => s.messages.length === 2,
+    );
+    const generation = calls[firstCall].body;
+    assert.equal(generation.parallel_tool_calls, true);
+    const outputs = generation.input.filter(
+      (item: any) => item.type === "function_call_output",
+    );
+    assert.equal(outputs.length, 3);
+    const sources = outputs.map((item: any) => JSON.parse(item.output).sources);
+    assert.deepEqual(sources[0], sources[2]);
+    for (const result of sources)
+      for (const source of result)
+        assert.equal(
+          completed.messages[1].sources[source.citation - 1].documentId,
+          source.documentId,
+        );
+    assert.ok(completed.messages[1].retrievalDurationMs > 0);
+  } finally {
+    release();
+    onScore = undefined;
+    parallelQueries = undefined;
+  }
+});
+
+test("one failed parallel lookup aborts its sibling and prevents answer generation", async () => {
+  hold = false;
+  parallelQueries = ["First question", "Second question"];
+  let entered!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let count = 0;
+  let siblingAborted = false;
+  onScore = async (body, signal) => {
+    if (++count === 2) entered();
+    if (body.state.question === "First question") {
+      await gate;
+      throw new HttpError(502, "Scoring unavailable");
+    }
+    await new Promise<void>((resolve) => {
+      const abort = () => {
+        siblingAborted = true;
+        resolve();
+      };
+      if (signal?.aborted) abort();
+      else signal?.addEventListener("abort", abort, { once: true });
+    });
+  };
+  const chat = await newChat();
+  const firstCall = calls.length;
+  try {
+    await enqueue(chat, "Compare the documented processes");
+    await ready;
+    release();
+    const failed = await waitFor(
+      () => state(chat),
+      (s) => s.turns[0]?.status === "failed",
+    );
+    assert.equal(siblingAborted, true);
+    assert.equal(failed.messages.length, 0);
+    assert.equal(calls.length, firstCall);
+  } finally {
+    release();
+    onScore = undefined;
+    parallelQueries = undefined;
+  }
+});
+
+test("streaming consumes text while partial persistence is pending and completion flushes the write", async () => {
+  const answer = runtime.providers.answer;
+  const run = runtime.store.run.bind(runtime.store);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let writing = false;
+  let consumed = false;
+  runtime.store.run = async (sql, ...values) => {
+    if (sql.includes("SET partial_text=?")) {
+      writing = true;
+      await gate;
+    }
+    return run(sql, ...values);
+  };
+  runtime.providers.answer = async (...args) => {
+    const execution = args[5]!;
+    await execution.onText!("First text");
+    await execution.onText!("Complete text");
+    consumed = true;
+    return "Complete text";
+  };
+  const chat = await newChat();
+  try {
+    await enqueue(chat, "Process question");
+    await waitFor(
+      async () => writing && consumed,
+      (ready) => ready,
+    );
+    assert.equal((await state(chat)).messages.length, 0);
+    release();
+    const completed = await waitFor(
+      () => state(chat),
+      (s) => s.messages.length === 2,
+    );
+    assert.equal(completed.messages[1].content, "Complete text");
+    assert.equal(completed.turns.length, 0);
+  } finally {
+    release();
+    runtime.providers.answer = answer;
+    runtime.store.run = run;
+  }
+});
+
+test("failed partial persistence prevents committing the answer", async () => {
+  const answer = runtime.providers.answer;
+  const run = runtime.store.run.bind(runtime.store);
+  runtime.store.run = async (sql, ...values) => {
+    if (sql.includes("SET partial_text=?"))
+      throw new HttpError(503, "Persistence unavailable");
+    return run(sql, ...values);
+  };
+  runtime.providers.answer = async (...args) => {
+    await args[5]!.onText!("Partial text");
+    return "Complete text";
+  };
+  const chat = await newChat();
+  try {
+    await enqueue(chat, "Process question");
+    const failed = await waitFor(
+      () => state(chat),
+      (s) => s.turns[0]?.status === "failed",
+    );
+    assert.equal(failed.messages.length, 0);
+    assert.equal(failed.turns[0].error, "Persistence unavailable");
+    assert.equal(
+      (
+        await runtime.store.one<{ error_status: number }>(
+          "SELECT error_status FROM chat_turns WHERE chat_id=?",
+          chat,
+        )
+      )?.error_status,
+      503,
+    );
+  } finally {
+    runtime.providers.answer = answer;
+    runtime.store.run = run;
+  }
+});
+
 test("retrieval latency survives reload and excludes time spent generating", async () => {
   hold = true;
   const start = calls.length;

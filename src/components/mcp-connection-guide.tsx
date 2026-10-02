@@ -37,8 +37,8 @@ type Guide = {
 const screenshots = {
   codexPlugins: {
     src: "/guides/mcp/codex-create-plugin.webp",
-    alt: "Codex Plugins page with Add open and Create plugin in the menu.",
-    caption: "Codex · Customize → Plugins → Add → Create plugin",
+    alt: "Codex Plugins page with the Add menu open.",
+    caption: "Codex · Customize → Plugins → Add → Create MCP App",
   },
   codexForm: {
     src: "/guides/mcp/codex-new-plugin.webp",
@@ -100,11 +100,11 @@ function makeGuides(url: string): Guide[] {
       screenshots: [screenshots.codexPlugins, screenshots.codexForm],
       steps: [
         {
-          title: "Create a plugin",
+          title: "Create an MCP App",
           body: (
             <>
               In Codex, open <strong>Customize → Plugins</strong>. Choose{" "}
-              <strong>Add → Create plugin</strong>.
+              <strong>Add → Create MCP App</strong>.
             </>
           ),
         },
@@ -333,7 +333,8 @@ function makeGuides(url: string): Guide[] {
           body: (
             <>
               Select <strong>Streamable HTTP</strong> and paste the MCP URL
-              above. The client must support MCP <strong>2026-07-28</strong>.
+              above. Jevbox supports MCP <strong>2026-07-28</strong> and the
+              standard <strong>2025-11-25</strong> handshake.
             </>
           ),
         },
@@ -571,9 +572,9 @@ export function McpConnectionGuide({
       <details className="mcp-guide-help">
         <summary>Connection help</summary>
         <p>
-          These are HTTP setup guides; compatibility with each client version
-          has not been verified. Jevbox requires MCP 2026-07-28. If your client
-          reports an unsupported protocol, update it or use a compatible client.
+          Jevbox supports MCP 2026-07-28 and the standard 2025-11-25 handshake.
+          If your client reports an unsupported protocol, update it or use a
+          compatible client.
         </p>
         <p>
           For sign-in errors, authenticate again or check that your API key is

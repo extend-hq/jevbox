@@ -1,3 +1,4 @@
+import { isScoreRequest, scoreResponse } from "./model-tools";
 import { before, after, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
@@ -45,11 +46,9 @@ const outbound: string[] = [];
 const fetcher: typeof fetch = async (_input, init) => {
   const body = JSON.parse(String(init?.body));
   outbound.push(JSON.stringify(body));
-  if (body.questions.usefulness) {
+  if (isScoreRequest(body)) {
     await onScore?.();
-    return Response.json({
-      answers: { usefulness: { type: "score", score: 3 } },
-    });
+    return scoreResponse(body, 3);
   }
   return choiceResponse(body);
 };
@@ -435,48 +434,164 @@ test("revocation during retrieval and membership removal prevent returning evide
     userId,
   );
 });
-test("MCP works through the official client with full read and search access", async () => {
-  const created = await key();
+for (const protocolVersion of ["2026-07-28", "2025-11-25"])
+  test(`MCP ${protocolVersion} works through the official client with full read and search access`, async () => {
+    const created = await key();
+    const client = new Client(
+      { name: "integration-test", version: "1.0.0" },
+      {
+        supportedProtocolVersions: [protocolVersion],
+        versionNegotiation: {
+          mode:
+            protocolVersion === "2026-07-28"
+              ? { pin: protocolVersion }
+              : "legacy",
+        },
+      },
+    );
+    const transport = new StreamableHTTPClientTransport(
+      new URL(base + "/mcp"),
+      {
+        requestInit: { headers: { Authorization: `Bearer ${created.token}` } },
+      },
+    );
+    try {
+      await client.connect(transport);
+      const tools = await client.listTools();
+      assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
+        "fetch",
+        "list_organizations",
+        "search",
+      ]);
+      const organizations = await client.callTool({
+        name: "list_organizations",
+        arguments: {},
+      });
+      assert.equal(organizations.isError, undefined);
+      assert.deepEqual(
+        (organizations.structuredContent as any).organizations
+          .map((org: any) => org.id)
+          .sort(),
+        [orgId, secondOrgId].sort(),
+      );
+      const found = await client.callTool({
+        name: "search",
+        arguments: {
+          organizationId: orgId,
+          query: "Find evidence",
+          documentIds: [ownId],
+        },
+      });
+      assert.equal(found.isError, undefined);
+      const data = found.structuredContent as any;
+      assert.ok(data.results.length);
+      const fetched = await client.callTool({
+        name: "fetch",
+        arguments: { organizationId: orgId, id: data.results[0].id },
+      });
+      assert.match((fetched.structuredContent as any).text, /Readable passage/);
+      for (const input of [
+        { organizationId: orgId, id: privateId },
+        { organizationId: foreignOrgId, id: foreignId },
+      ]) {
+        const denied = await client.callTool({
+          name: "fetch",
+          arguments: input,
+        });
+        assert.equal(denied.isError, true);
+        assert.equal(denied.structuredContent, undefined);
+      }
+      await session("/auth/api-key/update", "POST", {
+        keyId: created.key.id,
+        enabled: false,
+      });
+      await assert.rejects(client.listTools());
+    } finally {
+      await client.close();
+    }
+  });
+
+async function legacyTools(token: string) {
   const client = new Client(
     { name: "integration-test", version: "1.0.0" },
-    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    {
+      supportedProtocolVersions: ["2025-11-25"],
+      versionNegotiation: { mode: "legacy" },
+    },
   );
-  const transport = new StreamableHTTPClientTransport(new URL(base + "/mcp"), {
-    requestInit: { headers: { Authorization: `Bearer ${created.token}` } },
-  });
   try {
-    await client.connect(transport);
-    const tools = await client.listTools();
-    assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
-      "fetch",
-      "list_organizations",
-      "search",
-    ]);
-    const found = await client.callTool({
-      name: "search",
-      arguments: {
-        organizationId: orgId,
-        query: "Find evidence",
-        documentIds: [ownId],
-      },
-    });
-    assert.equal(found.isError, undefined);
-    const data = found.structuredContent as any;
-    assert.ok(data.results.length);
-    const fetched = await client.callTool({
-      name: "fetch",
-      arguments: { organizationId: orgId, id: data.results[0].id },
-    });
-    assert.match((fetched.structuredContent as any).text, /Readable passage/);
-    await session("/auth/api-key/update", "POST", {
-      keyId: created.key.id,
-      enabled: false,
-    });
-    await assert.rejects(client.listTools());
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(base + "/mcp"), {
+        requestInit: { headers: { Authorization: `Bearer ${token}` } },
+      }),
+    );
+    return await client.listTools();
   } finally {
     await client.close();
   }
+}
+
+test("legacy MCP requires authentication and advertises OAuth discovery", async () => {
+  const response = await fetch(base + "/mcp", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "integration-test", version: "1.0.0" },
+      },
+    }),
+  });
+  assert.equal(response.status, 401);
+  assert.match(
+    response.headers.get("www-authenticate")!,
+    /oauth-protected-resource\/mcp/,
+  );
+  await assert.rejects(legacyTools("invalid-token"));
 });
+test("public loopback OAuth registration infers native clients without relaxing redirect validation", async () => {
+  async function register(redirect_uris: string[], extra: object = {}) {
+    return fetch(base + "/api/auth/oauth2/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Test connector",
+        redirect_uris,
+        token_endpoint_auth_method: "none",
+        grant_types: ["authorization_code", "refresh_token"],
+        ...extra,
+      }),
+    });
+  }
+  const accepted = await register([
+    "http://localhost:8787/callback",
+    "http://127.0.0.1:9900/callback",
+    "http://[::1]:9900/callback",
+  ]);
+  assert.equal(accepted.status, 201, await accepted.clone().text());
+  for (const [redirects, extra] of [
+    [["http://localhost:8787/callback"], { application_type: "web" }],
+    [
+      ["http://localhost:8787/callback"],
+      { token_endpoint_auth_method: "client_secret_basic" },
+    ],
+    [["http://localhost:8787/callback", "http://external.test/callback"], {}],
+    [["http://localhost.:8787/callback"], {}],
+    [["http://localhost:8787/callback#fragment"], {}],
+    [["http://user:password@localhost:8787/callback"], {}],
+  ] as const) {
+    const rejected = await register([...redirects], extra);
+    assert.equal(rejected.status, 400, await rejected.clone().text());
+  }
+});
+
 test("OAuth discovery, registration, PKCE, consent, audience validation, refresh, and disconnect", async () => {
   const metadataResponse = await fetch(
     base + "/.well-known/oauth-authorization-server/api/auth",
@@ -507,7 +622,6 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
       client_name: "Test connector",
       redirect_uris: ["http://127.0.0.1:9900/callback"],
       token_endpoint_auth_method: "none",
-      application_type: "native",
       grant_types: ["authorization_code", "refresh_token"],
       scope: "search:read documents:read offline_access",
     }),
@@ -620,6 +734,12 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
     method: "tools/list",
   });
   assert.equal(rpc.status, 200, await rpc.clone().text());
+  assert.deepEqual(
+    (await legacyTools(tokens.access_token)).tools
+      .map((tool) => tool.name)
+      .sort(),
+    ["fetch", "list_organizations", "search"],
+  );
   assert.equal(
     (await request("/api/v1/organizations", tokens.access_token)).status,
     401,
@@ -652,6 +772,7 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
       .status,
     200,
   );
+  await assert.rejects(legacyTools(refreshed.access_token));
   assert.equal(
     (
       await request("/mcp", refreshed.access_token, "POST", {
@@ -723,6 +844,13 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
     (await connected.json()).result.tools.map((tool: any) => tool.name).sort(),
     ["fetch", "list_organizations"],
   );
+  assert.deepEqual(
+    (await legacyTools(fresh.access_token)).tools
+      .map((tool) => tool.name)
+      .sort(),
+    ["fetch", "list_organizations"],
+  );
+  await assert.rejects(legacyTools(refreshed.access_token));
   assert.equal(
     (
       await request("/mcp", refreshed.access_token, "POST", {

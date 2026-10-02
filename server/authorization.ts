@@ -73,6 +73,62 @@ export function createAuthorization(url: string, token: string) {
     });
     return response.permissionship === "PERMISSIONSHIP_HAS_PERMISSION";
   }
+  async function checkBulk(
+    version: string,
+    kind: "resource" | "organization" | "chat",
+    ids: string[],
+    permission: string,
+    userId: string,
+    subjectKind: "user" | "link" = "user",
+  ): Promise<boolean[]> {
+    const allowed: boolean[] = [];
+    for (let i = 0; i < ids.length; i += 500) {
+      const items = ids.slice(i, i + 500).map((id) => ({
+        resource: {
+          objectType: `jevbox/${kind}`,
+          objectId: `${version}/${id}`,
+        },
+        permission,
+        subject: {
+          object: { objectType: `jevbox/${subjectKind}`, objectId: userId },
+        },
+      }));
+      const response = await request("/v1/permissions/checkbulk", {
+        consistency: { fullyConsistent: true },
+        items,
+      });
+      if (
+        !Array.isArray(response?.pairs) ||
+        response.pairs.length !== items.length
+      )
+        throw new HttpError(
+          503,
+          "Permission service unavailable. Please retry.",
+        );
+      for (const [index, pair] of response.pairs.entries()) {
+        const expected = items[index];
+        if (
+          !pair ||
+          pair.error ||
+          !pair.item ||
+          pair.request?.resource?.objectType !== expected.resource.objectType ||
+          pair.request?.resource?.objectId !== expected.resource.objectId ||
+          pair.request?.permission !== permission ||
+          pair.request?.subject?.object?.objectType !==
+            expected.subject.object.objectType ||
+          pair.request?.subject?.object?.objectId !== userId
+        )
+          throw new HttpError(
+            503,
+            "Permission service unavailable. Please retry.",
+          );
+        allowed.push(
+          pair.item.permissionship === "PERMISSIONSHIP_HAS_PERMISSION",
+        );
+      }
+    }
+    return allowed;
+  }
   async function removeSnapshot(version: string) {
     for (const kind of ["organization", "resource", "chat"]) {
       await request("/v1/relationships/delete", {
@@ -83,5 +139,5 @@ export function createAuthorization(url: string, token: string) {
       });
     }
   }
-  return { initialize, ready, write, check, removeSnapshot };
+  return { initialize, ready, write, check, checkBulk, removeSnapshot };
 }

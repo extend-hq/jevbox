@@ -275,12 +275,9 @@ export async function createStore(
     };
     return context.getStore() ? execute() : transaction(execute);
   }
-  async function permission(
+  async function withPermissionSnapshot<T>(
     actor: Actor,
-    kind: "resource" | "chat" | "organization",
-    id: string,
-    action: string,
-    subjectKind: "user" | "link" = "user",
+    check: (version: string) => Promise<T>,
   ) {
     for (let attempt = 0; attempt < 3; attempt++) {
       const before = await one<{ authz_version: string }>(
@@ -289,14 +286,7 @@ export async function createStore(
       );
       if (!before?.authz_version)
         throw new HttpError(503, "Permissions are not initialized");
-      const allowed = await authorization.check(
-        before.authz_version,
-        kind,
-        id,
-        action,
-        actor.userId,
-        subjectKind,
-      );
+      const allowed = await check(before.authz_version);
       const after = await one<{ authz_version: string }>(
         "SELECT authz_version FROM orgs WHERE id=?",
         actor.orgId,
@@ -304,6 +294,35 @@ export async function createStore(
       if (after?.authz_version === before.authz_version) return allowed;
     }
     throw new HttpError(503, "Permissions changed. Please retry.");
+  }
+  async function permission(
+    actor: Actor,
+    kind: "resource" | "chat" | "organization",
+    id: string,
+    action: string,
+    subjectKind: "user" | "link" = "user",
+  ) {
+    return withPermissionSnapshot(actor, (version) =>
+      authorization.check(version, kind, id, action, actor.userId, subjectKind),
+    );
+  }
+  async function permissions(
+    actor: Actor,
+    kind: "resource" | "chat" | "organization",
+    ids: string[],
+    action: string,
+    subjectKind: "user" | "link" = "user",
+  ) {
+    return withPermissionSnapshot(actor, (version) =>
+      authorization.checkBulk(
+        version,
+        kind,
+        ids,
+        action,
+        actor.userId,
+        subjectKind,
+      ),
+    );
   }
   async function cleanupPermissions() {
     await transaction(async () => {
@@ -425,6 +444,7 @@ export async function createStore(
     files,
     authorization,
     permission,
+    permissions,
     cleanupPermissions,
     close,
   };

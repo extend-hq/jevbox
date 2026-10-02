@@ -1,3 +1,4 @@
+import { isScoreRequest, scoreResponse } from "./model-tools";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -227,15 +228,10 @@ test("retrieval can select document statistics without invoking an answer model"
     async (input, init) => {
       assert.equal(input, "https://api.typesafe.ai/v1/systemone");
       const body = JSON.parse(String(init?.body));
-      if (body.questions.usefulness)
-        return Response.json({
-          answers: {
-            usefulness: {
-              type: "score",
-              score: body.state.includes('"pdfPages":7') ? 3 : 0,
-            },
-          },
-        });
+      if (isScoreRequest(body))
+        return scoreResponse(body, (content) =>
+          content.includes('"pdfPages":7') ? 3 : 0,
+        );
       return Response.json({
         answers: Object.fromEntries(
           Object.entries(body.questions).map(
@@ -297,23 +293,22 @@ test("several partial matches do not stop exploration before complete evidence",
     "key",
     async (_input, init) => {
       const body = JSON.parse(String(init?.body));
-      if (!body.questions.usefulness) {
+      if (!isScoreRequest(body)) {
         const { choiceResponse } = await import("./model-tools");
         return choiceResponse(body);
       }
-      if ((body.state.match(/Source: /g) ?? []).length >= 3) coverageChecks++;
-      return Response.json({
-        answers: {
-          usefulness: {
-            type: "score",
-            score: body.state.includes("Every required value")
-              ? 3
-              : body.state.includes("Partial evidence")
-                ? 2
-                : 0,
-          },
-        },
-      });
+      if (
+        typeof body.state === "string" &&
+        (body.state.match(/Source: /g) ?? []).length >= 3
+      )
+        coverageChecks++;
+      return scoreResponse(body, (content) =>
+        content.includes("Every required value")
+          ? 3
+          : content.includes("Partial evidence")
+            ? 2
+            : 0,
+      );
     },
   );
   assert.ok(coverageChecks > 0);

@@ -328,13 +328,14 @@ export default function App() {
   };
   const items: FileSystemItem[] = resources.map((r) =>
     r.kind === "folder"
-      ? { kind: "folder", path: pathFor(r) }
+      ? { kind: "folder", path: pathFor(r), access: r.access }
       : {
           kind: "file",
           key: r.id,
           path: pathFor(r),
           contentType: r.mime,
           size: r.size,
+          access: r.access,
           metadata: { Index: r.status },
           createdAt: r.created,
           updatedAt: r.created,

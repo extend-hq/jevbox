@@ -105,7 +105,7 @@ export function createMcpRouter(
                 );
               return server;
             },
-            { legacy: "reject" },
+            { legacy: "stateless" },
           );
           return protocol.fetch(request);
         };

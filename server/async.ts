@@ -25,11 +25,30 @@ export async function asyncSome<T>(
 export function createLimiter(limit: number) {
   let running = 0;
   const waiting: (() => void)[] = [];
-  return async function limited<T>(task: () => Promise<T>): Promise<T> {
+  return async function limited<T>(
+    task: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    signal?.throwIfAborted();
     if (running >= limit)
-      await new Promise<void>((resolve) => waiting.push(resolve));
+      await new Promise<void>((resolve, reject) => {
+        const next = () => {
+          signal?.removeEventListener("abort", abort);
+          resolve();
+        };
+        const abort = () => {
+          const index = waiting.indexOf(next);
+          if (index !== -1) {
+            waiting.splice(index, 1);
+            reject(signal!.reason);
+          }
+        };
+        waiting.push(next);
+        signal?.addEventListener("abort", abort, { once: true });
+      });
     else running++;
     try {
+      signal?.throwIfAborted();
       return await task();
     } finally {
       const next = waiting.shift();

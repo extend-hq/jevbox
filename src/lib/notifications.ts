@@ -10,7 +10,11 @@ export function mutationSuccessMessage(path: string, method: string) {
   if (method === "POST" && path === "/folders") return "Folder created";
   if (method === "POST" && /^\/documents\/[^/]+\/retry$/.test(path))
     return "Indexing restarted";
-  if (method === "PUT" && /^\/resources\/[^/]+\/access$/.test(path))
+  if (
+    method === "PUT" &&
+    (path === "/resources/access-batch" ||
+      /^\/resources\/[^/]+\/access$/.test(path))
+  )
     return "Sharing updated";
   if (method === "PATCH" && /^\/resources\/[^/]+$/.test(path))
     return "Changes saved";

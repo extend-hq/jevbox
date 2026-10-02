@@ -61,7 +61,11 @@ export function Sharing({
 }) {
   const [members, setMembers] = useState<Member[]>([]);
   const resources = useMemo(
-    () => (Array.isArray(resource) ? resource : [resource]),
+    () => [
+      ...new Map(
+        (Array.isArray(resource) ? resource : [resource]).map((r) => [r.id, r]),
+      ).values(),
+    ],
     [resource],
   );
   const multiple = resources.length > 1;
@@ -87,46 +91,56 @@ export function Sharing({
     );
     setCopied(false);
   };
-  const save = async () => {
+  const save = async (notify = true) => {
     const changes = settings.filter(
       (s) => savedConfigs[s.resourceId] !== configKey(s),
     );
-    const updated = [...settings];
-    let saved = 0;
-    try {
-      for (const config of changes) {
-        const result = await api<{ shareUrl: string | null }>(
-          `/resources/${config.resourceId}/access`,
-          {
+    if (!changes.length) return settings;
+    const results = multiple
+      ? (
+          await api<{ items: ResourceAccess[] }>("/resources/access-batch", {
             method: "PUT",
             body: JSON.stringify({
-              access: config.access,
-              grants: config.grants,
+              items: changes.map(({ resourceId, access, grants }) => ({
+                resourceId,
+                access,
+                grants,
+              })),
             }),
+            notify: false,
+          })
+        ).items
+      : [
+          {
+            ...changes[0],
+            ...(await api<{ shareUrl: string | null }>(
+              `/resources/${changes[0].resourceId}/access`,
+              {
+                method: "PUT",
+                body: JSON.stringify({
+                  access: changes[0].access,
+                  grants: changes[0].grants,
+                }),
+                notify: false,
+              },
+            )),
           },
-        );
-        const next = { ...config, shareUrl: result.shareUrl };
-        updated[updated.findIndex((s) => s.resourceId === config.resourceId)] =
-          next;
-        setSettings((current) =>
-          current.map((s) => (s.resourceId === next.resourceId ? next : s)),
-        );
-        setSavedConfigs((current) => ({
-          ...current,
-          [next.resourceId]: configKey(next),
-        }));
-        saved++;
-      }
-      return updated;
-    } catch (error) {
-      if (multiple && saved > 0)
-        throw new Error(
-          `${saved} of ${changes.length} items updated. ${error instanceof Error ? error.message : "Try again to save the remaining changes."}`,
-        );
-      throw error;
-    } finally {
-      if (saved > 0) onSaved();
-    }
+        ];
+    const byId = new Map(results.map((result) => [result.resourceId, result]));
+    const updated = settings.map((config) =>
+      byId.has(config.resourceId)
+        ? { ...config, shareUrl: byId.get(config.resourceId)!.shareUrl }
+        : config,
+    );
+    setSettings(updated);
+    setSavedConfigs(
+      Object.fromEntries(
+        updated.map((config) => [config.resourceId, configKey(config)]),
+      ),
+    );
+    onSaved();
+    if (notify) notifySuccess("Sharing updated");
+    return updated;
   };
   useEffect(() => {
     let active = true;
@@ -134,12 +148,17 @@ export function Sharing({
     void action.run(async () => {
       const [m, configs] = await Promise.all([
         organizationMembers(),
-        Promise.all(
-          resources.map(async (r) => ({
-            ...(await api<AccessSettings>(`/resources/${r.id}/access`)),
-            resourceId: r.id,
-          })),
-        ),
+        multiple
+          ? api<{ items: ResourceAccess[] }>("/resources/access-batch", {
+              method: "POST",
+              body: JSON.stringify({ ids: resources.map((r) => r.id) }),
+            }).then((result) => result.items)
+          : Promise.all(
+              resources.map(async (r) => ({
+                ...(await api<AccessSettings>(`/resources/${r.id}/access`)),
+                resourceId: r.id,
+              })),
+            ),
       ]);
       if (!active) return;
       setMembers(m);
@@ -159,7 +178,7 @@ export function Sharing({
   const accessOptions = [
     {
       value: "restricted",
-      label: "Restricted",
+      label: "Private",
       description: "Only people added above can access.",
       icon: LockKeyhole,
     },
@@ -382,7 +401,7 @@ export function Sharing({
                   resources.some((r) => r.kind === "folder") && (
                     <p className="share-inherited-note">
                       Contents set to inherit folder access are included.
-                      Restricted contents stay private.
+                      Private contents stay private.
                     </p>
                   )}
               </section>
@@ -400,7 +419,7 @@ export function Sharing({
             disabled={!loaded || action.busy}
             onClick={() =>
               void action.run(async () => {
-                const configs = dirty ? await save() : settings;
+                const configs = dirty ? await save(false) : settings;
                 const links = resources.map((r) => {
                   const config = configs.find((s) => s.resourceId === r.id)!;
                   if (config.access === "link") {
@@ -413,7 +432,15 @@ export function Sharing({
                   return `${location.origin}${r.kind === "folder" ? paths.library(r.id) : paths.document(r.id, undefined, "original", r.parent_id)}`;
                 });
                 await navigator.clipboard.writeText(links.join("\n"));
-                notifySuccess(multiple ? "Links copied" : "Link copied");
+                notifySuccess(
+                  dirty
+                    ? multiple
+                      ? "Sharing updated and links copied"
+                      : "Sharing updated and link copied"
+                    : multiple
+                      ? "Links copied"
+                      : "Link copied",
+                );
                 setCopied(true);
               })
             }

@@ -440,7 +440,7 @@ export function SettingsView({
               <span className="count">{members.length}</span>
             </h2>
             <p className="muted">
-              Membership does not grant access to restricted documents.
+              Membership does not grant access to private documents.
             </p>
             {members.map((m) => (
               <div className="person-row" key={m.id}>

@@ -76,7 +76,7 @@ export async function retrieveDocuments(
     const check = authorizationSlot(async () => {
       signal?.throwIfAborted();
       return resourceAccess(store, actor, id);
-    }).finally(() => pendingAccess.delete(id));
+    }, signal).finally(() => pendingAccess.delete(id));
     pendingAccess.set(id, check);
     return check;
   };
@@ -446,7 +446,7 @@ export async function retrieveDocuments(
     while (
       candidates.length &&
       batch.length <
-        Math.min(retrievalLimits.evidenceConcurrency, maxPassages - scored)
+        Math.min(retrievalLimits.evidenceBatchSize, maxPassages - scored)
     ) {
       const rounds = (source: (typeof candidates)[number]) =>
         Math.floor(
@@ -463,43 +463,39 @@ export async function retrieveDocuments(
         (passageCounts.get(source.documentId) ?? 0) + 1,
       );
     }
-    for (
-      let i = 0;
-      i < batch.length;
-      i += retrievalLimits.evidenceConcurrency
-    ) {
+    const filtered = await evidenceSlot(async () => {
       signal?.throwIfAborted();
-      const filtered = await Promise.all(
-        batch.slice(i, i + retrievalLimits.evidenceConcurrency).map((source) =>
-          evidenceSlot(async () => {
-            signal?.throwIfAborted();
-            if (!(await canRead(source.documentId))) return null;
-            scored++;
-            trace.push({
-              stage: "passage",
-              label: source.title,
-              resourceId: source.documentId,
-              nodeId: source.nodeId,
-              page: source.page,
-              routeScore: source.routeScore,
-            });
-            const score = await jev.score(
-              query,
-              `Source: ${source.name}\nSection: ${source.title}\nPages: ${source.page}–${source.endPage}\n\n${source.content}`,
-            );
-            return score >= retrievalLimits.minimumScore &&
-              (await canRead(source.documentId))
-              ? { ...source, score }
-              : null;
-          }),
+      const approved = await readable(batch, (source) => source.documentId);
+      if (!approved.length) return [];
+      scored += approved.length;
+      trace.push(
+        ...approved.map((source) => ({
+          stage: "passage" as const,
+          label: source.title,
+          resourceId: source.documentId,
+          nodeId: source.nodeId,
+          page: source.page,
+          routeScore: source.routeScore,
+        })),
+      );
+      const scores = await jev.scorePassages(
+        query,
+        approved.map(
+          (source) =>
+            `Source: ${source.name}\nSection: ${source.title}\nPages: ${source.page}–${source.endPage}\n\n${source.content}`,
         ),
       );
-      results.push(
-        ...filtered.filter(
-          (source): source is RetrievedSource => source !== null,
+      signal?.throwIfAborted();
+      return readable(
+        approved.flatMap((source, index) =>
+          scores[index] >= retrievalLimits.minimumScore
+            ? [{ ...source, score: scores[index] }]
+            : [],
         ),
+        (source) => source.documentId,
       );
-    }
+    }, signal);
+    results.push(...filtered);
     const accessible = await readable(results, (source) => source.documentId);
     if (options?.recoverRoutes === false) {
       if (accessible.length >= retrievalLimits.minimumUsefulResults) break;
@@ -535,7 +531,7 @@ export async function retrieveDocuments(
               .join("\n\n")
               .slice(0, retrievalLimits.contextCharacters),
           );
-        });
+        }, signal);
         if (score >= retrievalLimits.sufficientScore) break;
       }
     }

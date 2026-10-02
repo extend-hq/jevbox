@@ -2,7 +2,7 @@ import { queues, type BackgroundJob } from "./jobs";
 import { Router, type Request } from "express";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { asyncEvery } from "./async";
+import { asyncEvery, createLimiter } from "./async";
 import {
   HttpError,
   requireResource,
@@ -354,6 +354,7 @@ export function createChatRuntime(
         });
     }, 1000);
     accessCheck.unref();
+    let partialWrite: Promise<void> | undefined;
     try {
       const { a, chat } = await check();
       await validateInput(a, {
@@ -376,76 +377,101 @@ export function createChatRuntime(
         `${source.documentId}:${source.nodeId}:${source.content}`;
       let searches = 0;
       let retrievalDurationMs: number | undefined;
-      let searchChain: Promise<unknown> = Promise.resolve();
+      const lookupSlot = createLimiter(2);
+      const pendingLookups = new Map<string, Promise<unknown>>();
+      let mergeChain: Promise<unknown> = Promise.resolve();
+      let activeLookups = 0;
+      let retrievalStarted = 0;
       const runLookup = async (
         lookup: (actor: Actor) => Promise<typeof retrieval>,
       ) => {
-        const started = performance.now();
-        const { a: currentActor } = await check();
-        await store.run(
-          "UPDATE chat_turns SET status='retrieving' WHERE id=? AND attempt_id=? AND status='generating'",
-          turn.id,
-          turn.attempt_id,
-        );
-        const found = await lookup(currentActor);
-        for (const source of found.results)
-          if (
-            !retrieval.results.some(
-              (existing) => sourceKey(existing) === sourceKey(source),
-            )
-          )
-            retrieval.results.push(source);
-        for (const step of found.trace)
-          if (
-            !retrieval.trace.some(
-              (existing) => JSON.stringify(existing) === JSON.stringify(step),
-            )
-          )
-            retrieval.trace.push(step);
-        deps = [
-          ...new Set([
-            ...JSON.parse(chat.dependencies),
-            ...turn.document_ids,
-            ...retrieval.results.map((source) => source.documentId),
-            ...retrieval.trace.flatMap((step) =>
-              step.resourceId ? [step.resourceId] : [],
-            ),
-          ]),
-        ];
-        await check();
-        await store.run(
-          "UPDATE chat_turns SET status='generating',dependencies=?::jsonb WHERE id=? AND attempt_id=? AND status='retrieving'",
-          JSON.stringify(deps),
-          turn.id,
-          turn.attempt_id,
-        );
-        retrievalDurationMs =
-          (retrievalDurationMs ?? 0) + performance.now() - started;
-        return {
-          sources: found.results.map((source) => ({
-            citation:
-              retrieval.results.findIndex(
-                (existing) => sourceKey(existing) === sourceKey(source),
-              ) + 1,
-            title: source.name,
-            documentId: source.documentId,
-            section: source.title,
-            page: source.page,
-            text: source.content,
-          })),
-        };
+        if (activeLookups++ === 0) retrievalStarted = performance.now();
+        try {
+          const { a: currentActor } = await check();
+          await store.run(
+            "UPDATE chat_turns SET status='retrieving' WHERE id=? AND attempt_id=? AND status='generating'",
+            turn.id,
+            turn.attempt_id,
+          );
+          const found = await lookup(currentActor);
+          const merged = mergeChain.then(async () => {
+            controller.signal.throwIfAborted();
+            for (const source of found.results)
+              if (
+                !retrieval.results.some(
+                  (existing) => sourceKey(existing) === sourceKey(source),
+                )
+              )
+                retrieval.results.push(source);
+            for (const step of found.trace)
+              if (
+                !retrieval.trace.some(
+                  (existing) =>
+                    JSON.stringify(existing) === JSON.stringify(step),
+                )
+              )
+                retrieval.trace.push(step);
+            deps = [
+              ...new Set([
+                ...JSON.parse(chat.dependencies),
+                ...turn.document_ids,
+                ...retrieval.results.map((source) => source.documentId),
+                ...retrieval.trace.flatMap((step) =>
+                  step.resourceId ? [step.resourceId] : [],
+                ),
+              ]),
+            ];
+            await check();
+            await store.run(
+              "UPDATE chat_turns SET dependencies=?::jsonb WHERE id=? AND attempt_id=? AND status IN ('retrieving','generating')",
+              JSON.stringify(deps),
+              turn.id,
+              turn.attempt_id,
+            );
+            return {
+              sources: found.results.map((source) => ({
+                citation:
+                  retrieval.results.findIndex(
+                    (existing) => sourceKey(existing) === sourceKey(source),
+                  ) + 1,
+                title: source.name,
+                documentId: source.documentId,
+                section: source.title,
+                page: source.page,
+                text: source.content,
+              })),
+            };
+          });
+          mergeChain = merged.catch(() => {});
+          return await merged;
+        } catch (error) {
+          controller.abort(error);
+          throw error;
+        } finally {
+          if (--activeLookups === 0)
+            retrievalDurationMs =
+              (retrievalDurationMs ?? 0) + performance.now() - retrievalStarted;
+        }
       };
       const lookupDocuments = (
+        key: string,
         lookup: (actor: Actor) => Promise<typeof retrieval>,
       ) => {
+        const pending = pendingLookups.get(key);
+        if (pending) return pending;
         if (++searches > 5)
           return Promise.resolve({
             sources: [],
             message:
               "The search limit has been reached. Answer using the evidence already retrieved.",
           });
-        const result = searchChain.then(() => runLookup(lookup));
-        searchChain = result;
+        const result = lookupSlot(
+          () => runLookup(lookup),
+          controller.signal,
+        ).finally(() => {
+          pendingLookups.delete(key);
+        });
+        pendingLookups.set(key, result);
         return result;
       };
       await store.run(
@@ -457,17 +483,36 @@ export function createChatRuntime(
       const history: Message[] = JSON.parse(chat.messages);
       const context = turn.regenerate_base ? history.slice(0, -2) : history;
       let lastWrite = 0;
+      let pendingText: string | undefined;
+      const persistPartial = () => {
+        if (partialWrite) return;
+        partialWrite = (async () => {
+          while (pendingText !== undefined) {
+            const wait = 100 - (Date.now() - lastWrite);
+            if (wait > 0) await delay(wait);
+            await check();
+            lastWrite = Date.now();
+            const text = pendingText;
+            pendingText = undefined;
+            await store.run(
+              "UPDATE chat_turns SET partial_text=? WHERE id=? AND attempt_id=? AND status='generating'",
+              text,
+              turn.id,
+              turn.attempt_id,
+            );
+          }
+        })()
+          .catch((error) => controller.abort(error))
+          .finally(() => {
+            partialWrite = undefined;
+            if (pendingText !== undefined && !controller.signal.aborted)
+              persistPartial();
+          });
+      };
       const onText = async (text: string) => {
         controller.signal.throwIfAborted();
-        if (Date.now() - lastWrite < 100) return;
-        lastWrite = Date.now();
-        await check();
-        await store.run(
-          "UPDATE chat_turns SET partial_text=? WHERE id=? AND attempt_id=? AND status='generating'",
-          text,
-          turn.id,
-          turn.attempt_id,
-        );
+        pendingText = text;
+        persistPartial();
       };
       const answer = await providers.answer(
         a.orgId,
@@ -479,7 +524,7 @@ export function createChatRuntime(
           signal: controller.signal,
           attachedDocuments: turn.attachments,
           searchDocuments: (query, signal) =>
-            lookupDocuments((currentActor) =>
+            lookupDocuments(`search:${query.trim()}`, (currentActor) =>
               providers.retrieve(
                 currentActor,
                 query,
@@ -498,39 +543,49 @@ export function createChatRuntime(
                 400,
                 "Choose an attached or retrieved document to inspect.",
               );
-            return lookupDocuments(async (currentActor) => {
-              const sources = await inspectDocument(
-                store,
-                currentActor,
-                input,
-                signal ?? controller.signal,
-              );
-              return {
-                mode: "jev",
-                limited: false,
-                results: sources,
-                trace: retrieval.trace.some(
-                  (step) =>
-                    step.stage === "document" &&
-                    step.resourceId === input.documentId,
-                )
-                  ? []
-                  : [
-                      {
-                        stage: "document",
-                        label: sources[0].name,
-                        resourceId: input.documentId,
-                      },
-                    ],
-              };
-            });
+            return lookupDocuments(
+              `inspect:${JSON.stringify(input)}`,
+              async (currentActor) => {
+                const sources = await inspectDocument(
+                  store,
+                  currentActor,
+                  input,
+                  signal ?? controller.signal,
+                );
+                return {
+                  mode: "jev",
+                  limited: false,
+                  results: sources,
+                  trace: retrieval.trace.some(
+                    (step) =>
+                      step.stage === "document" &&
+                      step.resourceId === input.documentId,
+                  )
+                    ? []
+                    : [
+                        {
+                          stage: "document",
+                          label: sources[0].name,
+                          resourceId: input.documentId,
+                        },
+                      ],
+                };
+              },
+            );
           },
           beforeStep: async () => {
             await check();
+            await store.run(
+              "UPDATE chat_turns SET status='generating' WHERE id=? AND attempt_id=? AND status='retrieving'",
+              turn.id,
+              turn.attempt_id,
+            );
           },
           ...(turn.stream ? { onText } : {}),
         },
       );
+      while (partialWrite) await partialWrite;
+      controller.signal.throwIfAborted();
       await store.jobs.complete(job, async () => {
         const { chat: current } = await check();
         if (current.messages !== chat.messages)
@@ -594,6 +649,7 @@ export function createChatRuntime(
         turn.attempt_id,
       );
     } finally {
+      while (partialWrite) await partialWrite;
       clearInterval(accessCheck);
     }
   }

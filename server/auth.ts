@@ -158,8 +158,7 @@ export function createAuthentication(
                   ).activeOrganizationId === member.organizationId,
               )
               .map((session) => session.token);
-            if (sessions.length)
-              await internalAdapter.deleteSessions(sessions);
+            if (sessions.length) await internalAdapter.deleteSessions(sessions);
             await store.run(
               "DELETE FROM grants WHERE user_id=? AND resource_id IN (SELECT id FROM resources WHERE org_id=?)",
               member.userId,
@@ -367,6 +366,33 @@ export function createAuthentication(
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        if (
+          ctx.path === "/oauth2/register" &&
+          ctx.body?.application_type === undefined &&
+          ctx.body?.token_endpoint_auth_method === "none"
+        ) {
+          const redirects = z
+            .array(z.string())
+            .nonempty()
+            .safeParse(ctx.body.redirect_uris);
+          if (
+            redirects.success &&
+            redirects.data.every((uri) => {
+              try {
+                const url = new URL(uri);
+                return (
+                  url.protocol === "http:" &&
+                  ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+                );
+              } catch {
+                return false;
+              }
+            })
+          )
+            return {
+              context: { body: { ...ctx.body, application_type: "native" } },
+            };
+        }
         if (ctx.path === "/sign-up/email") {
           const label = z
             .string()

@@ -26,6 +26,7 @@ import {
   useDocumentSidebarWidthPreference,
 } from "@/lib/preferences";
 import { ResourceThumbnail } from "./resource-thumbnail";
+import { ResourceAccessBadge } from "./resource-access-badge";
 import { RouteLink } from "./route-link";
 import { ScrollArea } from "@/components/coss/scroll-area";
 import {
@@ -45,9 +46,6 @@ import {
   IndexTreeIcon,
   Link2,
   LockKeyhole,
-  LockFilled,
-  UsersFilled,
-  Globe2,
   FolderFilled,
   Share2,
   Trash2,
@@ -747,24 +745,7 @@ export function DocumentView({
                 ? `${doc.pages} ${doc.pages === 1 ? "page" : "pages"} · `
                 : ""}
               {(doc.size / 1024).toFixed(1)} KB
-              <span className="status-chip document-access-badge">
-                {doc.access === "link" ? (
-                  <Globe2 className="size-3.5" />
-                ) : doc.access === "organization" ? (
-                  <UsersFilled className="size-3.5" />
-                ) : doc.access === "inherit" ? (
-                  <FolderFilled className="size-3.5" />
-                ) : (
-                  <LockFilled className="size-3.5" />
-                )}
-                {doc.access === "link"
-                  ? "Link Sharing Enabled"
-                  : doc.access === "organization"
-                    ? "Organization access"
-                    : doc.access === "inherit"
-                      ? "Folder access"
-                      : "Restricted"}
-              </span>
+              <ResourceAccessBadge access={doc.access} />
               <Tooltip>
                 <TooltipTrigger
                   render={

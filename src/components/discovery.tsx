@@ -448,6 +448,10 @@ export function ChatView({
   const draft = useRef({ input, attachments });
   draft.current = { input, attachments };
   const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [optimisticTurn, setOptimisticTurn] = useState<{
+    chatId: string;
+    turn: ChatTurn;
+  } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const sending = useRef(false);
   const submission = useRef<{ key: string; id: string } | null>(null);
@@ -457,11 +461,17 @@ export function ChatView({
     : turns.find((t) =>
         ["retrieving", "generating", "cancelling"].includes(t.status),
       );
-  const visibleQueue = loadingHistory
+  const queuedTurns = loadingHistory
     ? []
     : turns.filter(
         (t) => !["retrieving", "generating", "cancelling"].includes(t.status),
       );
+  const visibleQueue =
+    optimisticTurn?.chatId === chatId &&
+    !turns.some((turn) => turn.id === optimisticTurn.turn.id) &&
+    !messages.some((message) => message.turnId === optimisticTurn.turn.id)
+      ? [...queuedTurns, optimisticTurn.turn]
+      : queuedTurns;
   const pending =
     activeTurn && !activeTurn.regenerating ? activeTurn.content : "";
   const action = useAction();
@@ -523,6 +533,14 @@ export function ChatView({
     if (!mounted.current || activeChat.current !== chat.id) return;
     setHistory((current) => mergeChatSnapshot(current, chat));
     setTurns(chat.turns ?? []);
+    setOptimisticTurn((current) =>
+      current?.chatId === chat.id &&
+      (chat.blocked ||
+        chat.turns?.some((turn) => turn.id === current.turn.id) ||
+        chat.messages.some((message) => message.turnId === current.turn.id))
+        ? null
+        : current,
+    );
     setBlocked(chat.blocked);
     setChats((current) =>
       current.some((c) => c.id === chat.id)
@@ -697,10 +715,32 @@ export function ChatView({
     if (submission.current?.key !== key)
       submission.current = { key, id: crypto.randomUUID() };
     const requestId = submission.current.id;
+    const queued = !!chatId && (!!activeTurn || visibleQueue.length > 0);
+    const submittedAttachments = attachments;
     sending.current = true;
     setSubmitting(true);
     action.setError("");
+    if (queued) {
+      setOptimisticTurn({
+        chatId,
+        turn: {
+          id: requestId,
+          content,
+          status: "queued",
+          partialText: "",
+          attachments: attachments.map(({ id, name }) => ({ id, name })),
+          selectedModel: chosenModel
+            ? { provider: chosenModel.provider, model: chosenModel.model }
+            : null,
+          error: null,
+          regenerating: false,
+        },
+      });
+      setInput("");
+      setAttachments([]);
+    }
     let current = chatId;
+    let accepted = false;
     try {
       if (!current) {
         const chat = await api<{ id: string }>("/chats", { method: "POST" });
@@ -719,6 +759,7 @@ export function ChatView({
         method: "POST",
         body: JSON.stringify({ id: requestId, ...payload }),
       });
+      accepted = true;
       submission.current = null;
       if (
         mounted.current &&
@@ -731,8 +772,26 @@ export function ChatView({
         setAttachments([]);
       }
       await refreshChat(current);
+      setOptimisticTurn((pending) =>
+        pending?.turn.id === requestId ? null : pending,
+      );
       void refresh().catch(() => {});
     } catch (error) {
+      if (!accepted) {
+        setOptimisticTurn((pending) =>
+          pending?.turn.id === requestId ? null : pending,
+        );
+        if (
+          queued &&
+          mounted.current &&
+          activeChat.current === current &&
+          !draft.current.input.trim() &&
+          !draft.current.attachments.length
+        ) {
+          setInput(content);
+          setAttachments(submittedAttachments);
+        }
+      }
       if (mounted.current && activeChat.current === current)
         action.setError(
           error instanceof Error
@@ -763,6 +822,7 @@ export function ChatView({
     }
     createdChat.current = null;
     setTurns([]);
+    setOptimisticTurn(null);
     olderRequest.current?.abort();
     olderRequest.current = null;
     setLoadingOlder(false);
@@ -1316,7 +1376,7 @@ export function ChatView({
           <div className="chat-compose">
             <ChatQueue
               turns={visibleQueue}
-              busy={action.busy}
+              busy={action.busy || submitting}
               onUpdate={updateTurn}
               onReorder={async (id, overId) => {
                 try {
@@ -1410,7 +1470,7 @@ export function ChatView({
                     !me.chatEnabled
                   }
                 >
-                  <ArrowUp size={18} />
+                  {!submitting && <ArrowUp size={18} />}
                 </Button>
               </div>
             </Form>

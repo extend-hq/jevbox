@@ -20,9 +20,11 @@ Some providers do not support every model or endpoint. Test the exact model your
 
 ## Search and chat context
 
-With a JEV key configured, search and chat share hierarchical retrieval followed by a usefulness filter. Each of the top 12 retrieved excerpts is scored independently using Jev's four-level rubric: unrelated (0), same topic without answering (1), useful supporting evidence (2), and a direct answer (3). Only scores of at least 1.5 are retained, ordered by usefulness. The filter scores the full excerpt that would be sent to chat, up to 7,000 characters, with at most four scoring requests in flight per retrieval. Source permissions are checked before each scoring request and again before returning context.
+Search and chat require a JEV key and share hierarchical retrieval followed by a usefulness filter. Candidate excerpts are scored in batches of at most 16, with two scoring requests in flight across the process. Each question carries only its own full excerpt and the shared query, so batching does not combine passages into one judgment. The four-level rubric remains unrelated (0), same topic without answering (1), useful supporting evidence (2), and a direct answer (3). Only scores of at least 1.5 are retained. Missing or invalid batch answers fail the entire request. Source permissions are checked inside the scoring request limiter and again after the response.
 
-Attached documents use the same filter. If no excerpts qualify, chat reports that it could not find supporting evidence instead of generating an answer. Without a JEV key, existing text matching remains available. Provider failures or invalid scores fail the request instead of sending unfiltered context. This adds up to 12 Jev requests per search or chat message.
+Retrieval keeps its existing 96-passage exploration budget, stops early when the evidence answers the entire question, and widens when evidence is incomplete. Results contain at most 12 passages and 24,000 characters. Attached documents retain their scope. Empty results remain empty, and missing credentials or provider failures fail explicitly.
+
+Chat permits two independent search or inspection tools to run concurrently. Identical in-flight lookups share work; subsequent lookups still run and recheck permissions. Citation allocation and dependency updates are serialized after retrieval. The selected answer model streams text while partial writes coalesce at roughly 100-millisecond intervals. Completion waits for pending writes and rechecks permissions.
 
 The scoring API follows the [TypeSafe Score primitive](https://docs.typesafe.ai/api), using the usefulness rubric described in [GPT Researcher's context filter](https://docs.gptr.dev/docs/gpt-researcher/gptr/context-filter).
 

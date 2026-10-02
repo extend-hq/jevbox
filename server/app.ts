@@ -1025,6 +1025,219 @@ export async function createApp(options: {
       ? `${options.origin}/s/${store.decrypt(link.encrypted_token)}`
       : null;
   }
+  const accessInput = z
+    .object({
+      access: z.enum(["restricted", "organization", "inherit", "link"]),
+      grants: z
+        .array(
+          z.object({ userId: id, role: z.enum(["viewer", "editor"]) }).strict(),
+        )
+        .max(200)
+        .refine(
+          (grants) =>
+            new Set(grants.map((grant) => grant.userId)).size === grants.length,
+          "Duplicate organization member",
+        ),
+    })
+    .strict();
+  const accessBatchInput = z
+    .object({
+      items: z
+        .array(accessInput.extend({ resourceId: id }))
+        .min(1)
+        .max(1000),
+    })
+    .strict()
+    .refine(
+      (input) =>
+        new Set(input.items.map((item) => item.resourceId)).size ===
+        input.items.length,
+      "Duplicate resource",
+    );
+  type SharingResource = Pick<
+    Resource,
+    "id" | "access" | "owner_id" | "parent_id"
+  >;
+  async function requireShareResources(a: Actor, resourceIds: string[]) {
+    const resources = await store.all<SharingResource>(
+      "SELECT id,access,owner_id,parent_id FROM resources WHERE org_id=? AND id=ANY(?::text[])",
+      a.orgId,
+      resourceIds,
+    );
+    if (resources.length !== resourceIds.length)
+      throw new HttpError(404, "Resource not found");
+    const allowed = await store.permissions(
+      a,
+      "resource",
+      resourceIds,
+      "share",
+    );
+    if (allowed.some((value) => !value))
+      throw new HttpError(404, "Resource not found");
+    const byId = new Map(resources.map((resource) => [resource.id, resource]));
+    return resourceIds.map((resourceId) => byId.get(resourceId)!);
+  }
+  async function accessSettings(resources: SharingResource[]) {
+    const resourceIds = resources.map((resource) => resource.id);
+    const [grants, links] = await Promise.all([
+      store.all<{ resource_id: string; userId: string; role: string }>(
+        'SELECT resource_id,user_id AS "userId",role FROM grants WHERE resource_id=ANY(?::text[])',
+        resourceIds,
+      ),
+      store.all<{ resource_id: string; encrypted_token: string }>(
+        "SELECT resource_id,encrypted_token FROM share_links WHERE resource_id=ANY(?::text[])",
+        resourceIds,
+      ),
+    ]);
+    const urls = new Map(
+      links.map((link) => [
+        link.resource_id,
+        `${options.origin}/s/${store.decrypt(link.encrypted_token)}`,
+      ]),
+    );
+    const byResource = new Map<string, { userId: string; role: string }[]>();
+    for (const { resource_id, ...grant } of grants) {
+      const current = byResource.get(resource_id) ?? [];
+      current.push(grant);
+      byResource.set(resource_id, current);
+    }
+    return resources.map((resource) => ({
+      resourceId: resource.id,
+      access: resource.access,
+      ownerId: resource.owner_id,
+      parentId: resource.parent_id,
+      shareUrl: urls.get(resource.id) ?? null,
+      grants: byResource.get(resource.id) ?? [],
+    }));
+  }
+  async function updateAccess(
+    a: Actor,
+    resources: SharingResource[],
+    items: z.infer<typeof accessBatchInput>["items"],
+  ) {
+    const userIds = [
+      ...new Set(
+        items.flatMap((input) => input.grants.map((grant) => grant.userId)),
+      ),
+    ];
+    const members = new Set(
+      (
+        await store.all<{ user_id: string }>(
+          "SELECT user_id FROM members WHERE org_id=? AND user_id=ANY(?::text[])",
+          a.orgId,
+          userIds,
+        )
+      ).map((member) => member.user_id),
+    );
+    for (const [index, input] of items.entries()) {
+      const resource = resources[index];
+      if (input.access === "inherit" && !resource.parent_id)
+        throw new HttpError(400, "A parent category is required");
+      if (
+        input.grants.some(
+          (grant) =>
+            grant.userId === resource.owner_id || !members.has(grant.userId),
+        )
+      )
+        throw new HttpError(400, "Invalid organization member");
+    }
+    const resourceIds = resources.map((resource) => resource.id);
+    await store.run(
+      'UPDATE resources r SET access=input.access FROM jsonb_to_recordset(?::jsonb) AS input("resourceId" text,access text) WHERE r.id=input."resourceId" AND r.org_id=?',
+      JSON.stringify(items),
+      a.orgId,
+    );
+    await store.run(
+      "DELETE FROM share_links WHERE resource_id=ANY(?::text[])",
+      items
+        .filter((input) => input.access !== "link")
+        .map((input) => input.resourceId),
+    );
+    const existingLinks = new Set(
+      (
+        await store.all<{ resource_id: string }>(
+          "SELECT resource_id FROM share_links WHERE resource_id=ANY(?::text[])",
+          resourceIds,
+        )
+      ).map((link) => link.resource_id),
+    );
+    const links = items
+      .filter(
+        (input) =>
+          input.access === "link" && !existingLinks.has(input.resourceId),
+      )
+      .map((input) => {
+        const token = randomBytes(32).toString("hex");
+        return {
+          resource_id: input.resourceId,
+          token_hash: digest(token),
+          encrypted_token: store.encrypt(token),
+        };
+      });
+    if (links.length)
+      await store.run(
+        "INSERT INTO share_links(resource_id,org_id,token_hash,encrypted_token) SELECT resource_id,?,token_hash,encrypted_token FROM jsonb_to_recordset(?::jsonb) AS input(resource_id text,token_hash text,encrypted_token text)",
+        a.orgId,
+        JSON.stringify(links),
+      );
+    await store.run(
+      "DELETE FROM grants WHERE resource_id=ANY(?::text[])",
+      resourceIds,
+    );
+    const grants = items.flatMap((input) =>
+      input.grants.map((grant) => ({
+        resource_id: input.resourceId,
+        user_id: grant.userId,
+        role: grant.role,
+      })),
+    );
+    if (grants.length)
+      await store.run(
+        "INSERT INTO grants SELECT resource_id,user_id,role FROM jsonb_to_recordset(?::jsonb) AS input(resource_id text,user_id text,role text)",
+        JSON.stringify(grants),
+      );
+    await store.run(
+      "INSERT INTO audit(org_id,user_id,action,resource_id,created) SELECT ?,?,'resource.share',resource_id,? FROM unnest(?::text[]) AS resource_id",
+      a.orgId,
+      a.userId,
+      now(),
+      resourceIds,
+    );
+  }
+  app.post("/api/resources/access-batch", async (req, res) => {
+    const { ids } = z
+      .object({ ids: z.array(id).min(1).max(1000) })
+      .strict()
+      .parse(req.body);
+    const resources = await requireShareResources(actor(req), [
+      ...new Set(ids),
+    ]);
+    res.json({ items: await accessSettings(resources) });
+  });
+  app.put(
+    "/api/resources/access-batch",
+    mutation(async (req) => {
+      const a = actor(req);
+      const { items } = accessBatchInput.parse(req.body);
+      const resources = await requireShareResources(
+        a,
+        items.map((input) => input.resourceId),
+      );
+      await updateAccess(a, resources, items);
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          items: await accessSettings(
+            resources.map((resource, index) => ({
+              ...resource,
+              access: items[index].access,
+            })),
+          ),
+        },
+      };
+    }),
+  );
   app.get("/api/resources/:id/access", async (req, res) => {
     const a = actor(req);
     const r = await requireResource(store, a, id.parse(req.params.id), "share");
@@ -1049,62 +1262,8 @@ export async function createApp(options: {
         id.parse(req.params.id),
         "share",
       );
-      const input = z
-        .object({
-          access: z.enum(["restricted", "organization", "inherit", "link"]),
-          grants: z
-            .array(z.object({ userId: id, role: z.enum(["viewer", "editor"]) }))
-            .max(200),
-        })
-        .strict()
-        .parse(req.body);
-      if (input.access === "inherit" && !r.parent_id)
-        throw new HttpError(400, "A parent category is required");
-      for (const grant of input.grants)
-        if (
-          grant.userId === r.owner_id ||
-          !(await store.one(
-            "SELECT 1 FROM members WHERE org_id=? AND user_id=?",
-            a.orgId,
-            grant.userId,
-          ))
-        )
-          throw new HttpError(400, "Invalid organization member");
-      await store.transaction(async () => {
-        await store.run(
-          "UPDATE resources SET access=? WHERE id=?",
-          input.access,
-          r.id,
-        );
-        if (input.access === "link") {
-          if (
-            !(await store.one(
-              "SELECT 1 FROM share_links WHERE resource_id=?",
-              r.id,
-            ))
-          ) {
-            const token = randomBytes(32).toString("hex");
-            await store.run(
-              "INSERT INTO share_links(resource_id,org_id,token_hash,encrypted_token) VALUES(?,?,?,?)",
-              r.id,
-              a.orgId,
-              digest(token),
-              store.encrypt(token),
-            );
-          }
-        } else {
-          await store.run("DELETE FROM share_links WHERE resource_id=?", r.id);
-        }
-        await store.run("DELETE FROM grants WHERE resource_id=?", r.id);
-        for (const grant of input.grants)
-          await store.run(
-            "INSERT INTO grants VALUES(?,?,?)",
-            r.id,
-            grant.userId,
-            grant.role,
-          );
-        await audit(a, "resource.share", r.id);
-      });
+      const input = accessInput.parse(req.body);
+      await updateAccess(a, [r], [{ ...input, resourceId: r.id }]);
       return {
         status: 200,
         body: { ok: true, shareUrl: await shareUrl(r.id) },

@@ -1,5 +1,7 @@
 import { BoxLoader } from "@/components/box-loader";
 import { IndexStatusBadge } from "@/components/index-status-badge";
+import { ResourceAccessBadge } from "@/components/resource-access-badge";
+import type { Resource } from "@/lib/api";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import {
   ContextMenu,
@@ -142,6 +144,7 @@ export type FileSystemView =
   "icons" | "list" | "columns" | "gallery" | "spatial";
 export type FileSystemFolderItem = {
   kind: "folder";
+  access?: Resource["access"];
   path: string;
   name?: string;
   parentPath?: string;
@@ -151,6 +154,7 @@ export type FileSystemFolderItem = {
 };
 export type FileSystemFileItem = {
   kind: "file";
+  access?: Resource["access"];
   path: string;
   key?: string;
   name?: string;
@@ -4905,6 +4909,10 @@ function FileSystemInformation({
   if (entry.kind === "file") {
     const size = formatByteSize(entry.size);
     if (size) rows.push(["Size", size]);
+  }
+  if (entry.access)
+    rows.push(["Permissions", <ResourceAccessBadge access={entry.access} />]);
+  if (entry.kind === "file") {
     for (const [label, value] of Object.entries(entry.metadata ?? {}))
       rows.push([
         label,

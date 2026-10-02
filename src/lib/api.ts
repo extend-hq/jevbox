@@ -15,12 +15,13 @@ export class ApiError extends Error {
 
 export async function api<T = any>(
   path: string,
-  options: RequestInit = {},
+  options: RequestInit & { notify?: boolean } = {},
 ): Promise<T> {
+  const { notify = true, ...requestOptions } = options;
   const response = await fetch(`/api${path}`, {
     credentials: "same-origin",
     cache: "no-store",
-    ...options,
+    ...requestOptions,
     headers: {
       ...(options.body instanceof FormData
         ? {}
@@ -53,7 +54,7 @@ export async function api<T = any>(
     path,
     (options.method ?? "GET").toUpperCase(),
   );
-  if (message) notifySuccess(message);
+  if (notify && message) notifySuccess(message);
   return data;
 }
 export type Resource = {

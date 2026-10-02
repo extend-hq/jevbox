@@ -80,7 +80,7 @@ PostgreSQL stores accounts, sessions, document metadata, parsed output, and chat
 - Extend UI Finder and PDF, DOCX, XLSX, and PPTX viewers, with Base UI and coss primitives.
 - Markdown/GFM, Pierre code previews, JSON trees, CSV/TSV tables, image zoom/pan, sandboxed HTML, archive inspection, and audio/video playback. Unknown formats have a safe download fallback.
 - Section trees with heading outlines, page ranges, source blocks, external links, structured output, and deep links to nodes. Sections continue across parsed pages, and bounded source passages preserve evidence throughout long sections.
-- Restricted, organization, and inherited sharing; per-member viewer/editor roles; owner-only permission management.
+- Private, organization, and inherited sharing; per-member viewer/editor roles; owner-only permission management.
 - Permission-filtered JEV beam search, usefulness thresholds, private saved chats, source citations, and retrieval paths. Weak first-pass evidence widens exploration into alternate routes. Revoked sources block the entire dependent conversation. See [retrieval architecture](docs/retrieval.md).
 - Streamed answers with Stop, a persistent per-chat message queue, editing, removing, and drag reordering queued messages, selected-model regeneration, and branching from any saved message into a separate private chat. Message controls appear on hover or keyboard focus, and remain available on touch screens.
 

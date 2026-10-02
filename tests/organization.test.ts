@@ -1,3 +1,4 @@
+import { isScoreRequest, scoreResponse } from "./model-tools";
 import { runJobs, waitForJobs } from "./jobs";
 import { authMailbox } from "./auth-mailbox";
 import { test, before, after } from "node:test";
@@ -222,10 +223,7 @@ const fetcher: typeof fetch = async (input, init) => {
   const body = JSON.parse(String(init?.body));
   calls.push({ url, body });
   if (url.includes("typesafe")) {
-    if (body.questions.usefulness)
-      return Response.json({
-        answers: { usefulness: { type: "score", score: 3 } },
-      });
+    if (isScoreRequest(body)) return scoreResponse(body, 3);
     if (!body.questions.placement) return route(body);
     await duringPlacement?.();
     const question = body.questions.placement;

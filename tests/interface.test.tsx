@@ -618,6 +618,7 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
   }
   globalThis.EventSource = TestEventSource as unknown as typeof EventSource;
   const requests: string[] = [];
+  let acceptQueued: (() => void) | undefined;
   let branched = "";
   let snapshot: any = {
     id: "chat",
@@ -634,7 +635,7 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
     if (path === "/api/chats/chat/turns") {
       const body = JSON.parse(String(init?.body));
       requests.push(body.content);
-      snapshot.turns.push({
+      const turn = {
         id: body.id,
         content: body.content,
         status: requests.length === 1 ? "generating" : "queued",
@@ -643,7 +644,15 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
         attachments: [],
         error: null,
         regenerating: false,
-      });
+      };
+      if (requests.length === 1) snapshot.turns.push(turn);
+      else
+        await new Promise<void>((resolve) => {
+          acceptQueued = () => {
+            snapshot.turns.push(turn);
+            resolve();
+          };
+        });
       return Response.json({ id: body.id }, { status: 202 });
     }
     if (
@@ -701,6 +710,22 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
     assert.ok(
       document.querySelector(".chat-queue")?.textContent?.includes("Second"),
     );
+    const optimisticRow = document.querySelector(".chat-queue-item");
+    assert.equal(
+      document.querySelector('[role="textbox"]')?.textContent?.trim(),
+      "",
+    );
+    const send = button("Queue message");
+    assert.ok(send?.querySelector('[data-slot="button-loading-indicator"]'));
+    assert.equal(send.querySelectorAll("svg").length, 1);
+    await act(async () => {
+      listeners.get("snapshot")?.({ data: JSON.stringify(snapshot) });
+    });
+    assert.equal(document.querySelector(".chat-queue-item"), optimisticRow);
+    await act(async () => acceptQueued?.());
+    assert.equal(document.querySelectorAll(".chat-queue-item").length, 1);
+    assert.equal(document.querySelector(".chat-queue-item"), optimisticRow);
+    assert.equal(send.querySelector('[data-slot="button-loading-indicator"]'), null);
     snapshot.turns[0].partialText = "First fragment, now extended";
     await act(async () => {
       listeners.get("snapshot")?.({ data: JSON.stringify(snapshot) });
@@ -2462,13 +2487,20 @@ test("Sharing copies all selected links without overwriting mixed permissions", 
         ],
         total: 3,
       });
+    assert.equal(path, "/api/resources/access-batch");
+    assert.equal(init?.method, "POST");
+    assert.deepEqual(JSON.parse(String(init.body)), {
+      ids: ["first", "second"],
+    });
     return Response.json({
-      ownerId: "owner",
-      access: path.includes("first") ? "link" : "restricted",
-      grants: path.includes("first")
-        ? [{ userId: "person", role: "viewer" }]
-        : [],
-      shareUrl: path.includes("first") ? "https://app.test/s/public" : null,
+      items: ["first", "second"].map((resourceId) => ({
+        resourceId,
+        ownerId: "owner",
+        access: resourceId === "first" ? "link" : "restricted",
+        grants:
+          resourceId === "first" ? [{ userId: "person", role: "viewer" }] : [],
+        shareUrl: resourceId === "first" ? "https://app.test/s/public" : null,
+      })),
     });
   };
   try {
@@ -2505,7 +2537,7 @@ test("Sharing copies all selected links without overwriting mixed permissions", 
   }
 });
 
-test("Sharing applies permissions to every selected file and retries only failed saves before copying links", async () => {
+test("Sharing batches permission changes, retries an atomic failure and emits one toast when saving and copying", async () => {
   const originalFetch = globalThis.fetch;
   const originalClipboard = Object.getOwnPropertyDescriptor(
     navigator,
@@ -2514,10 +2546,14 @@ test("Sharing applies permissions to every selected file and retries only failed
   let copied = "",
     fail = true;
   const writes: {
-    id: string;
+    resourceId: string;
     access: string;
     grants: { userId: string; role: string }[];
-  }[] = [];
+  }[][] = [];
+  const messages: string[] = [];
+  const listener = (event: Event) =>
+    messages.push((event as CustomEvent<string>).detail);
+  window.addEventListener("app-success", listener);
   let saved = 0;
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
@@ -2553,24 +2589,35 @@ test("Sharing applies permissions to every selected file and retries only failed
         ],
         total: 3,
       });
-    const id = path.split("/")[3];
+    assert.equal(path, "/api/resources/access-batch");
     if (init?.method === "PUT") {
-      writes.push({ id, ...JSON.parse(String(init.body)) });
-      if (id === "second" && fail)
+      const { items } = JSON.parse(String(init.body));
+      writes.push(items);
+      if (fail)
         return Response.json(
           { error: "Permission service unavailable" },
           { status: 503 },
         );
-      return Response.json({ shareUrl: `https://app.test/s/${id}` });
+      return Response.json({
+        items: items.map((item: { resourceId: string }) => ({
+          ...item,
+          shareUrl: `https://app.test/s/${item.resourceId}`,
+        })),
+      });
     }
     return Response.json({
-      ownerId: "owner",
-      access: "restricted",
-      shareUrl: null,
-      grants:
-        id === "first"
-          ? [{ userId: "person", role: "viewer" }]
-          : [{ userId: "other", role: "viewer" }],
+      items: ["first", "second"].map((resourceId) => ({
+        resourceId,
+        ownerId: "owner",
+        access: "restricted",
+        shareUrl: null,
+        grants: [
+          {
+            userId: resourceId === "first" ? "person" : "other",
+            role: "viewer",
+          },
+        ],
+      })),
     });
   };
   try {
@@ -2630,39 +2677,134 @@ test("Sharing applies permissions to every selected file and retries only failed
     assert.ok(
       dialog
         .querySelector('[role="alert"]')
-        ?.textContent?.includes("1 of 2 items updated"),
+        ?.textContent?.includes("Permission service unavailable"),
     );
     assert.equal(copied, "");
-    assert.equal(saved, 1);
+    assert.equal(saved, 0);
+    assert.deepEqual(messages, []);
     assert.deepEqual(writes, [
-      {
-        id: "first",
-        access: "link",
-        grants: [{ userId: "person", role: "editor" }],
-      },
-      {
-        id: "second",
-        access: "link",
-        grants: [
-          { userId: "other", role: "viewer" },
-          { userId: "person", role: "editor" },
-        ],
-      },
+      [
+        {
+          resourceId: "first",
+          access: "link",
+          grants: [{ userId: "person", role: "editor" }],
+        },
+        {
+          resourceId: "second",
+          access: "link",
+          grants: [
+            { userId: "other", role: "viewer" },
+            { userId: "person", role: "editor" },
+          ],
+        },
+      ],
     ]);
     fail = false;
     await click(button("Save & copy links", dialog));
-    assert.equal(writes.length, 3);
-    assert.equal(writes[2].id, "second");
-    assert.equal(saved, 2);
+    assert.equal(writes.length, 2);
+    assert.deepEqual(writes[1], writes[0]);
+    assert.equal(saved, 1);
     assert.equal(dialog.querySelector('[role="alert"]'), null);
     assert.equal(copied, "https://app.test/s/first\nhttps://app.test/s/second");
+    assert.deepEqual(messages, ["Sharing updated and links copied"]);
+    await click(button("Save changes", dialog));
+    assert.equal(writes.length, 2);
+    assert.equal(saved, 1);
+    assert.deepEqual(messages, ["Sharing updated and links copied"]);
   } finally {
+    window.removeEventListener("app-success", listener);
     globalThis.fetch = originalFetch;
     if (originalClipboard)
       Object.defineProperty(navigator, "clipboard", originalClipboard);
     else Reflect.deleteProperty(navigator, "clipboard");
   }
 });
+
+for (const multiple of [false, true]) {
+  test(`Sharing emits one toast when saving ${multiple ? "a folder and file" : "a single file"}`, async () => {
+    const originalFetch = globalThis.fetch;
+    const resources = sharingResources();
+    resources[1].kind = "folder";
+    const messages: string[] = [];
+    const listener = (event: Event) =>
+      messages.push((event as CustomEvent<string>).detail);
+    window.addEventListener("app-success", listener);
+    const writes: string[] = [];
+    let saved = 0;
+    let closed = 0;
+    globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input), location.origin).pathname;
+      if (path.startsWith("/api/auth/organization/list-members"))
+        return Response.json({
+          members: [
+            {
+              id: "membership",
+              userId: "person",
+              role: "member",
+              user: { name: "Person", email: "person@app.test" },
+            },
+          ],
+          total: 1,
+        });
+      assert.equal(
+        path,
+        multiple
+          ? "/api/resources/access-batch"
+          : "/api/resources/first/access",
+      );
+      assert.equal("notify" in (init ?? {}), false);
+      const configs = (multiple ? resources : [resources[0]]).map(
+        (resource) => ({
+          resourceId: resource.id,
+          ownerId: "owner",
+          access: "restricted",
+          shareUrl: null,
+          grants: [{ userId: "person", role: "viewer" }],
+        }),
+      );
+      if (init?.method === "PUT") {
+        writes.push(path);
+        const body = JSON.parse(String(init.body));
+        assert.ok(
+          (multiple ? body.items : [body]).every(
+            (item: { grants: unknown[] }) => item.grants.length === 0,
+          ),
+        );
+        return Response.json(
+          multiple
+            ? { items: configs.map((config) => ({ ...config, grants: [] })) }
+            : { shareUrl: null },
+        );
+      }
+      return Response.json(multiple ? { items: configs } : configs[0]);
+    };
+    try {
+      await act(async () =>
+        root.render(
+          <Sharing
+            resource={multiple ? resources : resources[0]}
+            onClose={() => {
+              closed++;
+            }}
+            onSaved={() => {
+              saved++;
+            }}
+          />,
+        ),
+      );
+      const dialog = document.querySelector('[role="dialog"]')!;
+      await click(button("Remove access for Person", dialog));
+      await click(button("Save changes", dialog));
+      assert.equal(writes.length, 1);
+      assert.equal(saved, 1);
+      assert.equal(closed, 1);
+      assert.deepEqual(messages, ["Sharing updated"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      window.removeEventListener("app-success", listener);
+    }
+  });
+}
 
 test("Sharing cannot save when access settings for any selected file fail to load", async () => {
   const originalFetch = globalThis.fetch;
@@ -2672,7 +2814,7 @@ test("Sharing cannot save when access settings for any selected file fail to loa
     if (init?.method === "PUT") writes.push(path);
     if (path.startsWith("/api/auth/organization/list-members"))
       return Response.json({ members: [], total: 0 });
-    if (path.includes("second"))
+    if (path === "/api/resources/access-batch")
       return Response.json({ error: "Access denied" }, { status: 403 });
     return Response.json({
       ownerId: "owner",

@@ -1,3 +1,4 @@
+import { isScoreRequest, scoreContents, scoreResponse } from "./model-tools";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
@@ -7,6 +8,7 @@ import {
   type Route,
 } from "../server/beam-search";
 import { createJev, retrievalLimits } from "../server/jev";
+import { createLimiter } from "../server/async";
 import { buildIndex, flatten, withLayoutSections } from "../server/indexing";
 import { createProviders } from "../server/providers";
 import { retrieveDocuments } from "../server/retrieval";
@@ -67,10 +69,155 @@ function storeFor(
 }
 const jevFetch: typeof fetch = async (_input, init) => {
   const body = JSON.parse(String(init?.body));
-  return body.questions.usefulness
-    ? Response.json({ answers: { usefulness: { type: "score", score: 3 } } })
-    : choiceResponse(body);
+  return isScoreRequest(body) ? scoreResponse(body, 3) : choiceResponse(body);
 };
+
+test("passage scores share one request while each question sees only its own complete evidence", async () => {
+  const contents = ["First evidence. ".repeat(500), "Second evidence"];
+  let requests = 0;
+  const scores = await createJev("key", async (_input, init) => {
+    requests++;
+    const body = JSON.parse(String(init?.body));
+    assert.deepEqual(body.state, { question: "Question" });
+    assert.deepEqual(Object.keys(body.questions), [
+      "usefulness_0",
+      "usefulness_1",
+    ]);
+    assert.equal(
+      body.questions.usefulness_0.instructions.evidence,
+      contents[0],
+    );
+    assert.equal(
+      body.questions.usefulness_1.instructions.evidence,
+      contents[1],
+    );
+    assert.ok(
+      !JSON.stringify(body.questions.usefulness_0).includes(contents[1]),
+    );
+    return Response.json({
+      answers: {
+        usefulness_1: { type: "score", score: 1.5 },
+        usefulness_0: { type: "score", score: 3 },
+      },
+    });
+  }).scorePassages("Question", contents);
+  assert.equal(requests, 1);
+  assert.deepEqual(scores, [3, 1.5]);
+});
+
+test("missing, unexpected, and invalid batch scores reject the entire batch", async () => {
+  for (const answers of [
+    { usefulness_0: { type: "score", score: 3 } },
+    {
+      usefulness_0: { type: "score", score: 3 },
+      unexpected: { type: "score", score: 3 },
+    },
+    {
+      usefulness_0: { type: "score", score: 3 },
+      usefulness_1: { type: "score", score: "3" },
+    },
+    {
+      usefulness_0: { type: "score", score: 3 },
+      usefulness_1: { type: "score", score: 3.1 },
+    },
+  ])
+    await assert.rejects(
+      createJev("key", async () => Response.json({ answers })).scorePassages(
+        "Question",
+        ["First", "Second"],
+      ),
+      /invalid score/,
+    );
+  let requested = false;
+  assert.deepEqual(
+    await createJev("key", async () => {
+      requested = true;
+      throw new Error("Unexpected request");
+    }).scorePassages("Question", []),
+    [],
+  );
+  assert.equal(requested, false);
+});
+
+test("strong evidence returns after one bounded scoring cohort", async () => {
+  const { store } = storeFor([
+    document("a", "# Section\n" + "Evidence. ".repeat(12000)),
+  ]);
+  const sizes: number[] = [];
+  const result = await retrieveDocuments(
+    store,
+    actor,
+    "Question",
+    "key",
+    async (input, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (isScoreRequest(body)) sizes.push(Object.keys(body.questions).length);
+      return jevFetch(input, init);
+    },
+  );
+  assert.deepEqual(sizes, [retrievalLimits.evidenceBatchSize]);
+  assert.ok(result.results.length > 0);
+  assert.equal(result.limited, true);
+});
+
+test("scoring requests run concurrently within the shared process bound", async () => {
+  const { store } = storeFor([document("a", "# Section\nEvidence")]);
+  let running = 0;
+  let peak = 0;
+  let entered!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const fetcher: typeof fetch = async (input, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (!isScoreRequest(body)) return jevFetch(input, init);
+    running++;
+    peak = Math.max(peak, running);
+    if (running === retrievalLimits.evidenceConcurrency) entered();
+    try {
+      await gate;
+      return scoreResponse(body, 3);
+    } finally {
+      running--;
+    }
+  };
+  const requests = Array.from({ length: 3 }, () =>
+    retrieveDocuments(store, actor, "Question", "key", fetcher),
+  );
+  try {
+    await ready;
+    assert.equal(peak, retrievalLimits.evidenceConcurrency);
+  } finally {
+    release();
+  }
+  const results = await Promise.all(requests);
+  assert.ok(results.every((result) => result.results.length > 0));
+  assert.equal(peak, retrievalLimits.evidenceConcurrency);
+});
+
+test("aborted queued work exits immediately without consuming a concurrency slot", async () => {
+  const limited = createLimiter(1);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const running = limited(() => gate);
+  const controller = new AbortController();
+  let entered = false;
+  const queued = limited(async () => {
+    entered = true;
+  }, controller.signal);
+  controller.abort(new Error("Stopped"));
+  await assert.rejects(queued, /Stopped/);
+  assert.equal(entered, false);
+  release();
+  await running;
+  assert.equal(await limited(async () => "Next"), "Next");
+});
 
 test("attached retrieval loads only the requested resources before scoring", async () => {
   const selected = document("selected", "# Section\nRelevant source facts.");
@@ -203,10 +350,8 @@ test("metadata shortcuts preserve authorized folder paths and exclude private pr
     async (_input, init) => {
       const body = JSON.parse(String(init?.body));
       assert.ok(!JSON.stringify(body).includes("UNSEEN"));
-      return body.questions.usefulness
-        ? Response.json({
-            answers: { usefulness: { type: "score", score: 3 } },
-          })
+      return isScoreRequest(body)
+        ? scoreResponse(body, 3)
         : Response.json({
             answers: Object.fromEntries(
               Object.entries(body.questions).map(
@@ -333,15 +478,10 @@ test("all of a long section remains searchable with exact block and page provena
     "key",
     async (_url, init) => {
       const body = JSON.parse(String(init?.body));
-      if (!body.questions.usefulness) return choiceResponse(body);
-      return Response.json({
-        answers: {
-          usefulness: {
-            type: "score",
-            score: body.state.includes("739") ? 3 : 0,
-          },
-        },
-      });
+      if (!isScoreRequest(body)) return choiceResponse(body);
+      return scoreResponse(body, (content) =>
+        content.includes("739") ? 3 : 0,
+      );
     },
   );
   assert.equal(result.results.length, 1);
@@ -489,15 +629,10 @@ test("weak evidence widens exploration into a branch pruned from the initial bea
     "key",
     async (_url, init) => {
       const body = JSON.parse(String(init?.body));
-      return body.questions.usefulness
-        ? Response.json({
-            answers: {
-              usefulness: {
-                type: "score",
-                score: body.state.includes("Evidence 5") ? 3 : 0,
-              },
-            },
-          })
+      return isScoreRequest(body)
+        ? scoreResponse(body, (content) =>
+            content.includes("Evidence 5") ? 3 : 0,
+          )
         : choiceResponse(body);
     },
   );
@@ -521,16 +656,11 @@ test("a none routing decision defers branches until their passages can be scored
     "key",
     async (_url, init) => {
       const body = JSON.parse(String(init?.body));
-      if (body.questions.usefulness) {
-        scored.push(body.state);
-        return Response.json({
-          answers: {
-            usefulness: {
-              type: "score",
-              score: body.state.includes("739") ? 3 : 1,
-            },
-          },
-        });
+      if (isScoreRequest(body)) {
+        scored.push(...scoreContents(body));
+        return scoreResponse(body, (content) =>
+          content.includes("739") ? 3 : 1,
+        );
       }
       return Response.json({
         answers: Object.fromEntries(
@@ -575,22 +705,17 @@ test("candidate sections score every passage without a passage routing gate", as
     "key",
     async (_url, init) => {
       const body = JSON.parse(String(init?.body));
-      if (!body.questions.usefulness) {
+      if (!isScoreRequest(body)) {
         assert.equal(
           JSON.stringify(body.questions).includes("Background only"),
           false,
         );
         return choiceResponse(body);
       }
-      scored.push(body.state);
-      return Response.json({
-        answers: {
-          usefulness: {
-            type: "score",
-            score: body.state.includes("739") ? 3 : 1,
-          },
-        },
-      });
+      scored.push(...scoreContents(body));
+      return scoreResponse(body, (content) =>
+        content.includes("739") ? 3 : 1,
+      );
     },
   );
   assert.equal(scored.length, expected.length + 2);
@@ -610,7 +735,7 @@ test("conservative lookups do not recover rejected category routes", async () =>
     "key",
     async (_url, init) => {
       const body = JSON.parse(String(init?.body));
-      assert.equal(Boolean(body.questions.usefulness), false);
+      assert.equal(Boolean(isScoreRequest(body)), false);
       return Response.json({
         answers: Object.fromEntries(
           Object.entries(body.questions).map(
@@ -658,7 +783,7 @@ test("category routes stay visible beside grouped top-level documents", async ()
     "key",
     async (url, init) => {
       const body = JSON.parse(String(init?.body));
-      if (!rootChecked && !body.questions.usefulness) {
+      if (!rootChecked && !isScoreRequest(body)) {
         rootChecked = true;
         assert.ok(body.questions.route_0.criteria["category:category"]);
         assert.ok(
@@ -696,7 +821,7 @@ test("sibling authorization runs concurrently within its bound and preserves men
     "key",
     async (url, init) => {
       const body = JSON.parse(String(init?.body));
-      if (!body.questions.usefulness) {
+      if (!isScoreRequest(body)) {
         for (const question of Object.values(body.questions) as any[]) {
           const choices = Object.keys(question.criteria);
           if (choices.includes("document:doc-0")) {
@@ -733,11 +858,9 @@ test("widening keeps unrelated passages out and respects the passage budget", as
     "key",
     async (_url, init) => {
       const body = JSON.parse(String(init?.body));
-      if (!body.questions.usefulness) return choiceResponse(body);
-      scored++;
-      return Response.json({
-        answers: { usefulness: { type: "score", score: 1 } },
-      });
+      if (!isScoreRequest(body)) return choiceResponse(body);
+      scored += scoreContents(body).length;
+      return scoreResponse(body, 1);
     },
     [],
     undefined,
@@ -792,7 +915,7 @@ test("large menus use one hierarchy of distributions rather than independently n
     "key",
     async (url, init) => {
       const body = JSON.parse(String(init?.body));
-      if (!body.questions.usefulness) {
+      if (!isScoreRequest(body)) {
         calls++;
         for (const question of Object.values(body.questions) as any[])
           assert.ok(
@@ -840,8 +963,8 @@ test("missing keys, invalid distributions, and invalid scores fail without lexic
     /invalid routing distribution/,
   );
   await assert.rejects(
-    createJev("key", async () =>
-      Response.json({ answers: { usefulness: { type: "score", score: "3" } } }),
+    createJev("key", async (_input, init) =>
+      scoreResponse(JSON.parse(String(init?.body)), "3"),
     ).score("question", "Evidence"),
     /invalid score/,
   );
@@ -891,7 +1014,7 @@ test("access revoked during scoring excludes results and retrieval paths", async
     "key",
     async (url, init) => {
       const body = JSON.parse(String(init?.body));
-      if (body.questions.usefulness) allowed.clear();
+      if (isScoreRequest(body)) allowed.clear();
       return jevFetch(url, init);
     },
   );
@@ -922,15 +1045,10 @@ test("routing retains late headings in a folder with many documents", async () =
     "key",
     async (_url, init) => {
       const body = JSON.parse(String(init?.body));
-      if (body.questions.usefulness)
-        return Response.json({
-          answers: {
-            usefulness: {
-              type: "score",
-              score: body.state.includes("739") ? 3 : 0,
-            },
-          },
-        });
+      if (isScoreRequest(body))
+        return scoreResponse(body, (content) =>
+          content.includes("739") ? 3 : 0,
+        );
       return Response.json({
         answers: Object.fromEntries(
           Object.entries(body.questions).map(
@@ -1113,18 +1231,13 @@ test("long source sections share the passage budget with other documents", async
     "key",
     async (_url, init) => {
       const body = JSON.parse(String(init?.body));
-      if (!body.questions.usefulness) return choiceResponse(body);
-      scored++;
-      return Response.json({
-        answers: {
-          usefulness: {
-            type: "score",
-            score: body.state.includes("739") ? 3 : 0,
-          },
-        },
-      });
+      if (!isScoreRequest(body)) return choiceResponse(body);
+      scored += scoreContents(body).length;
+      return scoreResponse(body, (content) =>
+        content.includes("739") ? 3 : 0,
+      );
     },
   );
   assert.equal(result.results[0]?.documentId, "other");
-  assert.ok(scored <= retrievalLimits.evidenceConcurrency);
+  assert.ok(scored <= retrievalLimits.evidenceBatchSize);
 });

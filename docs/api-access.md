@@ -2,7 +2,7 @@
 
 Open **Settings → API keys** to create a personal key and view the API URL, copyable requests, parameters, and response documentation. MCP setup guides and connected apps are in **Settings → MCP**. All organization members can manage their own keys. The secret is returned only at creation; copy it before closing the dialog. Keys expire after at most one year and can be revoked immediately. Better Auth’s API Key plugin generates and hashes the secret, enforces expiry and shared rate limits, and handles revocation. Keys cannot act as browser sessions.
 
-A key authenticates as its creator. Each request supplies an organization ID, and the server checks the creator's current membership and SpiceDB permissions. A key can access multiple organizations that its creator currently belongs to. Administration never bypasses restricted document or ancestor permissions. Every key has full read and search access to content its creator can currently access. Keys have no separately configurable access scopes.
+A key authenticates as its creator. Each request supplies an organization ID, and the server checks the creator's current membership and SpiceDB permissions. A key can access multiple organizations that its creator currently belongs to. Administration never bypasses private document or ancestor permissions. Every key has full read and search access to content its creator can currently access. Keys have no separately configurable access scopes.
 
 ## REST API
 
@@ -31,7 +31,7 @@ Missing, expired, or revoked credentials return 401. Insufficient OAuth scopes r
 
 ## MCP
 
-Connect an MCP client to `<APP_ORIGIN>/mcp` using Streamable HTTP. Configure SDK v2 clients with `versionNegotiation: { mode: { pin: "2026-07-28" } }`. Older protocol revisions are rejected. The server uses the stateless MCP 2026-07-28 protocol and official TypeScript SDK v2, and offers read-only tools:
+Connect an MCP client to `<APP_ORIGIN>/mcp` using Streamable HTTP. The official TypeScript SDK v2 serves MCP 2026-07-28 and older clients through its stateless compatibility handler. MCP 2025-11-25 clients use the standard initialize handshake; SDK v2 clients can opt into 2026-07-28 with `versionNegotiation: { mode: { pin: "2026-07-28" } }`. Both protocols use the same authentication, current document permissions, and read-only tools:
 
 | Tool                 | Arguments                                                    |
 | -------------------- | ------------------------------------------------------------ |
@@ -41,7 +41,11 @@ Connect an MCP client to `<APP_ORIGIN>/mcp` using Streamable HTTP. Configure SDK
 
 Clients supporting custom headers can use the same personal API key in the Authorization header. API keys advertise all three tools. Native clients omit Origin; browser origins must match APP_ORIGIN or an explicit comma-separated `MCP_ALLOWED_ORIGINS` entry. This does not enable browser CORS access.
 
+Integration tests cover tool discovery, search, fetch, permission checks, credential revocation, and OAuth with both protocol versions. A local check on October 2, 2026 verified Cursor 3.22.12 browser sign-in, consent, tool discovery, and a `list_organizations` call. VS Code desktop has not been verified locally.
+
 OAuth clients can use browser sign-in and explicit consent. Better Auth’s MCP plugin, composed with JWT and CIMD, provides authorization-code grants with PKCE, Client ID Metadata Documents, an explicit dynamic-registration fallback, exact redirect validation, five-minute resource-bound access tokens, and refresh-token rotation with a 30-second retry overlap. DPoP proof verification and replay protection use Better Auth’s durable database adapter. Only user-delegated authorization and refresh grants are enabled. OAuth access tokens authenticate as the consenting user and are checked against live consent, membership, and document permissions on each request.
+
+Public desktop clients that omit `application_type` are registered as native only when `token_endpoint_auth_method` is `none` and every redirect uses HTTP on `localhost`, `127.0.0.1`, or `[::1]`. The provider still validates each redirect, and explicit web registrations retain web redirect rules.
 
 OAuth clients request these scopes, which can only narrow the user's current permissions:
 

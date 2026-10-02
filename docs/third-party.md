@@ -6,7 +6,7 @@ The repository includes Extend UI registry source for Finder, document viewers, 
 - coss UI: https://github.com/cosscom/coss/tree/main/apps/ui — MIT; notice in `licenses/coss-ui.txt`.
 - Base UI: https://base-ui.com — MIT.
 
-The sharing flow supports restricted, organization, inherited, and link access through this application's authorization API.
+The sharing flow supports private, organization, inherited, and link access through this application's authorization API.
 
 Local adaptations resolve registry icon placeholders through the local Nucleo adapter, remove source comments, add a Finder directory-change callback, bridge toggle-group spacing, and bundle PDFium WebAssembly locally. Library license notices are retained separately. Package versions are fixed by `pnpm-lock.yaml`.
 
