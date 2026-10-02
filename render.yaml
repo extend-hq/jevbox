@@ -82,10 +82,7 @@ services:
       - fromGroup: jevbox-authorization
       - fromGroup: jevbox-app
       - key: APP_ORIGIN
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
+        sync: false
       - key: PORT
         value: "4310"
       - key: DATABASE_URL
@@ -145,10 +142,7 @@ services:
           type: pserv
           property: hostport
       - key: APP_ORIGIN
-        fromService:
-          name: jevbox-web
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL
+        sync: false
 
 databases:
   - name: jevbox-app-db
