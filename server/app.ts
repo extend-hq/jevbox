@@ -3,6 +3,7 @@ import { createDownloadRouter } from "./downloads";
 import { createLinkSharingRouter } from "./link-sharing";
 import { createExternalAccess } from "./external-access";
 import { createMcpRouter } from "./mcp";
+import { createRuns } from "./runs";
 import { apiScopes } from "../shared/api-access";
 import { createUploads } from "./uploads";
 import {
@@ -101,6 +102,14 @@ export async function createApp(options: {
     uploads,
   );
   const app = express();
+  const chats = createChatRuntime(
+    store,
+    providers,
+    authenticate,
+    (token) => tokenActor(store, auth, token),
+    external.delegatedActor,
+  );
+  const runs = createRuns(store, external, chats, options.origin);
   app.disable("x-powered-by");
   const trustedProxies = process.env.TRUST_PROXY_CIDRS?.split(",")
     .map((s) => s.trim())
@@ -275,10 +284,25 @@ export async function createApp(options: {
     );
   app.all("/api/auth/{*path}", authHandler);
   app.use("/mcp", async (req, res, next) => {
+    if (req.method !== "POST") return next();
     try {
       const principal = await external.authenticate(req, "/mcp");
-      uploads.reserve(req, res, principal.userId, 3 * 1024 * 1024);
-      express.json({ limit: "3mb", inflate: false })(req, res, next);
+      const lease = uploads.reserve(
+        req,
+        res,
+        principal.userId,
+        3 * 1024 * 1024,
+      );
+      express.json({ limit: "3mb", inflate: false })(req, res, (error) => {
+        if (error) lease.release();
+        else if (
+          req.body?.method === "tools/call" &&
+          req.body?.params?.name === "upload_document"
+        )
+          lease.retain();
+        else lease.release();
+        next(error);
+      });
     } catch (error) {
       const header = external.challenge(req, error);
       if (header && external.status(error) === 401)
@@ -288,7 +312,10 @@ export async function createApp(options: {
   });
   app.use(express.json({ limit: "1mb" }));
   app.use("/api/v1", external.router);
-  app.use("/mcp", createMcpRouter(external, auth, options.origin));
+  app.use(
+    "/mcp",
+    createMcpRouter(external, auth, options.origin, uploads, runs),
+  );
   app.use("/api/shared", createLinkSharingRouter(store));
   app.use("/api", async (req, _res, next) => {
     try {
@@ -689,16 +716,21 @@ export async function createApp(options: {
     "/api/documents",
     uploads.multipart(authenticate),
     async (req, res) => {
-      if (!req.file) throw new HttpError(400, "Choose a document");
-      const parentId = req.body.parentId ? id.parse(req.body.parentId) : null;
-      const result = await uploads.save(
-        await authenticate(req),
-        req.file.originalname,
-        req.file.buffer,
-        parentId,
-        () => authenticate(req),
-      );
-      res.status(201).json({ id: result.id });
+      try {
+        if (!req.file) throw new HttpError(400, "Choose a document");
+        const parentId = req.body.parentId ? id.parse(req.body.parentId) : null;
+        const result = await uploads.save(
+          await authenticate(req),
+          req.file.originalname,
+          req.file.buffer,
+          parentId,
+          () => authenticate(req),
+          uploads.lease(req)?.signal,
+        );
+        res.status(201).json({ id: result.id });
+      } finally {
+        uploads.lease(req)?.release();
+      }
     },
   );
   app.get("/api/resources/:id", async (req, res) => {
@@ -1266,12 +1298,6 @@ export async function createApp(options: {
     );
     res.json(result);
   });
-  const chats = createChatRuntime(
-    store,
-    providers,
-    authenticate,
-    authenticateToken,
-  );
   app.use("/api/chats", chats.router);
   app.get("/api/audit", async (req, res) => {
     const a = await admin(req);
@@ -1322,12 +1348,10 @@ export async function createApp(options: {
           .status(400)
           .json({ error: error.issues[0]?.message ?? "Invalid input" });
       if (error instanceof multer.MulterError)
-        return res
-          .status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400)
-          .json({
-            error:
-              "Upload must contain one file at most 30 MiB and valid metadata",
-          });
+        return res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({
+          error:
+            "Upload must contain one file at most 30 MiB and valid metadata",
+        });
       if (
         error &&
         typeof error === "object" &&
@@ -1357,7 +1381,7 @@ export async function createApp(options: {
         .json({ error: "The request could not be completed. Please retry." });
     },
   );
-  const workers = createWorkers(store, { ...options, chats });
+  const workers = createWorkers(store, { ...options, chats, runs, external });
   try {
     await workers.start(options.workers ?? []);
   } catch (error) {
@@ -1371,6 +1395,7 @@ export async function createApp(options: {
     auth,
     providers,
     workers,
+    runs,
     closeChats: chats.close,
     closeStreams: chats.closeStreams,
     async close() {

@@ -17,6 +17,11 @@ import {
 import type { RetrievalStep } from "../shared/retrieval";
 import { searchMetadata } from "./search-metadata";
 import { metadataCandidates } from "./search-candidates";
+import {
+  searchFiltersSchema,
+  matchesSearchFilters,
+  type SearchFilters,
+} from "../shared/search-filters";
 
 export type RetrievedSource = {
   documentId: string;
@@ -24,6 +29,7 @@ export type RetrievedSource = {
   nodeId: string;
   passageId: string;
   title: string;
+  sectionPath?: string[];
   page: number;
   endPage: number;
   content: string;
@@ -53,6 +59,7 @@ export async function retrieveDocuments(
     maxPassages?: number;
     maxResults?: number;
     recoverRoutes?: boolean;
+    filters?: SearchFilters;
   },
 ) {
   if (!key)
@@ -61,6 +68,16 @@ export async function retrieveDocuments(
       "Connect TypeSafe in organization settings to enable search.",
     );
   signal?.throwIfAborted();
+  const filters = searchFiltersSchema.parse(options?.filters ?? {});
+  if (filters.folderId) {
+    const folder = await store.one<Resource>(
+      "SELECT * FROM resources WHERE id=? AND org_id=? AND kind='folder'",
+      filters.folderId,
+      actor.orgId,
+    );
+    if (!folder || !(await resourceAccess(store, actor, folder.id)))
+      throw new HttpError(404, "Folder not found");
+  }
   const maxPassages = Math.min(
     retrievalLimits.passages,
     options?.maxPassages ?? retrievalLimits.passages,
@@ -104,19 +121,40 @@ export async function retrieveDocuments(
   };
   const resources = await readable(
     await store.all<Resource & { outline_only?: boolean }>(
-      documentIds.length && !options?.preserveFolders
+      documentIds.length && !options?.preserveFolders && !filters.folderId
         ? "SELECT * FROM resources WHERE org_id=? AND id=ANY(?::text[]) ORDER BY created DESC"
         : "SELECT id,org_id,owner_id,parent_id,kind,name,description,access,mime,size,status,created,true AS outline_only,CASE WHEN parsed IS NULL THEN NULL ELSE json_build_object('summary',left(search_outline,1200),'searchProfile',left(search_profile,4096))::text END AS parsed FROM resources WHERE org_id=? ORDER BY created DESC",
       actor.orgId,
-      ...(documentIds.length && !options?.preserveFolders ? [documentIds] : []),
+      ...(documentIds.length && !options?.preserveFolders && !filters.folderId
+        ? [documentIds]
+        : []),
     ),
     (resource) => resource.id,
   );
+  const scoped = new Set(filters.folderId ? [filters.folderId] : []);
+  if (filters.folderId) {
+    const children = new Map<string, string[]>();
+    for (const resource of resources) {
+      if (!resource.parent_id) continue;
+      const siblings = children.get(resource.parent_id) ?? [];
+      siblings.push(resource.id);
+      children.set(resource.parent_id, siblings);
+    }
+    const pending = [filters.folderId];
+    for (let i = 0; i < pending.length; i++)
+      for (const id of children.get(pending[i]) ?? [])
+        if (!scoped.has(id)) {
+          scoped.add(id);
+          pending.push(id);
+        }
+  }
   const docs = resources.filter(
     (resource) =>
       resource.kind === "document" &&
       resource.status === "ready" &&
       resource.parsed &&
+      matchesSearchFilters(resource, filters) &&
+      (!filters.folderId || scoped.has(resource.id)) &&
       (!documentIds.length || documentIds.includes(resource.id)),
   );
 
@@ -176,7 +214,9 @@ export async function retrieveDocuments(
     doc: Resource,
     node: IndexNode,
     parentNodeId?: string,
+    ancestors: string[] = [],
   ): RouteNode<Value> {
+    const sectionPath = [...ancestors, node.title].slice(-8);
     return {
       id: `section:${doc.id}:${node.id}`,
       scope: doc.id,
@@ -188,7 +228,7 @@ export async function retrieveDocuments(
             )
           : undefined,
       children: bounded(
-        node.children.map((child) => section(doc, child, node.id)),
+        node.children.map((child) => section(doc, child, node.id, sectionPath)),
         `section:${doc.id}:${node.id}`,
       ),
       value: {
@@ -206,6 +246,7 @@ export async function retrieveDocuments(
           nodeId: node.id,
           passageId: passage.id,
           title: node.title,
+          sectionPath,
           page: passage.page,
           endPage: passage.endPage,
           content: passage.content,

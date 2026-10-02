@@ -42,7 +42,7 @@ Run two processes from the same image: `node --import tsx server/index.ts` for t
 
 pg-boss drains for 30 seconds, then aborts unfinished attempts. The process has a 40-second shutdown cap. Give containers at least 45 seconds to shut down. See [Render's graceful shutdown settings](https://render.com/docs/deploys#graceful-shutdown).
 
-The queue installation owns its `pgboss` schema and uses the pinned library's migrations. The database role must be able to create that schema and its tables, functions, and indexes. Use a direct or session-pooled connection for LISTEN/NOTIFY; transaction-pooled connections fall back to polling. Per-process pool ceilings are 6 application, 4 auth, 1 permission snapshot, and 3 pg-boss connections, with a dedicated notification session. Budget database connections across both web and worker replicas; auth connections are opened lazily and unused by background-only processes.
+The queue installation owns its `pgboss` schema and uses the pinned library's migrations. The database role must be able to create that schema and its tables, functions, and indexes. Use a direct or session-pooled connection for LISTEN/NOTIFY; transaction-pooled connections fall back to polling. Per-process pool ceilings are 6 application, 4 auth, 1 permission snapshot, and 3 pg-boss connections, with a dedicated notification session. Budget database connections across both web and worker replicas; auth connections are opened lazily and used by chat and MCP workers to validate live authorization.
 
 ## Any Kubernetes cluster
 

@@ -1,6 +1,6 @@
 # Background jobs
 
-pg-boss 12.35.0 owns delivery, claiming, heartbeats, retries, expiration, scheduling, and queue maintenance. Domain tables retain user-visible indexing, filing, review, and chat state. There are no application timers scanning those tables for runnable jobs.
+pg-boss 12.35.0 owns delivery, claiming, heartbeats, retries, expiration, scheduling, and queue maintenance. Domain tables retain user-visible indexing, filing, review, chat, and external run state. There are no application timers scanning those tables for runnable jobs.
 
 ## Admission and completion
 
@@ -9,6 +9,8 @@ Uploads, retries, filing requests, review events, and chat edits enqueue work th
 Workers use `work()` with one job per batch, explicit local concurrency, automatic heartbeats, and the job's abort signal. External requests happen outside transactions. Short checkpoint and completion transactions lock the queue row and verify its attempt number, active state, and deadline. Completion and domain changes commit together. A stale or cancelled attempt cannot publish a result. These transactions also retain the application's mandatory SpiceDB checks.
 
 The singleton policy serializes active jobs for each document or conversation across worker processes. Chat jobs wake a conversation; the handler reads its current ordered turns. This preserves queued editing, drag reordering, failed-turn blocking, and cancellation. A generation interrupted by process loss becomes a visible failure requiring explicit retry. Queue recovery does not silently repeat a started model answer.
+
+MCP searches use the `external-search` queue; MCP answers use `chat-answer` and save ordinary private conversations. Run admission, encrypted authorization references, and job creation commit together. A caller-provided request UUID deduplicates admission for 24 hours. Client disconnect signals affect only waiting for a reply, while worker execution follows its job claim and explicit cancellation. Workers recheck live credentials or OAuth consent, membership, and source access; result reads also enforce current permissions. See [durable MCP work](api-access.md#durable-search-and-answers).
 
 ## Retries and external effects
 
@@ -20,7 +22,7 @@ SMTP delivery has six retries with a one-hour link deadline. Verified accounts d
 
 ## Capacity and operations
 
-Per worker process: indexing 2, thumbnails 1, filing 3, reviews 1, chat 3, email 2, cleanup 1, and dead-letter reconciliation 1. These are local limits; adding replicas increases total provider traffic. Singleton keys provide entity serialization, not an organization-wide spend limit.
+Per worker process: indexing 2, thumbnails 1, filing 3, reviews 1, chat 3, external search 3, email 2, cleanup 1, and dead-letter reconciliation 1. These are local limits; adding replicas increases total provider traffic. Singleton keys provide entity serialization, not an organization-wide spend limit.
 
 Thumbnail jobs are admitted in the upload transaction and run independently of indexing. Starting a thumbnail consumer queues existing documents whose thumbnail state is pending. Covers for PDF, DOCX, PPTX, and XLSX render in Chromium's headless shell; images, bounded text previews, and ZIP directory previews use sharp. The worker stores WebP bytes and dimensions in PostgreSQL, with a maximum dimension of 256 pixels and a 128 KiB output limit. Native images are auto-oriented and use only the first frame. Failed generation retains the original document and does not change its indexing state.
 

@@ -12,6 +12,7 @@ import type { FileSystemEntry, FileSystemFileItem } from "./extend/file-system";
 import { FOLDER_GLYPH_SVG } from "./extend/folder-glyph";
 import { layoutSpatialTree, type SpatialNode } from "../lib/spatial-tree";
 import { occludesSpatialFocus } from "../lib/spatial-focus";
+import { outlineFlowGeometry } from "../lib/spatial-outline";
 import {
   createDetailThumbnailQueue,
   detailThumbnailCandidates,
@@ -285,19 +286,46 @@ function fitText(
   return `${text.slice(0, low).trimEnd()}…`;
 }
 
-function cardTexture(title: string, meta: string, options: { dark: boolean }) {
+function cardTexture(
+  title: string,
+  meta: string,
+  options: { dark: boolean; accent?: string },
+) {
   const canvas = document.createElement("canvas");
   canvas.width = 768;
   canvas.height = 64;
   const context = canvas.getContext("2d")!;
   context.beginPath();
-  context.roundRect(2, 2, canvas.width - 4, canvas.height - 4, 14);
-  context.fillStyle = options.dark ? "#212329" : "#ffffff";
+  context.roundRect(2, 2, canvas.width - 4, canvas.height - 4, 12);
+  context.fillStyle = options.dark ? "hsl(225 3% 9%)" : "hsl(0 0% 100%)";
   context.fill();
+  context.save();
+  context.clip();
+  const leftReflection = context.createLinearGradient(0, 0, 78, 0);
+  leftReflection.addColorStop(0, options.dark ? "#b7d5ff55" : "#417bc12c");
+  leftReflection.addColorStop(1, "#719bf900");
+  context.fillStyle = leftReflection;
+  context.fillRect(0, 0, 78, canvas.height);
+  if (options.accent) {
+    const rightReflection = context.createLinearGradient(
+      canvas.width - 90,
+      0,
+      canvas.width,
+      0,
+    );
+    rightReflection.addColorStop(0, `${options.accent}00`);
+    rightReflection.addColorStop(
+      1,
+      `${options.accent}${options.dark ? "55" : "35"}`,
+    );
+    context.fillStyle = rightReflection;
+    context.fillRect(canvas.width - 90, 0, 90, canvas.height);
+  }
+  context.restore();
   context.lineWidth = 2;
   context.strokeStyle = options.dark
-    ? "rgba(255, 255, 255, 0.09)"
-    : "rgba(31, 41, 64, 0.1)";
+    ? "rgb(255 255 255 / 8%)"
+    : "rgb(0 0 0 / 8%)";
   context.stroke();
   const left = 22;
   context.textBaseline = "middle";
@@ -417,7 +445,7 @@ export function LibrarySpatialView(props: Props) {
   const handle = useRef<SceneHandle | null>(null);
   const thumbnailCache = useRef(new Map<string, string | null>());
   const [unavailable, setUnavailable] = useState(false);
-  const [dark, setDark] = useState(() =>
+  const themeTarget = useRef(
     document.documentElement.classList.contains("dark"),
   );
   const structure = props.items
@@ -433,9 +461,10 @@ export function LibrarySpatialView(props: Props) {
   );
 
   useEffect(() => {
-    const observer = new MutationObserver(() =>
-      setDark(document.documentElement.classList.contains("dark")),
-    );
+    const observer = new MutationObserver(() => {
+      themeTarget.current = document.documentElement.classList.contains("dark");
+      handle.current?.invalidate();
+    });
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["class"],
@@ -446,6 +475,7 @@ export function LibrarySpatialView(props: Props) {
   useEffect(() => {
     const container = host.current;
     if (!container) return;
+    const dark = themeTarget.current;
     let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({
@@ -464,9 +494,27 @@ export function LibrarySpatialView(props: Props) {
     renderer.domElement.setAttribute("aria-hidden", "true");
     container.appendChild(renderer.domElement);
 
-    const palette = dark
-      ? { haze: "#16171c", top: "#1d1f27", bottom: "#101115", dust: "#b9c6ff" }
-      : { haze: "#eeede8", top: "#f7f7f4", bottom: "#e2e1da", dust: "#ffffff" };
+    const palettes = {
+      day: { haze: "#d7e0e7", top: "#b3c4d2", bottom: "#eef0f2" },
+      dusk: { haze: "#bd9aa2", top: "#687da9", bottom: "#e5b593" },
+      night: { haze: "#080d17", top: "#101b2d", bottom: "#04070d" },
+    };
+    const palette = dark ? palettes.night : palettes.day;
+    const skyColors = Object.fromEntries(
+      Object.entries(palettes).map(([name, colors]) => [
+        name,
+        {
+          haze: new THREE.Color(colors.haze),
+          top: new THREE.Color(colors.top),
+          bottom: new THREE.Color(colors.bottom),
+        },
+      ]),
+    );
+    let themeProgress = dark ? 1 : 0;
+    let themeTransition: { from: number; to: number; start: number } | null =
+      null;
+    const themeNight = { value: themeProgress };
+    const outlineTime = { value: 0 };
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(palette.haze);
     const fog = new THREE.FogExp2(palette.haze, 0.015);
@@ -492,6 +540,27 @@ export function LibrarySpatialView(props: Props) {
     function texture<T extends THREE.Texture>(value: T): T {
       value.anisotropy = textureAnisotropy;
       textures.add(value);
+      return value;
+    }
+    const nightMaps = new WeakMap<THREE.Material, THREE.Texture>();
+    function themeMap<T extends THREE.Material>(
+      value: T,
+      nightMap: THREE.Texture,
+    ): T {
+      nightMaps.set(value, texture(nightMap));
+      value.onBeforeCompile = (shader) => {
+        shader.uniforms.sceneNight = themeNight;
+        shader.uniforms.nightMap = { value: nightMap };
+        shader.fragmentShader =
+          `uniform float sceneNight;\nuniform sampler2D nightMap;\n` +
+          shader.fragmentShader.replace(
+            "#include <map_fragment>",
+            THREE.ShaderChunk.map_fragment.replace(
+              "vec4 sampledDiffuseColor = texture2D( map, vMapUv );",
+              "vec4 sampledDiffuseColor = mix(texture2D(map, vMapUv), texture2D(nightMap, vMapUv), sceneNight);",
+            ),
+          );
+      };
       return value;
     }
 
@@ -533,13 +602,12 @@ export function LibrarySpatialView(props: Props) {
     sky.frustumCulled = false;
     scene.add(sky);
 
-    scene.add(
-      new THREE.HemisphereLight(
-        dark ? 0x9fb0e0 : 0xffffff,
-        dark ? 0x1a1a22 : 0xd8d2c4,
-        dark ? 1.3 : 1.9,
-      ),
+    const hemisphere = new THREE.HemisphereLight(
+      dark ? 0x9fb0e0 : 0xffffff,
+      dark ? 0x1a1a22 : 0xd8d2c4,
+      dark ? 1.3 : 1.9,
     );
+    scene.add(hemisphere);
     const key = new THREE.DirectionalLight(0xfff4e6, dark ? 1.3 : 1.7);
     key.position.set(-0.5, 1, 0.7);
     scene.add(key);
@@ -553,52 +621,121 @@ export function LibrarySpatialView(props: Props) {
     const extent =
       Math.max(14, ...nodes.map((node) => Math.hypot(...node.position))) + 8;
     const drifters = [
-      { color: 0x6f8dff, phase: 0 },
-      { color: 0xffc98a, phase: 2.1 },
-      { color: 0xc89bff, phase: 4.2 },
-    ].map(({ color, phase }) => {
-      const light = new THREE.PointLight(color, dark ? 90 : 55, extent, 1.2);
+      { color: 0x8caddc, phase: 0 },
+      { color: 0xffd7a6, phase: 2.1 },
+      { color: 0xb9cde7, phase: 4.2 },
+    ].map(({ color, phase }, index) => {
+      const light = new THREE.PointLight(
+        color,
+        dark ? 90 : 55,
+        extent,
+        index === 1 ? 2 : 1.2,
+      );
       scene.add(light);
       return { light, phase };
     });
 
-    // Floating motes: without depth writes they take the blur of whatever sits
-    // behind them, so most dissolve into bokeh.
-    const moteCount = Math.min(700, 140 + nodes.length * 2);
-    const motePositions = new Float32Array(moteCount * 3);
-    for (let i = 0; i < moteCount; i++) {
-      const r = extent * 1.4 * Math.cbrt(Math.random());
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      motePositions.set(
+    const particleCount = Math.min(600, 420 + nodes.length * 3);
+    const particlePositions = new Float32Array(particleCount * 3);
+    const particleSizes = new Float32Array(particleCount);
+    for (let i = 0; i < particleCount; i++) {
+      const radius = extent * 1.2 * Math.cbrt(Math.random());
+      const azimuth = Math.random() * Math.PI * 2;
+      const vertical = Math.random() * 2 - 1;
+      const horizontal = Math.sqrt(1 - vertical * vertical);
+      particlePositions.set(
         [
-          r * Math.sin(phi) * Math.cos(theta),
-          r * Math.cos(phi) * 0.6,
-          r * Math.sin(phi) * Math.sin(theta),
+          radius * horizontal * Math.cos(azimuth),
+          radius * vertical,
+          radius * horizontal * Math.sin(azimuth),
         ],
         i * 3,
       );
+      particleSizes[i] = 0.15 + 0.85 * Math.pow(Math.random(), 1.4);
     }
-    const moteGeometry = geometry(new THREE.BufferGeometry());
-    moteGeometry.setAttribute(
+    const particleGeometry = geometry(new THREE.BufferGeometry());
+    particleGeometry.setAttribute(
       "position",
-      new THREE.BufferAttribute(motePositions, 3),
+      new THREE.BufferAttribute(particlePositions, 3),
     );
-    const motes = new THREE.Points(
-      moteGeometry,
+    particleGeometry.setAttribute(
+      "particleScale",
+      new THREE.BufferAttribute(particleSizes, 1),
+    );
+    const particleMap = texture(softDotTexture());
+    const clampParticleSize = (
+      value: THREE.PointsMaterial,
+      min: number,
+      max: number,
+    ) => {
+      value.customProgramCacheKey = () => `particle-size-${min}-${max}`;
+      value.onBeforeCompile = (shader) => {
+        shader.uniforms.particleDpr = { value: pixelRatio };
+        shader.vertexShader =
+          "uniform float particleDpr;\nattribute float particleScale;\n" +
+          shader.vertexShader.replace(
+            "#include <logdepthbuf_vertex>",
+            `gl_PointSize = clamp(gl_PointSize, ${min.toFixed(1)} * particleDpr, ${max.toFixed(1)} * particleDpr) * particleScale;\n#include <logdepthbuf_vertex>`,
+          );
+      };
+      return value;
+    };
+    const particleMaterial = clampParticleSize(
       material(
         new THREE.PointsMaterial({
-          color: palette.dust,
-          size: 0.9,
-          map: texture(softDotTexture()),
+          color: "#e1e8f2",
+          size: 0.1,
+          map: particleMap,
           transparent: true,
-          opacity: dark ? 0.3 : 0.75,
+          opacity: 0.42,
           depthWrite: false,
-          blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending,
+          blending: THREE.NormalBlending,
         }),
       ),
+      1.5,
+      3.0,
     );
-    scene.add(motes);
+    const particles = new THREE.Points(particleGeometry, particleMaterial);
+    scene.add(particles);
+    const particleGlowMaterial = clampParticleSize(
+      material(
+        new THREE.PointsMaterial({
+          color: "#a6c7ff",
+          size: 0.28,
+          map: particleMap,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+      ),
+      5.0,
+      8.0,
+    );
+    const particleGlow = new THREE.Points(
+      particleGeometry,
+      particleGlowMaterial,
+    );
+    scene.add(particleGlow);
+    const particleDayHaloMaterial = clampParticleSize(
+      material(
+        new THREE.PointsMaterial({
+          color: "#75899e",
+          size: 0.28,
+          map: particleMap,
+          transparent: true,
+          opacity: 0.16,
+          depthWrite: false,
+        }),
+      ),
+      5.0,
+      8.0,
+    );
+    const particleDayHalo = new THREE.Points(
+      particleGeometry,
+      particleDayHaloMaterial,
+    );
+    scene.add(particleDayHalo);
 
     const sheet = geometry(new THREE.PlaneGeometry(SHEET_WIDTH, SHEET_HEIGHT));
     const paperColor = new THREE.Color(dark ? "#d3d8e2" : "#fbfaf6");
@@ -696,7 +833,7 @@ export function LibrarySpatialView(props: Props) {
         node.kind === "file"
           ? undefined
           : `${node.descendants} ${node.descendants === 1 ? "document" : "documents"}`,
-        dark,
+        false,
       );
       const labelHeight =
         node.kind === "file" ? LABEL_HEIGHT : FOLDER_LABEL_HEIGHT;
@@ -704,12 +841,21 @@ export function LibrarySpatialView(props: Props) {
         geometry(
           new THREE.PlaneGeometry(labelHeight * nameplate.aspect, labelHeight),
         ),
-        material(
-          new THREE.MeshBasicMaterial({
-            map: texture(nameplate.texture),
-            alphaTest: 0.5,
-            toneMapped: false,
-          }),
+        themeMap(
+          material(
+            new THREE.MeshBasicMaterial({
+              map: texture(nameplate.texture),
+              alphaTest: 0.5,
+              toneMapped: false,
+            }),
+          ),
+          labelTexture(
+            node.name,
+            node.kind === "file"
+              ? undefined
+              : `${node.descendants} ${node.descendants === 1 ? "document" : "documents"}`,
+            true,
+          ).texture,
         ),
       );
       group.add(label);
@@ -893,20 +1039,71 @@ export function LibrarySpatialView(props: Props) {
     const requested = new Set<string>();
     // Outline connectors: world-width so they read clearly up close.
     const lineMaterial = fatLineMaterial({
-      color: new THREE.Color(dark ? "#66729a" : "#98a4bb").getHex(),
-      linewidth: 0.024,
+      color: new THREE.Color(dark ? "#8ba4d4" : "#8295b8").getHex(),
+      linewidth: 0.026,
       worldUnits: true,
+      toneMapped: false,
     });
-    const cardMaterial = (map: THREE.Texture) =>
-      material(
-        new THREE.MeshBasicMaterial({
-          map: texture(map),
-          alphaTest: 0.5,
-          alphaToCoverage: true,
-          toneMapped: false,
-          fog: false,
-        }),
+    lineMaterial.onBeforeCompile = (shader) => {
+      shader.uniforms.outlineTime = outlineTime;
+      shader.vertexShader =
+        `attribute float instanceFlowStart;\nattribute float instanceFlowEnd;\nvarying float vOutlineFlow;\n` +
+        shader.vertexShader.replace(
+          "void main() {",
+          "void main() {\n vOutlineFlow = mix(instanceFlowStart, instanceFlowEnd, clamp(position.y, 0.0, 1.0));",
+        );
+      shader.fragmentShader =
+        `varying float vOutlineFlow;\nuniform float outlineTime;\n` +
+        shader.fragmentShader.replace(
+          "gl_FragColor = vec4( diffuseColor.rgb, alpha );",
+          `
+        float glint = pow(0.5 + 0.5 * cos((vOutlineFlow - outlineTime * 2.8) * 1.15), 9.0);
+        vec3 steel = mix(diffuseColor.rgb * 0.62, vec3(0.88, 0.94, 1.0), glint);
+        gl_FragColor = vec4(steel, alpha);`,
+        );
+    };
+    const cardMaterial = (
+      map: THREE.Texture,
+      nightMap: THREE.Texture,
+      flowStart: number,
+      width: number,
+    ) => {
+      const value = themeMap(
+        material(
+          new THREE.MeshBasicMaterial({
+            map: texture(map),
+            alphaTest: 0.5,
+            alphaToCoverage: true,
+            toneMapped: false,
+            fog: false,
+            transparent: true,
+            depthFunc: THREE.AlwaysDepth,
+          }),
+        ),
+        nightMap,
       );
+      const themeCompile = value.onBeforeCompile;
+      value.onBeforeCompile = (shader, renderer) => {
+        themeCompile.call(value, shader, renderer);
+        shader.uniforms.outlineTime = outlineTime;
+        shader.uniforms.outlineFlowStart = { value: flowStart };
+        shader.uniforms.outlineCardWidth = { value: width };
+        shader.fragmentShader =
+          `uniform float outlineTime;\nuniform float outlineFlowStart;\nuniform float outlineCardWidth;\n` +
+          shader.fragmentShader.replace(
+            "diffuseColor *= sampledDiffuseColor;",
+            `diffuseColor *= sampledDiffuseColor;
+          #ifdef USE_MAP
+            float leftEdge = 1.0 - smoothstep(0.0, 0.075, vMapUv.x);
+            float rightEdge = smoothstep(0.925, 1.0, vMapUv.x);
+            float flow = outlineFlowStart + vMapUv.x * outlineCardWidth;
+            float gleam = pow(0.5 + 0.5 * cos((flow - outlineTime * 2.8) * 1.15), 9.0);
+            diffuseColor.rgb += vec3(0.055, 0.07, 0.095) * (leftEdge + rightEdge * 0.6) * gleam;
+          #endif`,
+          );
+      };
+      return value;
+    };
     function buildTree(path: string, state: Tree["state"]) {
       const floater = floaters.get(path);
       if (!floater) return;
@@ -927,6 +1124,11 @@ export function LibrarySpatialView(props: Props) {
             if (owned.map) {
               textures.delete(owned.map);
               owned.map.dispose();
+            }
+            const nightMap = nightMaps.get(owned);
+            if (nightMap) {
+              textures.delete(nightMap);
+              nightMap.dispose();
             }
             materials.delete(owned);
             owned.dispose();
@@ -955,7 +1157,6 @@ export function LibrarySpatialView(props: Props) {
       const top = floater.height / 2;
       const railY = top - 0.3;
       const rowTop = railY - TREE_ROW * 0.75;
-      const spine = 0.12;
       const place = (index: number) => ({
         x:
           Math.floor(index / TREE_ROWS_PER_COLUMN) * TREE_COLUMN +
@@ -967,51 +1168,41 @@ export function LibrarySpatialView(props: Props) {
         1,
         Math.ceil(rows.length / TREE_ROWS_PER_COLUMN),
       );
-      const linePoints: number[] = [
-        -TREE_GAP,
+      const flowGeometry = outlineFlowGeometry(rows, {
         railY,
-        -0.01,
-        (columns - 1) * TREE_COLUMN + spine,
-        railY,
-        -0.01,
-      ];
-      for (let column = 0; column < columns; column++) {
-        const roots = rows
-          .map((row, index) => ({ row, index }))
-          .filter(
-            ({ row, index }) =>
-              row.parent < 0 &&
-              Math.floor(index / TREE_ROWS_PER_COLUMN) === column,
-          );
-        if (roots.length) {
-          const x = column * TREE_COLUMN + spine;
-          linePoints.push(
-            x,
-            railY,
-            -0.01,
-            x,
-            place(roots.at(-1)!.index).y,
-            -0.01,
-          );
-        }
-      }
-      const chips: { x: number; y: number; color: string }[] = [];
+        rowTop,
+        rowHeight: TREE_ROW,
+        rowsPerColumn: TREE_ROWS_PER_COLUMN,
+        columnWidth: TREE_COLUMN,
+        indent: TREE_INDENT,
+        cardWidth: TREE_CARD_WIDTH,
+        gap: TREE_GAP,
+      });
+      const chips: {
+        x: number;
+        y: number;
+        color: string;
+        metal: boolean;
+        flow: number;
+      }[] = [];
       rows.forEach((row, index) => {
         const { x, y } = place(index);
         const width = TREE_CARD_WIDTH - row.depth * TREE_INDENT;
+        const meta = row.page
+          ? `p.${row.page}${row.blocks.length ? ` · ${row.blocks.length}` : ""}`
+          : "";
+        const accent = row.blocks[0] ? blockColor(row.blocks[0]) : undefined;
         const card = new THREE.Mesh(
           geometry(new THREE.PlaneGeometry(width, TREE_CARD_HEIGHT)),
           cardMaterial(
-            cardTexture(
-              row.title,
-              row.page
-                ? `p.${row.page}${row.blocks.length ? ` · ${row.blocks.length}` : ""}`
-                : "",
-              { dark },
-            ),
+            cardTexture(row.title, meta, { dark: false, accent }),
+            cardTexture(row.title, meta, { dark: true, accent }),
+            flowGeometry.rowDistances[index] - 0.02,
+            width,
           ),
         );
         card.position.set(x + width / 2, y, 0);
+        card.renderOrder = 10;
         group.add(card);
         const sampled =
           row.blocks.length <= BLOCK_CHIPS
@@ -1026,92 +1217,85 @@ export function LibrarySpatialView(props: Props) {
             x: x + width + 0.1 + i * CHIP_STEP,
             y,
             color: blockColor(type),
+            metal: i === 0,
+            flow:
+              flowGeometry.rowDistances[index] +
+              width -
+              0.02 +
+              0.1 +
+              i * CHIP_STEP,
           }),
         );
-        const sameColumn =
-          row.parent >= 0 &&
-          Math.floor(row.parent / TREE_ROWS_PER_COLUMN) ===
-            Math.floor(index / TREE_ROWS_PER_COLUMN);
-        const column = Math.floor(index / TREE_ROWS_PER_COLUMN);
-        if (row.parent < 0) {
-          const fromX = column * TREE_COLUMN + spine;
-          linePoints.push(fromX, y, -0.01, x + 0.02, y, -0.01);
-        } else if (sameColumn) {
-          const parent = place(row.parent);
-          const fromX = parent.x + 0.1;
-          linePoints.push(
-            fromX,
-            parent.y,
-            -0.01,
-            fromX,
-            y,
-            -0.01,
-            fromX,
-            y,
-            -0.01,
-            x + 0.02,
-            y,
-            -0.01,
-          );
-        } else {
-          const parent = place(row.parent);
-          const parentColumn = Math.floor(row.parent / TREE_ROWS_PER_COLUMN);
-          const parentRight =
-            parent.x + TREE_CARD_WIDTH - rows[row.parent].depth * TREE_INDENT;
-          const fromGutter = (parentColumn + 1) * TREE_COLUMN - 0.2;
-          const toGutter = column * TREE_COLUMN - 0.2;
-          const bridgeY = railY + 0.12 * (row.depth + 1);
-          linePoints.push(
-            parentRight - 0.02,
-            parent.y,
-            -0.01,
-            fromGutter,
-            parent.y,
-            -0.01,
-          );
-          if (fromGutter !== toGutter) {
-            linePoints.push(
-              fromGutter,
-              parent.y,
-              -0.01,
-              fromGutter,
-              bridgeY,
-              -0.01,
-              fromGutter,
-              bridgeY,
-              -0.01,
-              toGutter,
-              bridgeY,
-              -0.01,
-            );
-          }
-          linePoints.push(
-            toGutter,
-            fromGutter === toGutter ? parent.y : bridgeY,
-            -0.01,
-            toGutter,
-            y,
-            -0.01,
-            toGutter,
-            y,
-            -0.01,
-            x + 0.02,
-            y,
-            -0.01,
-          );
-        }
       });
-      const connectors = new LineSegments2(
-        geometry(new LineSegmentsGeometry().setPositions(linePoints)),
-        lineMaterial,
+      const connectorGeometry = geometry(
+        new LineSegmentsGeometry().setPositions(flowGeometry.positions),
       );
+      connectorGeometry.setAttribute(
+        "instanceFlowStart",
+        new THREE.InstancedBufferAttribute(
+          new Float32Array(flowGeometry.starts),
+          1,
+        ),
+      );
+      connectorGeometry.setAttribute(
+        "instanceFlowEnd",
+        new THREE.InstancedBufferAttribute(
+          new Float32Array(flowGeometry.ends),
+          1,
+        ),
+      );
+      const connectors = new LineSegments2(connectorGeometry, lineMaterial);
       connectors.frustumCulled = false;
       group.add(connectors);
       if (chips.length) {
+        const chipGeometry = geometry(
+          new THREE.PlaneGeometry(CHIP_WIDTH, 0.15),
+        );
+        chipGeometry.setAttribute(
+          "instanceMetalness",
+          new THREE.InstancedBufferAttribute(
+            new Float32Array(chips.map((chip) => (chip.metal ? 1 : 0))),
+            1,
+          ),
+        );
+        chipGeometry.setAttribute(
+          "instanceFlow",
+          new THREE.InstancedBufferAttribute(
+            new Float32Array(chips.map((chip) => chip.flow)),
+            1,
+          ),
+        );
         const chipMesh = new THREE.InstancedMesh(
-          geometry(new THREE.PlaneGeometry(CHIP_WIDTH, 0.15)),
+          chipGeometry,
           material(
-            new THREE.MeshBasicMaterial({ toneMapped: false, fog: false }),
+            new THREE.ShaderMaterial({
+              uniforms: { outlineTime },
+              toneMapped: false,
+              vertexShader: `
+              attribute float instanceMetalness;
+              attribute float instanceFlow;
+              varying vec2 vUv;
+              varying vec3 vTint;
+              varying float vMetal;
+              varying float vFlow;
+              void main() {
+                vUv = uv; vTint = instanceColor; vMetal = instanceMetalness;
+                vFlow = instanceFlow;
+                gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+              }`,
+              fragmentShader: `
+              uniform float outlineTime;
+              varying vec2 vUv;
+              varying vec3 vTint;
+              varying float vMetal;
+              varying float vFlow;
+              void main() {
+                float gleam = pow(0.5 + 0.5 * cos((vFlow + vUv.x * ${CHIP_WIDTH.toFixed(3)} - outlineTime * 2.8) * 1.15), 9.0);
+                vec3 metal = mix(vTint * 0.62, mix(vTint, vec3(0.94), 0.6), gleam);
+                gl_FragColor = vec4(mix(vTint * 1.3, metal, vMetal), 1.0);
+                #include <colorspace_fragment>
+              }`,
+            }),
           ),
           chips.length,
         );
@@ -1122,6 +1306,36 @@ export function LibrarySpatialView(props: Props) {
           chipMesh.setColorAt(i, color.set(chip.color));
         });
         group.add(chipMesh);
+        const glowMesh = new THREE.InstancedMesh(
+          geometry(new THREE.PlaneGeometry(0.16, 0.28)),
+          material(
+            new THREE.ShaderMaterial({
+              transparent: true,
+              depthWrite: false,
+              toneMapped: false,
+              blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending,
+              vertexShader: `varying vec2 vUv; varying vec3 vTint;
+              void main() { vUv = uv; vTint = instanceColor;
+                gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
+              fragmentShader: `varying vec2 vUv; varying vec3 vTint;
+              void main() {
+                vec2 p = (vUv - 0.5) * vec2(2.5, 1.8);
+                float glow = exp(-dot(p, p) * 4.0) * (1.0 - smoothstep(0.15, 0.5, abs(vUv.y - 0.5)));
+                gl_FragColor = vec4(vTint, glow * ${dark ? "0.28" : "0.12"});
+                #include <colorspace_fragment>
+              }`,
+            }),
+          ),
+          chips.length,
+        );
+        chips.forEach((chip, i) => {
+          glowMesh.setMatrixAt(
+            i,
+            matrix.makeTranslation(chip.x, chip.y, 0.001),
+          );
+          glowMesh.setColorAt(i, color.set(chip.color));
+        });
+        group.add(glowMesh);
       }
       const width =
         (columns - 1) * TREE_COLUMN +
@@ -1440,6 +1654,25 @@ export function LibrarySpatialView(props: Props) {
     const candidateBounds = new THREE.Box3();
     const viewMatrix = new THREE.Matrix4();
     const blurWorldScale = new THREE.Vector3();
+    const warmTarget = new THREE.Vector3();
+    const warmOffset = new THREE.Vector3();
+    const skyLightDay = new THREE.Color("#f0f3f6"),
+      skyLightNight = new THREE.Color("#c9d6e8");
+    const groundDay = new THREE.Color("#c7cdd2"),
+      groundNight = new THREE.Color("#7c8ba4");
+    const sunDay = new THREE.Color("#fff0d4"),
+      sunDusk = new THREE.Color("#ffb879");
+    const lanternDay = new THREE.Color("#fff3df"),
+      lanternNight = new THREE.Color("#bccfff");
+    const paperDay = new THREE.Color("#fbfaf6"),
+      paperNight = new THREE.Color("#d7dfeb");
+    const particleDay = new THREE.Color("#8292a2"),
+      particleNight = new THREE.Color("#d5e4ff");
+    const lineDay = new THREE.Color("#8295b8"),
+      lineNight = new THREE.Color("#8ba4d4");
+    const folderDay = new THREE.Color("#a3aec3"),
+      folderNight = new THREE.Color("#5b6788");
+    let appliedTheme = -1;
     const sharedFadeMaterials = new Set<THREE.Material>([
       ...stackMaterials,
       folderMaterial,
@@ -1479,7 +1712,9 @@ export function LibrarySpatialView(props: Props) {
         if (!(object instanceof THREE.Mesh)) return;
         let value = object.material as THREE.Material;
         if (fading && sharedFadeMaterials.has(value)) {
+          const original = value;
           value = material(value.clone());
+          value.onBeforeCompile = original.onBeforeCompile;
           object.material = value;
           if (value instanceof LineMaterial) lineMaterials.add(value);
         }
@@ -1608,6 +1843,86 @@ export function LibrarySpatialView(props: Props) {
       const delta = Math.min(0.05, (now - lastTime) / 1000);
       lastTime = now;
       const time = reducedMotion ? 0 : now / 1000;
+      outlineTime.value = time;
+      const nextTheme = themeTarget.current ? 1 : 0;
+      if (nextTheme !== (themeTransition?.to ?? themeProgress))
+        themeTransition = { from: themeProgress, to: nextTheme, start: now };
+      if (themeTransition) {
+        const progress = reducedMotion
+          ? 1
+          : Math.min(1, (now - themeTransition.start) / 500);
+        const eased = progress * progress * (3 - 2 * progress);
+        themeProgress = THREE.MathUtils.lerp(
+          themeTransition.from,
+          themeTransition.to,
+          eased,
+        );
+        if (progress === 1) themeTransition = null;
+      }
+      if (appliedTheme !== themeProgress) {
+        appliedTheme = themeProgress;
+        themeNight.value = themeProgress;
+        const sunset = Math.sin(Math.PI * themeProgress) ** 2;
+        const daylight =
+          1 - THREE.MathUtils.smoothstep(themeProgress, 0.2, 0.85);
+        const moonrise = THREE.MathUtils.smoothstep(themeProgress, 0.45, 1);
+        const mixSky = (color: THREE.Color, part: "top" | "haze" | "bottom") =>
+          color
+            .lerpColors(
+              skyColors.day[part],
+              skyColors.night[part],
+              themeProgress,
+            )
+            .lerp(skyColors.dusk[part], sunset * 0.78);
+        mixSky(sky.material.uniforms.top.value, "top");
+        mixSky(sky.material.uniforms.middle.value, "haze");
+        mixSky(sky.material.uniforms.bottom.value, "bottom");
+        mixSky(fog.color, "haze");
+        (scene.background as THREE.Color).copy(fog.color);
+        hemisphere.color.lerpColors(skyLightDay, skyLightNight, themeProgress);
+        hemisphere.groundColor.lerpColors(
+          groundDay,
+          groundNight,
+          themeProgress,
+        );
+        hemisphere.intensity = 1.6 + 0.1 * themeProgress;
+        key.color.lerpColors(sunDay, sunDusk, sunset);
+        key.intensity = 1.0 * daylight;
+        key.position.set(-0.8, 1.4 - 3.2 * themeProgress, 0.7);
+        rim.intensity = 0.15 + moonrise * 1.35;
+        rim.position.set(0.7, 1.7, 1.4);
+        lantern.color.lerpColors(lanternDay, lanternNight, themeProgress);
+        lantern.intensity = 12 - 2 * moonrise;
+        drifters[0].light.intensity = 24 + 12 * moonrise;
+        drifters[1].light.intensity = 14 * daylight + 5 * moonrise;
+        drifters[2].light.intensity = 18 + 12 * moonrise;
+        particleMaterial.opacity = 0.42 + 0.23 * themeProgress;
+        particleGlowMaterial.opacity = themeProgress * 0.2;
+        particleDayHaloMaterial.opacity = (1 - themeProgress) * 0.16;
+        particleMaterial.color.lerpColors(
+          particleDay,
+          particleNight,
+          themeProgress,
+        );
+        paperColor.lerpColors(paperDay, paperNight, themeProgress);
+        stackMaterials.forEach((value, index) =>
+          value.color.copy(paperColor).multiplyScalar(1 - index * 0.075),
+        );
+        for (const floater of floaters.values())
+          floater.cover?.material.color.copy(paperColor);
+        lineMaterial.color.lerpColors(lineDay, lineNight, themeProgress);
+        folderLineMaterial.color.lerpColors(
+          folderDay,
+          folderNight,
+          themeProgress,
+        );
+      }
+      particles.rotation.y = time * 0.004;
+      particles.position.y = Math.sin(time * 0.1) * 0.6;
+      particleGlow.rotation.copy(particles.rotation);
+      particleGlow.position.copy(particles.position);
+      particleDayHalo.rotation.copy(particles.rotation);
+      particleDayHalo.position.copy(particles.position);
       if (keys.size) {
         const forward = new THREE.Vector3();
         camera.getWorldDirection(forward);
@@ -1807,14 +2122,23 @@ export function LibrarySpatialView(props: Props) {
 
       drifters.forEach(({ light, phase }, index) => {
         const t = time * 0.05 + phase;
-        light.position.set(
+        warmTarget.set(
           Math.cos(t) * extent * 0.6,
           Math.sin(t * 1.3 + index) * extent * 0.25,
           Math.sin(t) * extent * 0.6,
         );
+        if (index === 1 && selected?.node.kind === "file") {
+          warmOffset
+            .set(1.2, 2.1, 4.5)
+            .applyQuaternion(camera.quaternion)
+            .add(selected.group.position);
+          warmTarget.lerp(warmOffset, 0.78);
+        }
+        light.position.lerp(
+          warmTarget,
+          reducedMotion ? 1 : 1 - Math.exp(-delta * 2),
+        );
       });
-      motes.rotation.y = time * 0.004;
-      motes.position.y = Math.sin(time * 0.1) * 0.6;
 
       renderer.setRenderTarget(target);
       renderer.render(scene, camera);
@@ -2192,7 +2516,7 @@ export function LibrarySpatialView(props: Props) {
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [nodes, visibleNodes, dark]);
+  }, [nodes, visibleNodes]);
 
   const previousSelection = useRef(props.selectedPath);
   useEffect(() => {

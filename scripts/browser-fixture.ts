@@ -19,7 +19,7 @@ import {
   textResponse,
 } from "../tests/model-tools";
 const port = Number(process.env.FIXTURE_PORT ?? 4312);
-const origin = `http://localhost:${port}`;
+const origin = process.env.FIXTURE_ORIGIN ?? `http://localhost:${port}`;
 const fetcher: typeof fetch = async (url, init) => {
   const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
   if (String(url).includes("typesafe")) {
@@ -178,6 +178,17 @@ await runtime.store.run(
 );
 const markdown =
   "# A home for your knowledge\n\nJevbox organizes knowledge into categories, documents, sections, and pages.\n\n## Your library\n\nUse the Finder to browse documents. Create categories to keep related ideas together.\n\n### Permission-aware by design\n\nDocuments start restricted. Sharing applies to every page, search result, and chat citation.\n\n## Explore the connections\n\nEach document has an index, parsed output, and source links.\n\n| Surface | Purpose |\n| --- | --- |\n| Document | View the original |\n| Index | Navigate sections and pages |\n| Parsed output | Read structured content |\n\n## Further reading\n\n[Extend documentation](https://docs.extend.ai)\n\n[AI SDK documentation](https://ai-sdk.dev)";
+const outlineRows = Math.min(
+  70,
+  Math.max(0, Number(process.env.FIXTURE_OUTLINE_ROWS ?? 0)),
+);
+const outlineMarkdown = outlineRows
+  ? "# Outline navigation\n\n" +
+    Array.from(
+      { length: outlineRows },
+      (_, i) => `## Section ${i + 1}\n\nDocument section ${i + 1}.\n\n`,
+    ).join("")
+  : markdown;
 const pdf = await PDFDocument.create();
 const page = pdf.addPage([612, 792]);
 const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -217,7 +228,7 @@ const files = [
       "export interface Workspace {\n  id: string;\n  name: string;\n  restricted: boolean;\n}\n\nexport function canRead(workspace: Workspace) {\n  return !workspace.restricted;\n}\n",
     ),
   ],
-  ["Workspace guide.md", "text/markdown", strToU8(markdown)],
+  ["Workspace guide.md", "text/markdown", strToU8(outlineMarkdown)],
   ["Workspace overview.pdf", "application/pdf", await pdf.save()],
   [
     "Project list.csv",

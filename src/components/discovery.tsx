@@ -2,8 +2,14 @@ import { ChatMessagePresentation } from "./chat-message-presentation";
 import { ChatThinking } from "./loading-state";
 import { ChatRegenerateMenu } from "./chat-regenerate-menu";
 import { ChatQueue } from "./chat-queue";
+import { ComposerSendEffect } from "./composer-send-effect";
 import { JevboxIcon } from "./jevbox-icon";
-import type { ChatTurn } from "../../shared/chat";
+import {
+  isChatWorking,
+  type ChatTurn,
+  type ChatSummary,
+} from "../../shared/chat";
+import { Spinner } from "./coss/spinner";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { ShapeTriangle } from "./icons";
 import {
@@ -430,7 +436,7 @@ export function ChatView({
       (model) => `${model.provider}:${model.model}` === selectedModel,
     ) ?? me.chatModels?.[0];
   const attachmentPending = attachments.some((a) => a.status !== "ready");
-  const [chats, setChats] = useState<any[]>([]);
+  const [chats, setChats] = useState<ChatSummary[]>([]);
   const [history, setHistory] = useState(() => emptyChatHistory(chatId));
   const messageViewport = useRef<HTMLDivElement>(null);
   const scrollToEnd = useRef<(() => void) | null>(null);
@@ -445,6 +451,7 @@ export function ChatView({
   const promptEditor = useRef<ChatPromptEditorHandle>(null);
   const composerTools = useRef<ChatComposerToolsHandle>(null);
   const composerAnchor = useRef<HTMLFormElement>(null);
+  const composerModel = useRef<HTMLDivElement>(null);
   const draft = useRef({ input, attachments });
   draft.current = { input, attachments };
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -542,17 +549,38 @@ export function ChatView({
         : current,
     );
     setBlocked(chat.blocked);
+    const working = !chat.blocked && isChatWorking(chat.turns?.[0]?.status);
     setChats((current) =>
       current.some((c) => c.id === chat.id)
         ? current.map((c) =>
-            c.id === chat.id ? { ...c, title: chat.title } : c,
+            c.id === chat.id
+              ? { ...c, title: chat.title, blocked: chat.blocked, working }
+              : c,
           )
-        : [{ id: chat.id, title: chat.title }, ...current],
+        : [
+            { id: chat.id, title: chat.title, blocked: chat.blocked, working },
+            ...current,
+          ],
     );
   };
-  const refresh = async () => {
-    const items = await api("/chats");
-    if (mounted.current) setChats(items);
+  const refresh = async (signal?: AbortSignal) => {
+    const items = await api<ChatSummary[]>("/chats", { signal });
+    if (mounted.current && !signal?.aborted)
+      setChats((current) =>
+        current.length === items.length &&
+        current.every((chat, index) => {
+          const next = items[index];
+          return (
+            chat.id === next.id &&
+            chat.title === next.title &&
+            chat.updated === next.updated &&
+            chat.blocked === next.blocked &&
+            chat.working === next.working
+          );
+        })
+          ? current
+          : items,
+      );
   };
   const refreshChat = async (id = activeChat.current) => {
     if (id) applySnapshot(await api(`/chats/${id}`));
@@ -674,7 +702,7 @@ export function ChatView({
   ]);
   const updateTurn = async (
     id: string,
-    change: { content?: string; action?: "retry" | "up" | "down" },
+    change: { content?: string; action?: "retry" | "send" | "up" | "down" },
   ) => {
     await api(`/chats/${chatId}/turns/${id}`, {
       method: "PATCH",
@@ -809,8 +837,31 @@ export function ChatView({
     );
   }, [chats, chatId, onTitleChange]);
   useEffect(() => {
-    void action.run(refresh);
-  }, []);
+    const controller = new AbortController();
+    let pending = false;
+    const load = async () => {
+      if (pending || controller.signal.aborted) return;
+      pending = true;
+      try {
+        await refresh(controller.signal);
+      } catch (error) {
+        if (!controller.signal.aborted) throw error;
+      } finally {
+        pending = false;
+      }
+    };
+    void action.run(load);
+    const update = () => {
+      if (!document.hidden) void load().catch(() => {});
+    };
+    const timer = setInterval(update, 3000);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, [me.user?.id, me.organization?.id]);
   useEffect(() => {
     let active = true;
     if (createdChat.current !== chatId || !chatId) {
@@ -830,21 +881,36 @@ export function ChatView({
     setConnection("live");
     let stream: EventSource | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
+    let loading = false;
+    let initialized = false;
+    let snapshotVersion = 0;
     const load = async () => {
-      if (!chatId) return;
+      if (!chatId || loading) return;
+      loading = true;
+      const version = snapshotVersion;
       try {
         const chat = await api<ChatSnapshot>(`/chats/${chatId}`, {
           signal: controller.signal,
         });
-        if (active) applySnapshot(chat);
+        if (active && version === snapshotVersion) {
+          applySnapshot(chat);
+          initialized = true;
+        }
       } catch (error) {
-        if (active) {
+        if (active && !initialized) {
           setHistory({ ...emptyChatHistory(chatId), loading: false });
           setTurns([]);
           action.setError((error as Error).message);
         }
+      } finally {
+        loading = false;
       }
     };
+    const restore = () => {
+      if (!document.hidden) void load();
+    };
+    document.addEventListener("visibilitychange", restore);
+    window.addEventListener("focus", restore);
     void load().then(() => {
       if (!active || !chatId) return;
       if (typeof EventSource === "undefined") {
@@ -852,8 +918,11 @@ export function ChatView({
         return;
       }
       stream = new EventSource(`/api/chats/${chatId}/events`);
+      stream.addEventListener("open", restore);
       stream.addEventListener("snapshot", (event) => {
         if (!active) return;
+        snapshotVersion++;
+        initialized = true;
         applySnapshot(JSON.parse((event as MessageEvent).data));
         setConnection("live");
       });
@@ -875,6 +944,8 @@ export function ChatView({
     return () => {
       active = false;
       controller.abort();
+      document.removeEventListener("visibilitychange", restore);
+      window.removeEventListener("focus", restore);
       olderRequest.current?.abort();
       stream?.close();
       clearInterval(timer);
@@ -939,6 +1010,18 @@ export function ChatView({
                     href={paths.chat(c.id)}
                     aria-label={plainTextPreview(c.title)}
                   >
+                    {!c.blocked &&
+                      (c.id === chatId
+                        ? !blocked &&
+                          (submitting ||
+                            loadingHistory ||
+                            isChatWorking(turns[0]?.status))
+                        : c.working) && (
+                        <Spinner
+                          className="chat-history-spinner size-3 shrink-0"
+                          aria-label="Chat working"
+                        />
+                      )}
                     <span>{plainTextPreview(c.title)}</span>
                   </RouteLink>
                 </CursorTooltip>
@@ -1375,7 +1458,9 @@ export function ChatView({
           </MessageScrollerProvider>
           <div className="chat-compose">
             <ChatQueue
+              key={chatId ?? "new"}
               turns={visibleQueue}
+              loading={loadingHistory}
               busy={action.busy || submitting}
               onUpdate={updateTurn}
               onReorder={async (id, overId) => {
@@ -1420,6 +1505,7 @@ export function ChatView({
                 <ChatComposerTools
                   ref={composerTools}
                   composerAnchor={composerAnchor}
+                  modelRef={composerModel}
                   mentionQuery={mentionQuery}
                   onMentionClose={() => promptEditor.current?.dismissMention()}
                   onMentionAttach={(document) =>
@@ -1438,40 +1524,59 @@ export function ChatView({
                   disabled={loadingHistory || blocked}
                   onBusyChange={setUploading}
                 />
-                {activeTurn && (
+                {activeTurn ? (
                   <CursorTooltip label="Stop answer">
                     <Button
                       type="button"
-                      variant="outline"
                       size="icon"
                       className="chat-stop"
                       aria-label="Stop answer"
                       loading={activeTurn.status === "cancelling"}
+                      disabled={action.busy}
                       onClick={() =>
                         void action.run(() => removeTurn(activeTurn.id))
                       }
                     >
-                      <Square size={14} />
+                      {activeTurn.status !== "cancelling" && (
+                        <Square size={14} />
+                      )}
                     </Button>
                   </CursorTooltip>
+                ) : (
+                  <ComposerSendEffect
+                    modelRef={composerModel}
+                    disabled={
+                      !input.trim() ||
+                      submitting ||
+                      loadingHistory ||
+                      input.length > promptLimit ||
+                      uploading ||
+                      attachmentPending ||
+                      blocked ||
+                      visibleQueue.length >= 10 ||
+                      !me.chatEnabled
+                    }
+                  >
+                    <Button
+                      type="submit"
+                      className="chat-send"
+                      aria-label="Send message"
+                      loading={submitting}
+                      disabled={
+                        !input.trim() ||
+                        loadingHistory ||
+                        input.length > promptLimit ||
+                        uploading ||
+                        attachmentPending ||
+                        blocked ||
+                        visibleQueue.length >= 10 ||
+                        !me.chatEnabled
+                      }
+                    >
+                      {!submitting && <ArrowUp size={18} />}
+                    </Button>
+                  </ComposerSendEffect>
                 )}
-                <Button
-                  type="submit"
-                  aria-label={activeTurn ? "Queue message" : "Send message"}
-                  loading={submitting}
-                  disabled={
-                    !input.trim() ||
-                    loadingHistory ||
-                    input.length > promptLimit ||
-                    uploading ||
-                    attachmentPending ||
-                    blocked ||
-                    visibleQueue.length >= 10 ||
-                    !me.chatEnabled
-                  }
-                >
-                  {!submitting && <ArrowUp size={18} />}
-                </Button>
               </div>
             </Form>
             {connection === "reconnecting" && chatId && (

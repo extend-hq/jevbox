@@ -78,8 +78,8 @@ export function ApiUsageGuide({
     >
       <h2>API documentation</h2>
       <p className="muted">
-        Read your organizations, search documents, and fetch source text with
-        your current permissions.
+        Read your organizations, search documents, fetch source text, and upload
+        Private documents with your current permissions.
       </p>
       <div className="api-endpoint">
         <span>
@@ -221,11 +221,77 @@ export function ApiUsageGuide({
         </p>
       </article>
       <article className="api-docs-section">
+        <h3>4. Upload a document</h3>
+        <div className="api-docs-route">
+          <Badge variant="warning">POST</Badge>
+          <code>/documents</code>
+        </div>
+        <p>
+          Send one multipart <code>file</code>. Put your organization ID and
+          optional writable folder ID in the query string. Your HTTP client
+          supplies the multipart Content-Type and boundary.
+        </p>
+        <RequestCode
+          label="Upload a document · cURL"
+          text={`curl --fail-with-body "${url}/documents?organizationId=<ORGANIZATION_ID>" \\\n  ${authorization} \\\n  -F 'file=@./document.pdf'`}
+          onCopy={onCopy}
+        />
+        <Parameters
+          rows={[
+            {
+              name: "organizationId",
+              detail:
+                "Required query parameter. Organization UUID returned by /organizations.",
+            },
+            {
+              name: "parentId",
+              detail:
+                "Optional query parameter. A folder UUID with current write access.",
+            },
+            {
+              name: "file",
+              detail:
+                "Required multipart part. One file, at most 30 MiB. Text and SVG are limited to 2 MiB.",
+            },
+          ]}
+        />
+        <p>
+          Returns HTTP 201 with <code>id</code>, <code>name</code>,{" "}
+          <code>size</code>,<code>mime</code>, <code>status</code>,{" "}
+          <code>access: private</code>, and
+          <code>url</code>. Indexing runs in the background. Fetch returns 409
+          until indexing finishes; open the returned URL for processing status.
+          Repeating an upload creates another document.
+        </p>
+        <p>
+          New API keys include upload access. Older keys remain read-only;
+          create a new key for uploads. OAuth requires{" "}
+          <code>documents:write</code>. Uploaded documents belong to you and
+          start Private, including in shared folders. Upload cannot edit
+          existing documents or share them.
+        </p>
+        <p className="muted">
+          Supports PDF, Office documents, UTF-8 text and code, images, ZIP, and
+          common audio/video formats. Media and ZIP are stored without indexing.
+          Malformed documents, excessive archive expansion, and oversized images
+          are rejected.
+        </p>
+      </article>
+      <article className="api-docs-section">
         <h3>Limits and errors</h3>
         <p>
           Search allows 20 requests per minute per key and 100 per organization.
           Search uses the organization’s configured TypeSafe connection and
           indexed documents.
+        </p>
+        <p>
+          Uploads share limits with the app and MCP: 5 attempts per minute, 20
+          per hour, 150 MiB accepted per UTC day, 512 MiB stored, and 10
+          documents awaiting processing per user. Organization and deployment
+          limits also apply, with a total cap of 1,000 documents per user.
+          Changing keys does not reset these counters. One upload per user and
+          two upload/MCP requests per web process are admitted at once, with a
+          30-second deadline.
         </p>
         <div className="api-docs-table-scroll">
           <table className="api-docs-table">
@@ -238,6 +304,9 @@ export function ApiUsageGuide({
             <tbody>
               {[
                 ["400", "Invalid request parameters."],
+                ["408", "Upload timed out."],
+                ["413", "The file or request body exceeds its size limit."],
+                ["415", "Unsupported file type or compressed request body."],
                 ["401", "The API key is missing, expired, or revoked."],
                 ["403", "An OAuth token lacks the required scope."],
                 [

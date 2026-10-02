@@ -407,7 +407,11 @@ export function ChatPromptEditor({
         options={{ placement: "top", offset: 8 }}
         shouldShow={({ editor, state }) =>
           editor.isEditable &&
+          state.selection instanceof TextSelection &&
           !state.selection.empty &&
+          !!state.doc
+            .textBetween(state.selection.from, state.selection.to)
+            .trim() &&
           (editor.isFocused ||
             !!toolbar.current?.contains(document.activeElement) ||
             menuState.current.linkOpen ||

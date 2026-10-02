@@ -10,6 +10,7 @@ export const queues = {
   filing: "document-filing",
   review: "organization-review",
   chat: "chat-answer",
+  search: "external-search",
   email: "auth-email",
   cleanup: "permission-cleanup",
   failed: "jobs-failed",
@@ -19,6 +20,7 @@ export type JobData = {
   resourceId?: string;
   reviewId?: string;
   chatId?: string;
+  runId?: string;
   encryptedEmail?: string;
   expiresAt?: number;
   startedAt?: number;
@@ -109,6 +111,13 @@ export async function createJobs(options: {
         deadLetter: queues.failed,
       },
       [queues.chat]: {
+        ...defaults,
+        policy: "singleton",
+        retryLimit: 2,
+        expireInSeconds: 300,
+        deadLetter: queues.failed,
+      },
+      [queues.search]: {
         ...defaults,
         policy: "singleton",
         retryLimit: 2,

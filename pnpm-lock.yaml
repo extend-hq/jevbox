@@ -302,6 +302,9 @@ importers:
       media-chrome:
         specifier: ^4.19.3
         version: 4.19.3(react@19.2.3)
+      metal-fx:
+        specifier: 2.0.11
+        version: 2.0.11(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       multer:
         specifier: ^2.0.2
         version: 2.4.0
@@ -3415,6 +3418,12 @@ packages:
 
   meshoptimizer@1.1.1:
     resolution: {integrity: sha512-oRFNWJRDA/WTrVj7NWvqa5HqE1t9MYDj2VaWirQCzCCrAd2GHrqR/sQezCxiWATPNlKTcRaPRHPJwIRoPBAp5g==}
+
+  metal-fx@2.0.11:
+    resolution: {integrity: sha512-BdAdXXmJmqVbPxwjb3mN5TmS9r1+fde4RhGdK6In3ktT53/oLNFIwM2idRxR9KmVCa+7Yod1i0tR9nljsfLH1g==}
+    peerDependencies:
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
 
   micromark-core-commonmark@2.0.4:
     resolution: {integrity: sha512-wxEeE8v8XVvOrxn1TZj74qYhAtTQsSqufHVS3uNVyT1MupXxhyaHk8/9xDNPh9BmL77QNDgWTkZ3RsYHB2ry7w==}
@@ -7394,6 +7403,11 @@ snapshots:
   merge-descriptors@2.0.0: {}
 
   meshoptimizer@1.1.1: {}
+
+  metal-fx@2.0.11(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
+    dependencies:
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
 
   micromark-core-commonmark@2.0.4:
     dependencies:

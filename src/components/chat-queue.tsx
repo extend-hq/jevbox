@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -28,15 +28,16 @@ import { Field, FieldLabel, FieldError } from "./coss/field";
 import { Form } from "./coss/form";
 import { Textarea } from "./coss/textarea";
 import { ScrollArea } from "./coss/scroll-area";
-import { Ellipsis, Compose2, RefreshCw, Trash2, GripVertical } from "./icons";
+import { Ellipsis, Compose2, ArrowUp, Trash2, GripVertical } from "./icons";
 import { validateRequiredText } from "@/lib/form-validation";
 
 type QueueProps = {
   turns: ChatTurn[];
   busy: boolean;
+  loading?: boolean;
   onUpdate: (
     id: string,
-    change: { content?: string; action?: "retry" | "up" | "down" },
+    change: { content?: string; action?: "retry" | "send" | "up" | "down" },
   ) => Promise<void>;
   onRemove: (id: string) => Promise<void>;
   onReorder: (id: string, overId: string) => Promise<void>;
@@ -45,6 +46,7 @@ type QueueProps = {
 function QueueRow({
   turn,
   index,
+  animateEntry,
   busy,
   run,
   onUpdate,
@@ -52,19 +54,21 @@ function QueueRow({
 }: Pick<QueueProps, "busy" | "onUpdate" | "onRemove"> & {
   turn: ChatTurn;
   index: number;
+  animateEntry: boolean;
   run: (work: () => Promise<void>) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [entering] = useState(animateEntry);
   const sortable = useSortable({
     id: turn.id,
     disabled: busy || editing || turn.status !== "queued",
   });
-  const stopped = turn.status === "failed" || turn.status === "cancelled";
   return (
     <li
       ref={sortable.setNodeRef}
       className="chat-queue-item"
+      data-entering={entering || undefined}
       data-dragging={sortable.isDragging || undefined}
       style={{
         transform: CSS.Transform.toString(sortable.transform),
@@ -130,16 +134,20 @@ function QueueRow({
               <p className="chat-queue-error">{turn.error}</p>
             )}
           </div>
-          {stopped && (
+          {["queued", "failed", "cancelled"].includes(turn.status) && (
             <Button
+              type="button"
               variant="ghost"
-              size="xs"
+              size="icon-xs"
+              className="chat-queue-send"
+              aria-label={`Send queued message ${index + 1} now`}
+              title="Send now"
               disabled={busy}
               onClick={() =>
-                void run(() => onUpdate(turn.id, { action: "retry" }))
+                void run(() => onUpdate(turn.id, { action: "send" }))
               }
             >
-              <RefreshCw size={13} /> Retry
+              <ArrowUp size={13} />
             </Button>
           )}
           <Button
@@ -190,6 +198,7 @@ function QueueRow({
 export function ChatQueue({
   turns,
   busy,
+  loading = false,
   onUpdate,
   onRemove,
   onReorder,
@@ -198,6 +207,10 @@ export function ChatQueue({
   const [working, setWorking] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
   const [optimistic, setOptimistic] = useState<ChatTurn[] | null>(null);
+  const [animateEntries, setAnimateEntries] = useState(false);
+  useEffect(() => {
+    if (!loading) setAnimateEntries(true);
+  }, [loading]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, {
@@ -267,6 +280,7 @@ export function ChatQueue({
                   key={turn.id}
                   turn={turn}
                   index={index}
+                  animateEntry={animateEntries}
                   busy={busy || working}
                   run={run}
                   onUpdate={onUpdate}

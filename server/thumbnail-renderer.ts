@@ -22,7 +22,11 @@ export function createThumbnailRenderer() {
         const { createServer } = await import("vite");
         vite = await createServer({
           cacheDir: resolve(`node_modules/.vite/thumbnails-${process.pid}`),
-          server: { middlewareMode: true, hmr: { server: listener }, watch: null },
+          server: {
+            middlewareMode: true,
+            hmr: { server: listener },
+            watch: null,
+          },
           appType: "mpa",
         });
         app.use(vite.middlewares);
@@ -42,6 +46,10 @@ export function createThumbnailRenderer() {
         headless: true,
         chromiumSandbox: process.env.THUMBNAIL_CHROMIUM_SANDBOX === "true",
         timeout: 30_000,
+        args: [
+          "--js-flags=--max-old-space-size=256",
+          "--renderer-process-limit=1",
+        ],
       });
     }
   }
@@ -51,7 +59,17 @@ export function createThumbnailRenderer() {
       name: string,
       mime: string,
       signal: AbortSignal,
+      options?: { pageIndex: number; width: number },
     ) {
+      if (
+        options &&
+        (!Number.isInteger(options.pageIndex) ||
+          options.pageIndex < 0 ||
+          !Number.isInteger(options.width) ||
+          options.width < 320 ||
+          options.width > 1800)
+      )
+        throw new Error("Invalid page render options");
       signal.throwIfAborted();
       clearTimeout(idle);
       starting ??= start().finally(() => {
@@ -93,6 +111,7 @@ export function createThumbnailRenderer() {
             base64: body.toString("base64"),
             name,
             mime,
+            ...options,
           },
         );
         signal.throwIfAborted();

@@ -1,23 +1,20 @@
 import type { Resource } from "@/lib/api";
 import { FolderFilled, Globe2, LockFilled, UsersFilled } from "./icons";
+export const resourceAccessOptions = [
+  { value: "restricted", label: "Private", icon: LockFilled },
+  { value: "organization", label: "Organization access", icon: UsersFilled },
+  { value: "inherit", label: "Folder access", icon: FolderFilled },
+  { value: "link", label: "Link Sharing Enabled", icon: Globe2 },
+] as const;
 
-export function ResourceAccessBadge({ access }: { access: Resource["access"] }) {
-  const Icon =
-    access === "link"
-      ? Globe2
-      : access === "organization"
-        ? UsersFilled
-        : access === "inherit"
-          ? FolderFilled
-          : LockFilled;
-  const label =
-    access === "link"
-      ? "Link Sharing Enabled"
-      : access === "organization"
-        ? "Organization access"
-        : access === "inherit"
-          ? "Folder access"
-          : "Private";
+export function ResourceAccessBadge({
+  access,
+}: {
+  access: Resource["access"];
+}) {
+  const { icon: Icon, label } =
+    resourceAccessOptions.find((option) => option.value === access) ??
+    resourceAccessOptions[0];
   return (
     <span
       className="status-chip document-access-badge"

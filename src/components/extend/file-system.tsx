@@ -1,6 +1,9 @@
 import { BoxLoader } from "@/components/box-loader";
 import { IndexStatusBadge } from "@/components/index-status-badge";
-import { ResourceAccessBadge } from "@/components/resource-access-badge";
+import {
+  ResourceAccessBadge,
+  resourceAccessOptions,
+} from "@/components/resource-access-badge";
 import type { Resource } from "@/lib/api";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import {
@@ -37,6 +40,7 @@ import {
   GalleryThumbnails,
   LayoutGrid,
   Search,
+  LockFilled,
   X,
 } from "@/components/icons";
 ("use client");
@@ -592,8 +596,9 @@ function compareEntriesBySort(
   if (result === 0) return compareEntryNames(left, right);
   return sort.direction === "asc" ? (result < 0 ? -1 : 1) : result < 0 ? 1 : -1;
 }
-export type FileSystemFilterType = "dateCreated" | "dateModified" | "fileType";
-type FileSystemDateFilterType = Exclude<FileSystemFilterType, "fileType">;
+export type FileSystemFilterType =
+  "dateCreated" | "dateModified" | "fileType" | "privacy";
+type FileSystemDateFilterType = "dateCreated" | "dateModified";
 type FileSystemFilterOperator =
   | "after"
   | "before"
@@ -633,6 +638,7 @@ const FILTER_TYPE_LABELS: Record<FileSystemFilterType, string> = {
   dateCreated: "Date created",
   dateModified: "Date modified",
   fileType: "File type",
+  privacy: "Privacy",
 };
 const FILTER_OPERATOR_LABELS: Record<FileSystemFilterOperator, string> = {
   after: "after",
@@ -696,7 +702,7 @@ function isCustomDateRangeValue(value: string[]) {
 function filterOperatorChoices(
   filter: FileSystemFilter,
 ): FileSystemFilterOperator[] {
-  if (filter.type === "fileType") {
+  if (filter.type === "fileType" || filter.type === "privacy") {
     return filter.value.length > 1 ? ["is-any-of", "is-not"] : ["is", "is-not"];
   }
   if (isCustomDateRangeValue(filter.value)) return ["in-range", "not-in-range"];
@@ -704,6 +710,10 @@ function filterOperatorChoices(
 }
 function fileMatchesFilter(file: FileEntry, filter: FileSystemFilter) {
   if (filter.value.length === 0) return true;
+  if (filter.type === "privacy") {
+    const matches = !!file.access && filter.value.includes(file.access);
+    return filter.operator === "is-not" ? !matches : matches;
+  }
   if (filter.type === "fileType") {
     const matches = filter.value.includes(mimeTypeForFile(file));
     return filter.operator === "is-not" ? !matches : matches;
@@ -1635,11 +1645,11 @@ export function FileSystem({
     };
     type: FileSystemDateFilterType;
   } | null>(null);
-  const toggleFileTypeFilterValue = React.useCallback(
-    (mime: string, checked: boolean) => {
+  const toggleSetFilterValue = React.useCallback(
+    (type: "fileType" | "privacy", mime: string, checked: boolean) => {
       const id = `filter-${++filterIdRef.current}`;
       setFilters((previous) => {
-        const existing = previous.find((filter) => filter.type === "fileType");
+        const existing = previous.find((filter) => filter.type === type);
         if (!existing) {
           if (!checked) return previous;
           return [
@@ -1647,7 +1657,7 @@ export function FileSystem({
             {
               id,
               operator: "is" as const,
-              type: "fileType" as const,
+              type,
               value: [mime],
             },
           ];
@@ -1670,6 +1680,16 @@ export function FileSystem({
       });
     },
     [],
+  );
+  const toggleFileTypeFilterValue = React.useCallback(
+    (mime: string, checked: boolean) =>
+      toggleSetFilterValue("fileType", mime, checked),
+    [toggleSetFilterValue],
+  );
+  const togglePrivacyFilterValue = React.useCallback(
+    (value: string, checked: boolean) =>
+      toggleSetFilterValue("privacy", value, checked),
+    [toggleSetFilterValue],
   );
   const setDatePresetFilter = React.useCallback(
     (type: FileSystemDateFilterType, preset: string) => {
@@ -2166,6 +2186,7 @@ export function FileSystem({
             onOpenCustomRange={openDateRangeDialog}
             onSelectDatePreset={setDatePresetFilter}
             onToggleFileType={toggleFileTypeFilterValue}
+            onTogglePrivacy={togglePrivacyFilterValue}
           />
           <FileSystemSearchField
             inputRef={searchInputRef}
@@ -2183,7 +2204,9 @@ export function FileSystem({
         <div className="flex shrink-0 flex-wrap items-center gap-1 border-b bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
           {filters.map((filter) => {
             const dateFilterType =
-              filter.type === "fileType" ? null : filter.type;
+              filter.type === "dateCreated" || filter.type === "dateModified"
+                ? filter.type
+                : null;
             return (
               <FileSystemFilterPill
                 key={filter.id}
@@ -2224,6 +2247,7 @@ export function FileSystem({
                   )
                 }
                 onToggleFileType={toggleFileTypeFilterValue}
+                onTogglePrivacy={togglePrivacyFilterValue}
               />
             );
           })}
@@ -2795,18 +2819,38 @@ function FileSystemFileTypeCommand({
   );
 }
 
+function FileSystemPrivacyChoices({
+  values,
+  onToggle,
+}: {
+  values: string[];
+  onToggle: (value: string, checked: boolean) => void;
+}) {
+  return resourceAccessOptions.map(({ value, label, icon: Icon }) => (
+    <DropdownMenuCheckboxItem
+      key={value}
+      checked={values.includes(value)}
+      onCheckedChange={(checked) => onToggle(value, checked)}
+    >
+      <Icon className="size-4 text-muted-foreground" />
+      {label}
+    </DropdownMenuCheckboxItem>
+  ));
+}
 function FileSystemFilterMenu({
   fileTypeOptions,
   filters,
   onOpenCustomRange,
   onSelectDatePreset,
   onToggleFileType,
+  onTogglePrivacy,
 }: {
   fileTypeOptions: FileTypeFilterOption[];
   filters: FileSystemFilter[];
   onOpenCustomRange: (type: FileSystemDateFilterType) => void;
   onSelectDatePreset: (type: FileSystemDateFilterType, preset: string) => void;
   onToggleFileType: (mime: string, checked: boolean) => void;
+  onTogglePrivacy: (value: string, checked: boolean) => void;
 }) {
   const fileTypeFilter = filters.find((filter) => filter.type === "fileType");
   return (
@@ -2829,6 +2873,20 @@ function FileSystemFilterMenu({
         }
       ></DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-44">
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <LockFilled className="size-4 text-muted-foreground" />
+            Privacy
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <FileSystemPrivacyChoices
+              values={
+                filters.find((filter) => filter.type === "privacy")?.value ?? []
+              }
+              onToggle={onTogglePrivacy}
+            />
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
         <DropdownMenuSub>
           <DropdownMenuSubTrigger>
             <FileArchiveIcon className="size-4 text-muted-foreground" />
@@ -2886,6 +2944,7 @@ function FileSystemFilterPill({
   onRemove,
   onSelectDatePreset,
   onToggleFileType,
+  onTogglePrivacy,
 }: {
   fileTypeOptions: FileTypeFilterOption[];
   filter: FileSystemFilter;
@@ -2894,9 +2953,11 @@ function FileSystemFilterPill({
   onRemove: () => void;
   onSelectDatePreset: (preset: string) => void;
   onToggleFileType: (mime: string, checked: boolean) => void;
+  onTogglePrivacy: (value: string, checked: boolean) => void;
 }) {
   const isCustomRange =
-    filter.type !== "fileType" && isCustomDateRangeValue(filter.value);
+    (filter.type === "dateCreated" || filter.type === "dateModified") &&
+    isCustomDateRangeValue(filter.value);
   const selectedTypeLabels =
     filter.type === "fileType"
       ? filter.value.map(
@@ -2910,7 +2971,9 @@ function FileSystemFilterPill({
       <span
         className={cn(FILTER_PILL_SEGMENT_CLASSNAME, "rounded-l-md border-l")}
       >
-        {filter.type === "fileType" ? (
+        {filter.type === "privacy" ? (
+          <LockFilled className="size-3" />
+        ) : filter.type === "fileType" ? (
           <File01Glyph className="size-3" />
         ) : (
           <Calendar03Glyph className="size-3" />
@@ -2936,7 +2999,27 @@ function FileSystemFilterPill({
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-      {filter.type === "fileType" ? (
+      {filter.type === "privacy" ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <button type="button" className={FILTER_PILL_BUTTON_CLASSNAME}>
+                {filter.value.length === 1
+                  ? resourceAccessOptions.find(
+                      (option) => option.value === filter.value[0],
+                    )?.label
+                  : `${filter.value.length} selected`}
+              </button>
+            }
+          />
+          <DropdownMenuContent align="start">
+            <FileSystemPrivacyChoices
+              values={filter.value}
+              onToggle={onTogglePrivacy}
+            />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : filter.type === "fileType" ? (
         <DropdownMenu>
           <DropdownMenuTrigger
             render={

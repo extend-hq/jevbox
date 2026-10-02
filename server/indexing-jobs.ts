@@ -1,6 +1,7 @@
 import { HttpError, resourceAccess, type Resource, type Store } from "./db";
 import { createProviders } from "./providers";
 import { queues, PermanentJobError, type BackgroundJob } from "./jobs";
+import { checkStoredDocumentQuota } from "./upload-quotas";
 
 export async function enqueueIndex(
   store: Store,
@@ -91,9 +92,28 @@ export function createIndexHandler(
     await store.jobs.complete(job, async () => {
       if (parsed) {
         await check();
+        const serialized = JSON.stringify(parsed);
+        try {
+          await checkStoredDocumentQuota(
+            store,
+            document.owner_id,
+            document.org_id,
+            Math.max(
+              0,
+              Buffer.byteLength(serialized) -
+                Buffer.byteLength(document.parsed ?? ""),
+            ),
+          );
+        } catch (error) {
+          if (error instanceof HttpError && error.status === 429)
+            throw new PermanentJobError(
+              "Document storage quota reached. Delete documents before retrying indexing.",
+            );
+          throw error;
+        }
         await store.run(
           "UPDATE resources SET parsed=?,status='ready',error=NULL WHERE id=? AND index_job_id=?",
-          JSON.stringify(parsed),
+          serialized,
           document.id,
           job.id,
         );

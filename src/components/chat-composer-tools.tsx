@@ -26,6 +26,7 @@ export type ChatComposerToolsHandle = {
 type Props = {
   ref?: Ref<ChatComposerToolsHandle>;
   composerAnchor: RefObject<HTMLFormElement | null>;
+  modelRef?: RefObject<HTMLDivElement | null>;
   mentionQuery: string | null;
   onMentionClose: () => void;
   onMentionAttach: (document: Resource) => void;
@@ -41,6 +42,7 @@ type Props = {
 export function ChatComposerTools({
   ref,
   composerAnchor,
+  modelRef,
   mentionQuery,
   onMentionClose,
   onMentionAttach,
@@ -154,6 +156,7 @@ export function ChatComposerTools({
         ? current.filter((item) => item.id !== document.id)
         : [...current, document],
     );
+    closePicker();
   }
   async function searchLibrary() {
     const value = effectiveQuery.trim();
@@ -383,6 +386,7 @@ export function ChatComposerTools({
                         name={document.name}
                         mime={document.mime}
                         src={`/api/documents/${document.id}/content`}
+                        square
                         className="w-8 shrink-0 rounded-sm"
                       />
                       <span className="attachment-document-details">
@@ -432,7 +436,7 @@ export function ChatComposerTools({
         aria-label="Upload chat attachments"
         onChange={(e) => void upload(e.target.files)}
       />
-      <div className="composer-model">
+      <div className="composer-model" ref={modelRef}>
         {me.chatModels?.length ? (
           <Choice
             label="Chat model"
@@ -450,7 +454,7 @@ export function ChatComposerTools({
             }))}
           />
         ) : (
-          <Button type="button" variant="ghost" onClick={onSettings}>
+          <Button type="button" variant="outline" onClick={onSettings}>
             Choose model
           </Button>
         )}

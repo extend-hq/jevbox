@@ -12,10 +12,11 @@ import {
   textExtensions,
   supportsIndex,
 } from "../shared/file-types";
-import { uploadLimits } from "../shared/uploads";
+import { uploadLimits, textWithinProcessingLimits } from "../shared/uploads";
 import { HttpError, requireResource, type Actor, type Store } from "./db";
 import { enqueueIndex } from "./indexing-jobs";
 import { enqueueThumbnail } from "./thumbnails";
+import { checkStoredDocumentQuota } from "./upload-quotas";
 
 export const uploadName = z
   .string()
@@ -39,7 +40,7 @@ export const uploadInput = z
   .strict();
 const inflate = promisify(inflateRaw);
 
-async function validateOffice(body: Buffer, ext: string) {
+async function validateOffice(body: Buffer, ext: string, signal?: AbortSignal) {
   const fail = () => {
     throw new HttpError(400, "Invalid or excessively expanded Office document");
   };
@@ -62,6 +63,7 @@ async function validateOffice(body: Buffer, ext: string) {
   const names = new Set<string>();
   let expanded = 0;
   for (let i = 0; i < count; i++) {
+    signal?.throwIfAborted();
     if (offset + 46 > end || body.readUInt32LE(offset) !== 0x02014b50)
       return fail();
     const flags = body.readUInt16LE(offset + 8),
@@ -101,7 +103,14 @@ async function validateOffice(body: Buffer, ext: string) {
     if (
       expanded > 32 * 1024 * 1024 ||
       body.readUInt32LE(local) !== 0x04034b50 ||
+      body.readUInt16LE(local + 6) !== flags ||
       body.readUInt16LE(local + 8) !== method
+    )
+      return fail();
+    if (
+      !(flags & 8) &&
+      (body.readUInt32LE(local + 18) !== compressed ||
+        body.readUInt32LE(local + 22) !== size)
     )
       return fail();
     const localLength = body.readUInt16LE(local + 26);
@@ -139,7 +148,12 @@ async function validateOffice(body: Buffer, ext: string) {
     return fail();
 }
 
-export async function validateUpload(filename: string, body: Buffer) {
+export async function validateUpload(
+  filename: string,
+  body: Buffer,
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
   uploadName.parse(filename);
   if (!body.length) throw new HttpError(400, "The document is empty");
   if (body.length > uploadLimits.fileBytes)
@@ -151,8 +165,14 @@ export async function validateUpload(filename: string, body: Buffer) {
     if (body.length > uploadLimits.textBytes)
       throw new HttpError(413, "Text documents must be at most 2 MiB");
     try {
-      new TextDecoder("utf-8", { fatal: true }).decode(body);
-    } catch {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(body);
+      if (!textWithinProcessingLimits(text))
+        throw new HttpError(
+          413,
+          "Text document exceeds its line, page, or section limit",
+        );
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
       throw new HttpError(400, "Text documents must contain valid UTF-8");
     }
     if (body.includes(0))
@@ -160,8 +180,40 @@ export async function validateUpload(filename: string, body: Buffer) {
   }
   if (ext === "pdf" && !body.subarray(0, 1024).includes(Buffer.from("%PDF-")))
     throw new HttpError(400, "Invalid PDF document");
-  if (["docx", "xlsx", "pptx"].includes(ext)) await validateOffice(body, ext);
-  if (["png", "jpg", "jpeg", "webp", "gif", "avif", "bmp"].includes(ext)) {
+  if (ext === "svg") {
+    const source = body.toString("utf8");
+    if (
+      !/<svg\b/i.test(source) ||
+      /<!DOCTYPE|<!ENTITY|<script\b|\bon\w+\s*=|(?:href|url)\s*=?\s*["'(\s]*(?:https?:|file:|\/\/)/i.test(
+        source,
+      )
+    )
+      throw new HttpError(
+        400,
+        "SVG documents cannot contain active content or external references",
+      );
+  }
+  if (["docx", "xlsx", "pptx"].includes(ext))
+    await validateOffice(body, ext, signal);
+  if (ext === "bmp") {
+    if (body.length < 26 || body.toString("ascii", 0, 2) !== "BM")
+      throw new HttpError(400, "Invalid bitmap image");
+    const header = body.readUInt32LE(14);
+    const width = header === 12 ? body.readUInt16LE(18) : body.readInt32LE(18);
+    const height =
+      header === 12 ? body.readUInt16LE(20) : Math.abs(body.readInt32LE(22));
+    if (
+      ![12, 40, 52, 56, 108, 124].includes(header) ||
+      width <= 0 ||
+      height <= 0 ||
+      width * height > 40_000_000
+    )
+      throw new HttpError(
+        400,
+        "Invalid image or image exceeds 40 million pixels",
+      );
+  }
+  if (["png", "jpg", "jpeg", "webp", "gif", "avif"].includes(ext)) {
     try {
       const metadata = await sharp(body, {
         limitInputPixels: 40_000_000,
@@ -191,11 +243,7 @@ export function decodeUpload(content: string) {
       413,
       "MCP uploads must be at most 2 MiB; use the REST API for larger files",
     );
-  if (
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      content,
-    )
-  )
+  if (content.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(content))
     throw new HttpError(
       400,
       "Provide standard padded base64 without a data URL prefix",
@@ -212,6 +260,10 @@ export function decodeUpload(content: string) {
 
 export function createUploads(store: Store) {
   const active = new Set<string>();
+  const leases = new WeakMap<
+    Request,
+    { retain: () => void; release: () => void; signal: AbortSignal }
+  >();
   function reserve(
     req: Request,
     res: Response,
@@ -230,6 +282,8 @@ export function createUploads(store: Store) {
       throw new HttpError(415, "Compressed request bodies are not supported");
     active.add(userId);
     let released = false;
+    let retained = false;
+    const controller = new AbortController();
     const release = () => {
       if (released) return;
       released = true;
@@ -237,14 +291,28 @@ export function createUploads(store: Store) {
       clearTimeout(timer);
     };
     const timer = setTimeout(() => {
+      controller.abort();
       if (!res.headersSent) res.status(408).json({ error: "Upload timed out" });
       req.destroy();
-      release();
+      if (!retained) release();
     }, uploadLimits.receiveMs);
     timer.unref();
-    res.once("finish", release);
-    res.once("close", release);
-    return release;
+    res.once("finish", () => {
+      if (!retained) release();
+    });
+    res.once("close", () => {
+      if (!res.writableEnded) controller.abort();
+      if (!retained) release();
+    });
+    const lease = {
+      retain: () => {
+        retained = true;
+      },
+      release,
+      signal: controller.signal,
+    };
+    leases.set(req, lease);
+    return lease;
   }
   async function checkParent(a: Actor, parentId: string | null) {
     if (!(await store.permission(a, "organization", a.orgId, "active_member")))
@@ -261,6 +329,7 @@ export function createUploads(store: Store) {
     "deployment",
   ];
   async function capacity(a: Actor, bytes: number) {
+    await checkStoredDocumentQuota(store, a.userId, a.orgId, bytes, 1);
     const rows = await store.all<{
       subject: string;
       size: string;
@@ -277,8 +346,6 @@ export function createUploads(store: Store) {
           429,
           "Document processing queue is full. Wait for existing uploads to finish.",
         );
-      if (Number(row.size) + bytes > uploadLimits.storedBytes[scope])
-        throw new HttpError(429, "Document storage quota reached");
     }
   }
   async function admit(a: Actor) {
@@ -339,9 +406,19 @@ export function createUploads(store: Store) {
     return async (req, res, next) => {
       try {
         const a = await resolveActor(req);
-        reserve(req, res, a.userId, uploadLimits.fileBytes + 16 * 1024);
+        const lease = reserve(
+          req,
+          res,
+          a.userId,
+          uploadLimits.fileBytes + 16 * 1024,
+        );
         await admit(a);
-        receive(req, res, next);
+        lease.signal.throwIfAborted();
+        receive(req, res, (error) => {
+          if (error) lease.release();
+          else lease.retain();
+          next(error);
+        });
       } catch (error) {
         next(error);
       }
@@ -353,10 +430,13 @@ export function createUploads(store: Store) {
     body: Buffer,
     parentId: string | null,
     revalidate: () => Promise<Actor>,
+    signal?: AbortSignal,
   ) {
     await checkParent(a, parentId);
-    const mime = await validateUpload(filename, body);
+    filename = uploadName.parse(filename);
+    const mime = await validateUpload(filename, body, signal);
     return store.transaction(async () => {
+      signal?.throwIfAborted();
       const current = await revalidate();
       if (current.userId !== a.userId || current.orgId !== a.orgId)
         throw new HttpError(403, "Upload identity changed");
@@ -400,6 +480,7 @@ export function createUploads(store: Store) {
         new Date().toISOString(),
       );
       await store.files.write("document", id, body, mime);
+      signal?.throwIfAborted();
       await enqueueThumbnail(store, id);
       if (supportsIndex(filename)) {
         await store.run(
@@ -416,6 +497,8 @@ export function createUploads(store: Store) {
         id,
         new Date().toISOString(),
       );
+      signal?.throwIfAborted();
+      await checkParent(await revalidate(), parentId);
       return {
         id,
         name: filename,
@@ -426,5 +509,12 @@ export function createUploads(store: Store) {
       };
     });
   }
-  return { reserve, admit, checkParent, multipart, save };
+  return {
+    reserve,
+    admit,
+    checkParent,
+    multipart,
+    save,
+    lease: (req: Request) => leases.get(req),
+  };
 }

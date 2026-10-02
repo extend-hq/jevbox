@@ -77,6 +77,7 @@ dom.window.matchMedia = (query) => ({
   removeEventListener() {},
   dispatchEvent: () => true,
 });
+globalThis.matchMedia = dom.window.matchMedia;
 dom.window.Element.prototype.getAnimations = () => [];
 
 const { act } = await import("react");
@@ -84,6 +85,7 @@ const { createRoot } = await import("react-dom/client");
 
 const { DocumentView } = await import("../src/components/document");
 const { ChatView, Sources } = await import("../src/components/discovery");
+const { ChatQueue } = await import("../src/components/chat-queue");
 const { Markdown } = await import("../src/components/common");
 const { ChatThinking } = await import("../src/components/loading-state");
 const { RetrievalTree } = await import("../src/components/retrieval-tree");
@@ -99,6 +101,7 @@ const { ChatPromptEditor } =
 const { useFinderView, useDocumentSidebarPreference } =
   await import("../src/lib/preferences");
 import type { IndexNode, Me, Resource } from "../src/lib/api";
+import type { ChatTurn } from "../shared/chat";
 let root: Root;
 let host: HTMLDivElement;
 beforeEach(() => {
@@ -163,7 +166,7 @@ function button(label: string, container: ParentNode = document) {
       node.getAttribute("aria-label") === label,
   );
 }
-async function typeChatMessage(value: string) {
+async function typeChatMessage(value: string, keyboard = false) {
   const input = document.querySelector<HTMLElement>(
     '[role="textbox"][contenteditable="true"]',
   );
@@ -176,6 +179,16 @@ async function typeChatMessage(value: string) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   await act(async () => {
+    if (keyboard) {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      return;
+    }
     input
       .closest("form")
       ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -427,6 +440,36 @@ test("loading steps follow observed response stages", async () => {
   );
 });
 
+test("chat sidebar recovers background activity and refreshes it when the window becomes visible", async () => {
+  let items = [
+    { id: "background", title: "Background", blocked: false, working: true },
+    { id: "finished", title: "Finished", blocked: false, working: false },
+    { id: "blocked", title: "Unavailable", blocked: true, working: false },
+  ];
+  globalThis.fetch = async () => Response.json(items);
+  await act(async () =>
+    root.render(
+      <ChatView
+        me={{ chatEnabled: true } as Me}
+        chatId={null}
+        onTitleChange={() => {}}
+        onChatChange={() => {}}
+        onOpen={() => {}}
+        onSettings={() => {}}
+      />,
+    ),
+  );
+  assert.equal(host.querySelectorAll(".chat-history-spinner").length, 1);
+  assert.ok(
+    host.querySelector(
+      '.chat-history-row a[aria-label="Background"] .chat-history-spinner',
+    ),
+  );
+  items = items.map((item) => ({ ...item, working: false }));
+  await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+  assert.equal(host.querySelector(".chat-history-spinner"), null);
+});
+
 test("regenerate menu sends the enabled model chosen from its provider group", async () => {
   const previousEventSource = globalThis.EventSource;
   globalThis.EventSource = class {
@@ -603,6 +646,152 @@ test("switching chats keeps a bottom composer and blank transcript until the sel
   }
 });
 
+test("queued rows send the selected message, disable changes while submitting, and keep Send beside Trash", async () => {
+  const updates: { id: string; change: unknown }[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const turns: ChatTurn[] = ["queued", "failed", "cancelled", "generating"].map(
+    (status, index) => ({
+      id: `turn-${index}`,
+      content: `Question ${index + 1}`,
+      status: status as ChatTurn["status"],
+      partialText: "",
+      attachments: [],
+      selectedModel: null,
+      error: null,
+      regenerating: false,
+    }),
+  );
+  await act(async () =>
+    root.render(
+      <ChatQueue
+        turns={turns}
+        busy={false}
+        onUpdate={async (id, change) => {
+          updates.push({ id, change });
+          await gate;
+        }}
+        onRemove={async () => {}}
+        onReorder={async () => {}}
+      />,
+    ),
+  );
+  const sendButtons = Array.from(
+    host.querySelectorAll<HTMLButtonElement>(".chat-queue-send"),
+  );
+  assert.equal(sendButtons.length, 3);
+  for (const [index, send] of sendButtons.entries()) {
+    assert.equal(send.title, "Send now");
+    assert.equal(
+      send.nextElementSibling?.getAttribute("aria-label"),
+      `Remove queued message ${index + 1}`,
+    );
+  }
+  await click(sendButtons[1]);
+  assert.deepEqual(updates, [{ id: "turn-1", change: { action: "send" } }]);
+  assert.ok(sendButtons.every((send) => send.disabled));
+  await act(async () => release());
+  assert.ok(sendButtons.every((send) => !send.disabled));
+});
+
+test("returning to the chat window restores current queue progress without waiting for stream reconnection", async () => {
+  const previousEventSource = globalThis.EventSource;
+  const listeners = new Map<string, (event: { data: string }) => void>();
+  class TestEventSource {
+    onerror: (() => void) | null = null;
+    addEventListener(
+      type: string,
+      listener: (event: { data: string }) => void,
+    ) {
+      listeners.set(type, listener);
+    }
+    close() {}
+  }
+  globalThis.EventSource = TestEventSource as unknown as typeof EventSource;
+  let snapshot: any = {
+    id: "chat",
+    title: "Chat",
+    messages: [],
+    blocked: false,
+    turns: [
+      {
+        id: "turn",
+        content: "Waiting question",
+        status: "queued",
+        partialText: "",
+        attachments: [],
+        error: null,
+        regenerating: false,
+      },
+    ],
+  };
+  let resolveSnapshot: ((response: Response) => void) | undefined;
+  let holdRefresh = false;
+  globalThis.fetch = async (input) => {
+    if (String(input) === "/api/chats")
+      return Response.json([
+        { id: "chat", title: "Chat", working: true, blocked: false },
+      ]);
+    assert.equal(String(input), "/api/chats/chat");
+    if (holdRefresh)
+      return new Promise<Response>((resolve) => {
+        resolveSnapshot = resolve;
+      });
+    return Response.json(snapshot);
+  };
+  try {
+    await act(async () =>
+      root.render(
+        <ChatView
+          me={{ chatEnabled: true } as Me}
+          chatId="chat"
+          onTitleChange={() => {}}
+          onChatChange={() => {}}
+          onOpen={() => {}}
+          onSettings={() => {}}
+        />,
+      ),
+    );
+    assert.ok(button("Send queued message 1 now"));
+    assert.equal(button("Stop answer"), undefined);
+    snapshot = {
+      ...snapshot,
+      turns: [
+        {
+          ...snapshot.turns[0],
+          status: "generating",
+          partialText: "Restored progress",
+        },
+      ],
+    };
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    assert.ok(button("Stop answer"));
+    assert.equal(host.querySelector(".chat-queue-send"), null);
+    holdRefresh = true;
+    await act(async () =>
+      document.dispatchEvent(new Event("visibilitychange")),
+    );
+    const finished = {
+      ...snapshot,
+      turns: [],
+      messages: [
+        { role: "user", content: "Waiting question" },
+        { role: "assistant", content: "Completed answer" },
+      ],
+    };
+    await act(async () =>
+      listeners.get("snapshot")?.({ data: JSON.stringify(finished) }),
+    );
+    await act(async () => resolveSnapshot?.(Response.json(snapshot)));
+    assert.equal(button("Stop answer"), undefined);
+    assert.ok(host.textContent?.includes("Completed answer"));
+  } finally {
+    globalThis.EventSource = previousEventSource;
+  }
+});
+
 test("chat displays streamed snapshots, submits a durable queue, stops, and branches", async () => {
   const previousEventSource = globalThis.EventSource;
   const listeners = new Map<string, (event: { data: string }) => void>();
@@ -618,6 +807,7 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
   }
   globalThis.EventSource = TestEventSource as unknown as typeof EventSource;
   const requests: string[] = [];
+  let acceptInitial: (() => void) | undefined;
   let acceptQueued: (() => void) | undefined;
   let branched = "";
   let snapshot: any = {
@@ -645,8 +835,12 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
         error: null,
         regenerating: false,
       };
-      if (requests.length === 1) snapshot.turns.push(turn);
-      else
+      if (requests.length === 1) {
+        snapshot.turns.push(turn);
+        await new Promise<void>((resolve) => {
+          acceptInitial = resolve;
+        });
+      } else
         await new Promise<void>((resolve) => {
           acceptQueued = () => {
             snapshot.turns.push(turn);
@@ -690,6 +884,21 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
       ),
     );
     await typeChatMessage("First");
+    const send = button("Send message");
+    assert.ok(send);
+    assert.ok(send.querySelector('[data-slot="button-loading-indicator"]'));
+    assert.equal(send.querySelectorAll("svg").length, 1);
+    await act(async () => acceptInitial?.());
+    assert.ok(button("Stop answer"));
+    assert.ok(
+      host.querySelector(
+        '.chat-history-row.active .chat-history-spinner[aria-label="Chat working"]',
+      ),
+    );
+    assert.equal(
+      document.querySelector('.composer-tools button[type="submit"]'),
+      null,
+    );
     assert.ok(document.querySelector(".chat-thinking .work-loader-grid"));
     assert.ok(document.querySelector(".chat-thinking .work-elapsed"));
     snapshot.turns[0].partialText = "First fragment";
@@ -705,7 +914,7 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
     assert.ok(document.querySelector(".chat-stream-cursor"));
     assert.equal(document.querySelector('[data-slot="message-header"]'), null);
     assert.ok(document.querySelector('[data-slot="message-avatar"] svg'));
-    await typeChatMessage("Second");
+    await typeChatMessage("Second", true);
     assert.deepEqual(requests, ["First", "Second"]);
     assert.ok(
       document.querySelector(".chat-queue")?.textContent?.includes("Second"),
@@ -715,10 +924,13 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
       document.querySelector('[role="textbox"]')?.textContent?.trim(),
       "",
     );
-    const send = button("Queue message");
-    assert.ok(send);
-    assert.ok(send.querySelector('[data-slot="button-loading-indicator"]'));
-    assert.equal(send.querySelectorAll("svg").length, 1);
+    const stop = button("Stop answer");
+    assert.ok(stop);
+    assert.equal(
+      document.querySelector('.composer-tools button[type="submit"]'),
+      null,
+    );
+    assert.equal(stop.querySelectorAll("svg").length, 1);
     await act(async () => {
       listeners.get("snapshot")?.({ data: JSON.stringify(snapshot) });
     });
@@ -726,7 +938,7 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
     await act(async () => acceptQueued?.());
     assert.equal(document.querySelectorAll(".chat-queue-item").length, 1);
     assert.equal(document.querySelector(".chat-queue-item"), optimisticRow);
-    assert.equal(send.querySelector('[data-slot="button-loading-indicator"]'), null);
+    assert.equal(button("Stop answer"), stop);
     snapshot.turns[0].partialText = "First fragment, now extended";
     await act(async () => {
       listeners.get("snapshot")?.({ data: JSON.stringify(snapshot) });
@@ -736,6 +948,11 @@ test("chat displays streamed snapshots, submits a durable queue, stops, and bran
     });
     assert.ok(document.body.textContent?.includes("now extended"));
     await click(button("Stop answer"));
+    assert.ok(button("Send message"));
+    assert.equal(
+      host.querySelector(".chat-history-row.active .chat-history-spinner"),
+      null,
+    );
     assert.ok(
       document.querySelector(".chat-queue")?.textContent?.includes("Stopped"),
     );
@@ -821,6 +1038,9 @@ test("stream completion retains the answer, Markdown nodes, and reserved control
     const details = answer.querySelector(".chat-answer-details");
     const footer = answer.querySelector('[data-slot="message-footer"]');
     assert.ok(answer.querySelector(".chat-stream-cursor"));
+    assert.ok(
+      host.querySelector(".chat-history-row.active .chat-history-spinner"),
+    );
     assert.equal(details?.getAttribute("data-pending"), "true");
     assert.ok(footer);
     const extended = content + "\n\nMore context.";
@@ -858,6 +1078,10 @@ test("stream completion retains the answer, Markdown nodes, and reserved control
       answer,
     );
     assert.equal(answer.querySelector(".markdown"), markdown);
+    assert.equal(
+      host.querySelector(".chat-history-row.active .chat-history-spinner"),
+      null,
+    );
     assert.equal(answer.querySelector("table"), table);
     assert.equal(answer.querySelector("pre"), code);
     assert.equal(answer.querySelector(".chat-answer-details"), details);
@@ -1412,6 +1636,47 @@ test("Finder Grid requests and renders the first PDF thumbnail", async () => {
       '[role="option"] img[src="data:image/png;base64,cHJldmlldw=="]',
     ),
   );
+});
+
+test("Finder privacy filters use sharing icons and retain navigation while narrowing documents", async () => {
+  await act(async () =>
+    root.render(
+      <FileSystem
+        defaultView="icons"
+        items={[
+          { kind: "folder", path: "Group" },
+          { kind: "file", path: "Group/Nested.pdf", access: "restricted" },
+          { kind: "file", path: "Personal.pdf", access: "restricted" },
+          { kind: "file", path: "Team.pdf", access: "organization" },
+          { kind: "file", path: "Inherited.pdf", access: "inherit" },
+        ]}
+      />,
+    ),
+  );
+  await click(button("Filter"));
+  const privacy = [...document.querySelectorAll('[role="menuitem"]')].find(
+    (item) => item.textContent?.trim() === "Privacy",
+  );
+  await click(privacy);
+  const privateOption = [
+    ...document.querySelectorAll('[role="menuitemcheckbox"]'),
+  ].find((item) => item.textContent?.trim() === "Private");
+  assert.ok(privateOption?.querySelector("svg"));
+  await click(privateOption);
+  const paths = () =>
+    [...host.querySelectorAll('[role="option"][data-entry-path]')].map((item) =>
+      item.getAttribute("data-entry-path"),
+    );
+  assert.deepEqual(paths().sort(), ["Group/", "Personal.pdf"]);
+  await act(async () => {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  });
 });
 
 test("Finder uses a stored cover without invoking document thumbnail generation", async () => {
@@ -2273,7 +2538,12 @@ test("attachment picker searches document contents on Enter and keeps attachment
   assert.ok(option.textContent?.includes("Beta.bin"));
   assert.equal(option.querySelectorAll('[data-slot="badge"]').length, 2);
   assert.ok(option.querySelector("[data-resource-thumbnail]"));
+  assert.ok(option.querySelector('[style*="aspect-ratio: 1"]'));
   await click(option);
+  assert.equal(
+    document.querySelector('[aria-label="Library documents"]'),
+    null,
+  );
   assert.ok(
     document.querySelector(".prompt-document-pill [data-resource-thumbnail]"),
   );

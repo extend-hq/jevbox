@@ -14,6 +14,7 @@ import { createProviders } from "../server/providers";
 import { retrieveDocuments } from "../server/retrieval";
 import type { Resource, Store, Actor } from "../server/db";
 import { choiceResponse } from "./model-tools";
+import { randomUUID } from "node:crypto";
 
 const actor: Actor = {
   userId: "user",
@@ -71,6 +72,98 @@ const jevFetch: typeof fetch = async (_input, init) => {
   const body = JSON.parse(String(init?.body));
   return isScoreRequest(body) ? scoreResponse(body, 3) : choiceResponse(body);
 };
+
+test("search date, type, privacy, and nested-folder filters intersect with live permissions", async () => {
+  const folderId = randomUUID(),
+    nestedId = randomUUID();
+  const folder = {
+    ...document(folderId, ""),
+    kind: "folder",
+    parsed: null,
+  } as Resource;
+  const nested = { ...folder, id: nestedId, parent_id: folderId };
+  const chosen = {
+    ...document("chosen", "Relevant facts", nestedId),
+    mime: "application/pdf",
+    created: "2026-10-02T23:59:59.999Z",
+  };
+  const old = { ...chosen, id: "old", created: "2026-09-29" };
+  const text = { ...chosen, id: "text", mime: "text/plain" };
+  const shared = { ...chosen, id: "shared", access: "organization" as const };
+  const inherited = { ...chosen, id: "inherited", access: "inherit" as const };
+  const outside = { ...chosen, id: "outside", parent_id: null };
+  const forbidden = { ...chosen, id: "forbidden", name: "Unavailable" };
+  const resources = [
+    folder,
+    nested,
+    chosen,
+    old,
+    text,
+    shared,
+    inherited,
+    outside,
+    forbidden,
+  ];
+  const { store, allowed } = storeFor(resources);
+  allowed.delete(forbidden.id);
+  const requests: string[] = [];
+  const filters = {
+    createdAfter: "2026-10-01",
+    createdBefore: "2026-10-02",
+    fileTypes: ["pdf"] as const,
+    access: ["private"] as const,
+    folderId,
+  };
+  const result = await retrieveDocuments(
+    store,
+    actor,
+    "Relevant facts",
+    "key",
+    async (url, init) => {
+      requests.push(String(init?.body));
+      return jevFetch(url, init);
+    },
+    [],
+    undefined,
+    {
+      filters: {
+        ...filters,
+        fileTypes: [...filters.fileTypes],
+        access: [...filters.access],
+      },
+    },
+  );
+  assert.deepEqual(
+    new Set(result.results.map((source) => source.documentId)),
+    new Set([chosen.id]),
+  );
+  assert.equal(requests.join("").includes("Unavailable"), false);
+  const empty = await retrieveDocuments(
+    store,
+    actor,
+    "Relevant facts",
+    "key",
+    jevFetch,
+    [outside.id],
+    undefined,
+    { filters: { folderId } },
+  );
+  assert.deepEqual(empty.results, []);
+  allowed.delete(folderId);
+  await assert.rejects(
+    retrieveDocuments(
+      store,
+      actor,
+      "Relevant facts",
+      "key",
+      jevFetch,
+      [],
+      undefined,
+      { filters: { folderId } },
+    ),
+    (error: any) => error.status === 404,
+  );
+});
 
 test("passage scores share one request while each question sees only its own complete evidence", async () => {
   const contents = ["First evidence. ".repeat(500), "Second evidence"];
@@ -721,6 +814,32 @@ test("candidate sections score every passage without a passage routing gate", as
   assert.equal(scored.length, expected.length + 2);
   assert.equal(result.results.length, 1);
   assert.match(result.results[0].content, /739/);
+});
+
+test("retrieved passages retain their complete section hierarchy and page ranges", async () => {
+  const resource = document(
+    "a",
+    "# Overview\nBackground\n## Measurements\nObserved value: 739.",
+  );
+  const { store } = storeFor([resource]);
+  const result = await retrieveDocuments(
+    store,
+    actor,
+    "What is the observed value?",
+    "key",
+    async (url, init) => {
+      const body = JSON.parse(String(init?.body));
+      return isScoreRequest(body)
+        ? scoreResponse(body, (content) => (content.includes("739") ? 3 : 1))
+        : jevFetch(url, init);
+    },
+    [resource.id],
+  );
+  const source = result.results.find((item) => item.title === "Measurements")!;
+  assert.deepEqual(source.sectionPath, ["Overview", "Measurements"]);
+  assert.equal(source.page, 1);
+  assert.equal(source.endPage, 1);
+  assert.match(source.content, /739/);
 });
 
 test("conservative lookups do not recover rejected category routes", async () => {

@@ -2,6 +2,7 @@ import { JevboxIcon } from "./jevbox-icon";
 import { ScrollArea } from "@/components/coss/scroll-area";
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { Spinner } from "./coss/spinner";
+import { BoxLoader } from "./box-loader";
 import {
   Select,
   SelectTrigger,
@@ -54,13 +55,14 @@ export function Loading({
   fullScreen?: boolean;
   inline?: boolean;
 }) {
+  const compact = inline && !fullScreen;
   return (
     <div
-      className={`loading${fullScreen ? " loading-fullscreen" : ""}${inline ? " loading-inline" : ""}`}
-      role="status"
-      aria-label={label}
+      className={`loading${fullScreen ? " loading-fullscreen" : ""}${compact ? " loading-inline" : ""}`}
+      role={compact ? "status" : undefined}
+      aria-label={compact ? label : undefined}
     >
-      <Spinner aria-hidden="true" />
+      {compact ? <Spinner aria-hidden="true" /> : <BoxLoader label={label} />}
     </div>
   );
 }

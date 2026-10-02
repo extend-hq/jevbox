@@ -7,8 +7,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { createApp } from "../server/app";
-import { HttpError } from "../server/db";
+import { HttpError, createStore } from "../server/db";
+import { createWorkers } from "../server/workers";
 import { testDatabase } from "./database";
 import {
   searchToolResponse,
@@ -165,7 +170,7 @@ before(async () => {
   database = await testDatabase();
   directory = mkdtempSync(join(tmpdir(), "jevbox-chat-"));
   runtime = await createApp({
-    workers: ["auth-email", "chat-answer"],
+    workers: ["auth-email", "chat-answer", "external-search"],
     directory,
     databaseUrl: database.url,
     origin,
@@ -307,6 +312,21 @@ test("streaming exposes partial text, durable queue edits preserve order, and du
   const first = new TextDecoder().decode((await reader.read()).value);
   assert.match(first, /The document says/);
   streamAbort.abort();
+  const reconnectAbort = new AbortController();
+  const reconnect = await fetch(base + `/api/chats/${chat}/events`, {
+    headers: { Cookie: cookie },
+    signal: reconnectAbort.signal,
+  });
+  const restored = new TextDecoder().decode(
+    (await reconnect.body!.getReader().read()).value,
+  );
+  assert.match(restored, /The document says/);
+  reconnectAbort.abort();
+  assert.equal(calls[0].aborted, false);
+  assert.equal(
+    (await req("/chats")).data.find((item: any) => item.id === chat)?.working,
+    true,
+  );
   hold = false;
   calls[0].release();
   const completed = await waitFor(
@@ -324,6 +344,10 @@ test("streaming exposes partial text, durable queue edits preserve order, and du
     ],
   );
   assert.equal(completed.turns.length, 0);
+  assert.equal(
+    (await req("/chats")).data.find((item: any) => item.id === chat)?.working,
+    false,
+  );
 });
 test("independent search tools overlap, identical in-flight queries share work, and citations stay stable", async () => {
   hold = false;
@@ -454,7 +478,12 @@ test("streaming consumes text while partial persistence is pending and completio
       async () => writing && consumed,
       (ready) => ready,
     );
-    assert.equal((await state(chat)).messages.length, 0);
+    assert.equal(
+      (await state(chat)).messages.filter(
+        (message: any) => message.role === "assistant",
+      ).length,
+      0,
+    );
     release();
     const completed = await waitFor(
       () => state(chat),
@@ -562,11 +591,115 @@ test("Stop aborts generation and pauses successors until the stopped turn is rem
   assert.equal(calls[start].aborted, true);
   assert.equal(stopped.messages.length, 0);
   assert.equal(stopped.turns[1].status, "queued");
+  assert.equal(
+    (await req("/chats")).data.find((item: any) => item.id === chat)?.working,
+    false,
+  );
   hold = false;
   await req(`/chats/${chat}/turns/${first}`, "DELETE");
   await waitFor(
     () => state(chat),
     (s) => s.messages.length === 2,
+  );
+});
+test("Send now promotes a waiting message without interrupting the active answer", async () => {
+  hold = true;
+  const start = calls.length;
+  const chat = await newChat();
+  const first = (await enqueue(chat, "Initial question")).data.id;
+  await waitFor(
+    () => state(chat),
+    (s) => s.turns[0]?.partialText.length > 0,
+  );
+  const second = (await enqueue(chat, "Waiting question")).data.id;
+  const third = (await enqueue(chat, "Chosen question")).data.id;
+  assert.equal(
+    (
+      await req(
+        `/chats/${chat}/turns/${third}`,
+        "PATCH",
+        { action: "send" },
+        other,
+      )
+    ).status,
+    404,
+  );
+  assert.equal(
+    (await req(`/chats/${chat}/turns/${first}`, "PATCH", { action: "send" }))
+      .status,
+    409,
+  );
+  for (let attempt = 0; attempt < 2; attempt++)
+    assert.equal(
+      (await req(`/chats/${chat}/turns/${third}`, "PATCH", { action: "send" }))
+        .status,
+      200,
+    );
+  assert.deepEqual(
+    (await state(chat)).turns.map((turn: any) => turn.id),
+    [first, third, second],
+  );
+  assert.equal(calls[start].aborted, false);
+  hold = false;
+  calls[start].release();
+  const completed = await waitFor(
+    () => state(chat),
+    (s) => s.messages.length === 6,
+  );
+  assert.deepEqual(
+    completed.messages
+      .filter((message: any) => message.role === "user")
+      .map((message: any) => message.content),
+    ["Initial question", "Chosen question", "Waiting question"],
+  );
+});
+test("Send now can run a waiting message in a paused queue and retry a stopped message", async () => {
+  hold = true;
+  const chat = await newChat();
+  const first = (await enqueue(chat, "Stopped question")).data.id;
+  await waitFor(
+    () => state(chat),
+    (s) => s.turns[0]?.partialText.length > 0,
+  );
+  const second = (await enqueue(chat, "Remaining question")).data.id;
+  const third = (await enqueue(chat, "Chosen question")).data.id;
+  await req(`/chats/${chat}/turns/${first}`, "DELETE");
+  await waitFor(
+    () => state(chat),
+    (s) => s.turns[0]?.status === "cancelled",
+  );
+  hold = false;
+  assert.equal(
+    (await req(`/chats/${chat}/turns/${third}`, "PATCH", { action: "send" }))
+      .status,
+    200,
+  );
+  const paused = await waitFor(
+    () => state(chat),
+    (s) => s.messages.length === 2,
+  );
+  assert.equal(paused.messages[0].content, "Chosen question");
+  assert.deepEqual(
+    paused.turns.map((turn: any) => [turn.id, turn.status]),
+    [
+      [first, "cancelled"],
+      [second, "queued"],
+    ],
+  );
+  assert.equal(
+    (await req(`/chats/${chat}/turns/${first}`, "PATCH", { action: "send" }))
+      .status,
+    200,
+  );
+  const completed = await waitFor(
+    () => state(chat),
+    (s) => s.messages.length === 6,
+  );
+  assert.deepEqual(
+    completed.messages
+      .filter((message: any) => message.role === "user")
+      .map((message: any) => message.content),
+    ["Chosen question", "Stopped question", "Remaining question"],
   );
 });
 test("regeneration replaces only the last answer and branches copy only the selected prefix", async () => {
@@ -626,7 +759,7 @@ test("queued messages survive runtime replacement and an interrupted answer requ
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await runtime.store.close();
   runtime = await createApp({
-    workers: ["auth-email", "chat-answer"],
+    workers: ["auth-email", "chat-answer", "external-search"],
     directory,
     databaseUrl: database.url,
     origin,
@@ -804,6 +937,382 @@ test("inline references preserve the request and constrain evidence to attached 
         source.documentId === documentId && source.documentId !== otherDocument,
     ),
   );
+});
+
+async function mcpClient(token: string, protocolVersion = "2026-07-28") {
+  const client = new Client(
+    { name: "integration-test", version: "1.0.0" },
+    {
+      supportedProtocolVersions: [protocolVersion],
+      versionNegotiation: {
+        mode:
+          protocolVersion === "2026-07-28"
+            ? { pin: protocolVersion }
+            : "legacy",
+      },
+    },
+  );
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(base + "/mcp"), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+    }),
+  );
+  return client;
+}
+async function callTool(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+) {
+  const reply = await client.callTool({ name, arguments: args });
+  assert.equal(reply.isError, undefined, JSON.stringify(reply.content));
+  return reply.structuredContent as any;
+}
+async function apiKey() {
+  const created = await req("/auth/api-key/create", "POST", {
+    name: "Integration",
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.data));
+  return created.data;
+}
+for (const protocolVersion of ["2026-07-28", "2025-11-25"])
+  test(`MCP ${protocolVersion} answers survive client replacement and share saved web chat progress`, async () => {
+    hold = true;
+    const key = await apiKey();
+    const organizationId = (await req("/me")).data.organization.id;
+    const requestId = randomUUID();
+    const input = {
+      organizationId,
+      requestId,
+      question: "Explain the documented process",
+      documentIds: [documentId],
+      selectedModel: { provider: "openai", model: "model-one" },
+    };
+    let client = await mcpClient(key.key, protocolVersion);
+    let generation: (typeof calls)[number] | undefined;
+    try {
+      const firstCall = calls.length;
+      const accepted = await callTool(client, "answer", input);
+      assert.equal(accepted.runId, requestId);
+      assert.equal(accepted.chatId, requestId);
+      await waitFor(
+        () => state(accepted.chatId),
+        (s) => s.turns[0]?.partialText.length > 0,
+      );
+      generation = calls[firstCall];
+      const duplicate = await callTool(client, "answer", input);
+      assert.equal(duplicate.runId, accepted.runId);
+      assert.equal(calls.length, firstCall + 1);
+      const mismatch = await client.callTool({
+        name: "answer",
+        arguments: { ...input, question: "Another question" },
+      });
+      assert.equal(mismatch.isError, true);
+      await client.close();
+      assert.equal(generation.aborted, false);
+      client = await mcpClient(key.key, protocolVersion);
+      const recent = await callTool(client, "list_runs", { organizationId });
+      assert.ok(
+        recent.runs.some(
+          (run: any) => run.runId === requestId && run.status === "running",
+        ),
+      );
+      const partial = await callTool(client, "get_run", {
+        organizationId,
+        runId: requestId,
+      });
+      assert.match(partial.partialText, /The document says/);
+      assert.equal(partial.status, "running");
+      generation.release();
+      const completed = await waitFor(
+        () => callTool(client, "get_run", { organizationId, runId: requestId }),
+        (run) => run.status === "completed",
+      );
+      assert.match(completed.result.content, /process is documented/);
+      assert.ok(completed.result.sources.length > 0);
+      assert.equal(
+        (await state(requestId)).messages.at(-1).content,
+        completed.result.content,
+      );
+      assert.equal(
+        (await callTool(client, "answer", input)).status,
+        "completed",
+      );
+      assert.equal(calls.length, firstCall + 1);
+      const outsiderKey = await req(
+        "/auth/api-key/create",
+        "POST",
+        { name: "Integration" },
+        other,
+      );
+      const outsider = await mcpClient(outsiderKey.data.key, protocolVersion);
+      try {
+        const denied = await outsider.callTool({
+          name: "get_run",
+          arguments: { organizationId, runId: requestId },
+        });
+        assert.equal(denied.isError, true);
+        assert.equal(denied.structuredContent, undefined);
+      } finally {
+        await outsider.close();
+      }
+    } finally {
+      generation?.release();
+      await client.close();
+    }
+  });
+
+test("a standalone worker drains an accepted MCP answer and queued follow-ups while the web runtime is closed", async () => {
+  hold = true;
+  await runtime.workers.stop(["chat-answer", "external-search"]);
+  const key = await apiKey();
+  const organizationId = (await req("/me")).data.organization.id;
+  let client = await mcpClient(key.key);
+  const accepted = await callTool(client, "answer", {
+    organizationId,
+    question: "Explain the documented process",
+    documentIds: [documentId],
+    selectedModel: { provider: "openai", model: "model-one" },
+  });
+  assert.equal(accepted.status, "queued");
+  const second = (await enqueue(accepted.chatId, "First queued follow-up")).data
+    .id;
+  const third = (await enqueue(accepted.chatId, "Second queued follow-up")).data
+    .id;
+  await client.close();
+  const workerStore = await createStore(directory, database.url);
+  const worker = createWorkers(workerStore, { origin, directory, fetcher });
+  let generation: (typeof calls)[number] | undefined;
+  let webClosed = false;
+  try {
+    await worker.start(["chat-answer", "external-search"]);
+    await waitFor(
+      () => state(accepted.chatId),
+      (s) => s.turns[0]?.partialText.length > 0,
+    );
+    generation = calls.at(-1)!;
+    runtime.closeStreams();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await runtime.close();
+    webClosed = true;
+    assert.equal(generation.aborted, false);
+    hold = false;
+    generation.release();
+    await waitFor(
+      () =>
+        workerStore.all<{ id: string; status: string }>(
+          "SELECT id,status FROM chat_turns WHERE chat_id=? ORDER BY position",
+          accepted.chatId,
+        ),
+      (turns) =>
+        turns.length === 3 &&
+        turns.every((turn) => turn.status === "completed"),
+    );
+    assert.deepEqual(
+      (
+        await workerStore.all<{ id: string }>(
+          "SELECT id FROM chat_turns WHERE chat_id=? ORDER BY position",
+          accepted.chatId,
+        )
+      ).map((turn) => turn.id),
+      [accepted.runId, second, third],
+    );
+  } finally {
+    generation?.release();
+    await worker.close();
+    await workerStore.close();
+    if (webClosed) {
+      runtime = await createApp({
+        workers: ["auth-email", "chat-answer", "external-search"],
+        directory,
+        databaseUrl: database.url,
+        origin,
+        fetcher,
+        rateLimits: false,
+        sendAuthEmail: mailbox.sendAuthEmail,
+      });
+      server = runtime.app.listen(0, "127.0.0.1");
+      await new Promise<void>((resolve) => server.once("listening", resolve));
+      const address = server.address();
+      assert.ok(address && typeof address !== "string");
+      base = `http://127.0.0.1:${address.port}`;
+    } else await runtime.workers.start(["chat-answer", "external-search"]);
+  }
+  client = await mcpClient(key.key);
+  try {
+    const completed = await callTool(client, "get_run", {
+      organizationId,
+      runId: accepted.runId,
+    });
+    assert.equal(completed.status, "completed");
+    assert.match(completed.result.content, /process is documented/);
+    const saved = await state(accepted.chatId);
+    assert.equal(
+      saved.messages.find(
+        (message: any) =>
+          message.role === "assistant" && message.turnId === accepted.runId,
+      ).content,
+      completed.result.content,
+    );
+    assert.deepEqual(
+      saved.messages
+        .filter((message: any) => message.role === "user")
+        .map((message: any) => message.content),
+      [
+        "Explain the documented process",
+        "First queued follow-up",
+        "Second queued follow-up",
+      ],
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test("a disconnected MCP search finishes without its original request and rechecks source permissions", async () => {
+  const key = await apiKey();
+  const organizationId = (await req("/me")).data.organization.id;
+  const requestId = randomUUID();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started = false,
+    aborted = false;
+  onScore = async (_body, signal) => {
+    started = true;
+    signal?.addEventListener(
+      "abort",
+      () => {
+        aborted = true;
+      },
+      { once: true },
+    );
+    await gate;
+  };
+  let client = await mcpClient(key.key);
+  try {
+    const pending = client
+      .callTool({
+        name: "search",
+        arguments: {
+          organizationId,
+          requestId,
+          query: "Explain the documented process",
+          documentIds: [documentId],
+          waitSeconds: 10,
+        },
+      })
+      .catch(() => undefined);
+    await waitFor(async () => started, Boolean);
+    await client.close();
+    assert.equal(aborted, false);
+    release();
+    onScore = undefined;
+    client = await mcpClient(key.key);
+    const completed = await waitFor(
+      () => callTool(client, "get_run", { organizationId, runId: requestId }),
+      (run) => run.status === "completed",
+    );
+    assert.ok(completed.result.results.length > 0);
+    assert.ok(
+      (await callTool(client, "list_runs", { organizationId })).runs.some(
+        (run: any) => run.runId === requestId,
+      ),
+    );
+    await pending;
+    const original = runtime.store.permission.bind(runtime.store);
+    runtime.store.permission = (actor, type, id, permission) =>
+      type === "resource" && id === documentId
+        ? Promise.resolve(false)
+        : original(actor, type, id, permission);
+    try {
+      const revoked = await callTool(client, "get_run", {
+        organizationId,
+        runId: requestId,
+      });
+      assert.deepEqual(revoked.result.results, []);
+    } finally {
+      runtime.store.permission = original;
+    }
+  } finally {
+    release();
+    onScore = undefined;
+    await client.close();
+  }
+});
+
+test("MCP cancellation and key revocation stop generation, and web retry uses the current session", async () => {
+  hold = true;
+  const key = await apiKey();
+  const organizationId = (await req("/me")).data.organization.id;
+  const client = await mcpClient(key.key);
+  const input = {
+    organizationId,
+    question: "Explain the documented process",
+    documentIds: [documentId],
+    selectedModel: { provider: "openai", model: "model-one" },
+  };
+  try {
+    const stopped = await callTool(client, "answer", input);
+    await waitFor(
+      () => state(stopped.chatId),
+      (s) => s.turns[0]?.partialText.length > 0,
+    );
+    const cancelledCall = calls.at(-1)!;
+    await callTool(client, "cancel_run", {
+      organizationId,
+      runId: stopped.runId,
+    });
+    await waitFor(
+      () =>
+        callTool(client, "get_run", { organizationId, runId: stopped.runId }),
+      (run) => run.status === "cancelled",
+    );
+    assert.equal(cancelledCall.aborted, true);
+    const revoked = await callTool(client, "answer", input);
+    await waitFor(
+      () => state(revoked.chatId),
+      (s) => s.turns[0]?.partialText.length > 0,
+    );
+    const revokedCall = calls.at(-1)!;
+    assert.equal(
+      (
+        await req("/auth/api-key/update", "POST", {
+          keyId: key.id,
+          enabled: false,
+        })
+      ).status,
+      200,
+    );
+    await waitFor(
+      () => state(revoked.chatId),
+      (s) => s.turns[0]?.status === "failed",
+    );
+    assert.equal(revokedCall.aborted, true);
+    assert.equal((await state(revoked.chatId)).messages.length, 0);
+    hold = false;
+    assert.equal(
+      (
+        await req(`/chats/${revoked.chatId}/turns/${revoked.runId}`, "PATCH", {
+          action: "retry",
+        })
+      ).status,
+      200,
+    );
+    const recovered = await waitFor(
+      () => state(revoked.chatId),
+      (s) => s.messages.length === 2,
+    );
+    assert.match(recovered.messages.at(-1).content, /process is documented/);
+    const credential = await runtime.store.one<{ credential_type: string }>(
+      "SELECT credential_type FROM chat_turns WHERE id=?",
+      revoked.runId,
+    );
+    assert.equal(credential?.credential_type, "session");
+  } finally {
+    await client.close();
+  }
 });
 
 test("revoked membership hides live snapshots and prevents the queued successor from running", async () => {

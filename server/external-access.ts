@@ -32,6 +32,14 @@ export type Principal = {
   scopes: readonly string[];
   credentialId: string;
 };
+const delegationSchema = z.object({
+  principal: z.object({
+    userId: z.string(),
+    scopes: z.array(z.string()),
+    credentialId: z.string(),
+  }),
+  oauth: z.object({ clientId: z.string(), consentId: z.string() }).optional(),
+});
 const documentPath = (id: string, nodeId?: string) =>
   `/library/documents/${encodeURIComponent(id)}${nodeId ? `?${new URLSearchParams({ node: nodeId, tab: "index" })}` : ""}`;
 const organizationId = z.string().uuid();
@@ -67,6 +75,7 @@ export function createExternalAccess(
 ) {
   const keys = createApiKeys(auth);
   const verifiedRequests = new WeakSet<Request>();
+  const keyRequests = new WeakMap<Request, Principal>();
   const searchLimits = new MemoryStore();
   searchLimits.init({ windowMs: 60000 } as Parameters<MemoryStore["init"]>[0]);
   async function authenticate(
@@ -85,8 +94,14 @@ export function createExternalAccess(
     if (
       authorization.scheme === "Bearer" &&
       authorization.token.startsWith("jev_key_")
-    )
-      return keys.authenticate(authorization.token);
+    ) {
+      const existing = keyRequests.get(req);
+      if (existing)
+        return delegatedPrincipal(JSON.stringify({ principal: existing }));
+      const principal = await keys.authenticate(authorization.token);
+      keyRequests.set(req, principal);
+      return principal;
+    }
     try {
       const payload = await validateOAuthToken(authorization.token);
       const audiences = Array.isArray(payload.aud)
@@ -150,6 +165,108 @@ export function createExternalAccess(
       throw new HttpError(404, "Organization not found");
     return result;
   }
+  async function delegate(principal: Principal, req: Request) {
+    let oauth: { clientId: string; consentId: string } | undefined;
+    if (principal.credentialId.startsWith("oauth:")) {
+      const payload = await validateOAuthToken(
+        parseAccessTokenAuthorization(req.headers.authorization)!.token,
+      );
+      if (typeof payload.azp !== "string")
+        throw new HttpError(401, "Invalid access token");
+      const consent = await (
+        await auth.$context
+      ).adapter.findOne<{ id: string }>({
+        model: "oauthConsent",
+        where: [
+          { field: "clientId", value: payload.azp },
+          { field: "userId", value: principal.userId },
+        ],
+      });
+      if (!consent)
+        throw new HttpError(401, "Authorization is no longer available");
+      oauth = { clientId: payload.azp, consentId: consent.id };
+    }
+    return JSON.stringify({
+      principal,
+      ...(oauth ? { oauth } : {}),
+    });
+  }
+  async function delegatedPrincipal(value: string): Promise<Principal> {
+    const accepted = delegationSchema.parse(JSON.parse(value));
+    const context = await auth.$context;
+    let scopes: string[];
+    if (accepted.oauth) {
+      const consent = await context.adapter.findOne<{
+        userId: string;
+        clientId: string;
+        scopes: string[];
+        resources?: string[];
+      }>({
+        model: "oauthConsent",
+        where: [{ field: "id", value: accepted.oauth.consentId }],
+      });
+      const client = await context.adapter.findOne<{ disabled?: boolean }>({
+        model: "oauthClient",
+        where: [{ field: "clientId", value: accepted.oauth.clientId }],
+      });
+      if (
+        !client ||
+        client.disabled ||
+        !consent ||
+        consent.userId !== accepted.principal.userId ||
+        consent.clientId !== accepted.oauth.clientId ||
+        (consent.resources?.length &&
+          !consent.resources.includes(`${origin}/mcp`)) ||
+        `oauth:${consent.clientId}:${consent.userId}` !==
+          accepted.principal.credentialId ||
+        !Array.isArray(consent.scopes)
+      )
+        throw new HttpError(401, "Authorization is no longer available");
+      scopes = consent.scopes;
+    } else {
+      const key = await context.adapter.findOne<{
+        referenceId: string;
+        enabled: boolean;
+        expiresAt: Date | null;
+        permissions: string | Record<string, string[]> | null;
+      }>({
+        model: "apikey",
+        where: [{ field: "id", value: accepted.principal.credentialId }],
+      });
+      if (
+        !key?.enabled ||
+        key.referenceId !== accepted.principal.userId ||
+        (key.expiresAt && new Date(key.expiresAt).getTime() <= Date.now())
+      )
+        throw new HttpError(401, "Authorization is no longer available");
+      const permissions =
+        typeof key.permissions === "string"
+          ? JSON.parse(key.permissions)
+          : key.permissions;
+      scopes = ["documents", "search"].flatMap((resource) =>
+        ["read", "write"]
+          .filter((operation) => permissions?.[resource]?.includes(operation))
+          .map((operation) => `${resource}:${operation}`),
+      );
+    }
+    const user = await context.internalAdapter.findUserById(
+      accepted.principal.userId,
+    );
+    if (!user?.emailVerified)
+      throw new HttpError(401, "Verified account required");
+    return {
+      ...accepted.principal,
+      scopes: scopes.filter((scope) =>
+        accepted.principal.scopes.includes(scope),
+      ),
+    };
+  }
+  async function delegatedActor(value: string, orgId: string) {
+    const principal = await delegatedPrincipal(value);
+    requireScope(principal, "search:read");
+    requireScope(principal, "documents:read");
+    return actor(principal, orgId);
+  }
   async function limitSearch(principal: Principal, orgId: string) {
     if (!rateLimits) return;
     for (const [key, max] of [
@@ -194,6 +311,7 @@ export function createExternalAccess(
     principal: Principal,
     body: unknown,
     revalidate: () => Promise<Principal>,
+    signal?: AbortSignal,
   ) {
     requireScope(principal, "documents:write");
     const input = uploadInput.parse(body);
@@ -210,6 +328,7 @@ export function createExternalAccess(
         requireScope(current, "documents:write");
         return actor(current, a.orgId);
       },
+      signal,
     );
     return { ...result, url: `${origin}${documentPath(result.id)}` };
   }
@@ -218,11 +337,12 @@ export function createExternalAccess(
     body: unknown,
     revalidate: () => Promise<Principal>,
     signal?: AbortSignal,
+    admitted = false,
   ) {
     requireScope(principal, "search:read");
     const input = searchInput.parse(body);
     const a = await actor(principal, input.organizationId);
-    await limitSearch(principal, a.orgId);
+    if (!admitted) await limitSearch(principal, a.orgId);
     let documentIds = input.documentIds;
     for (const id of documentIds) {
       if ((await requireResource(store, a, id)).kind !== "document")
@@ -407,17 +527,22 @@ export function createExternalAccess(
     "/documents",
     uploads.multipart(uploadActor),
     async (req, res) => {
-      if (!req.file) throw new HttpError(400, "Choose a document");
-      const result = await uploads.save(
-        await uploadActor(req),
-        req.file.originalname,
-        req.file.buffer,
-        z.string().uuid().optional().parse(req.query.parentId) ?? null,
-        () => uploadActor(req),
-      );
-      res
-        .status(201)
-        .json({ ...result, url: `${origin}${documentPath(result.id)}` });
+      try {
+        if (!req.file) throw new HttpError(400, "Choose a document");
+        const result = await uploads.save(
+          await uploadActor(req),
+          req.file.originalname,
+          req.file.buffer,
+          z.string().uuid().optional().parse(req.query.parentId) ?? null,
+          () => uploadActor(req),
+          uploads.lease(req)?.signal,
+        );
+        res
+          .status(201)
+          .json({ ...result, url: `${origin}${documentPath(result.id)}` });
+      } finally {
+        uploads.lease(req)?.release();
+      }
     },
   );
   router.get("/documents/:id", async (req, res) =>
@@ -459,6 +584,12 @@ export function createExternalAccess(
   return {
     keys,
     authenticate,
+    actor,
+    requireScope,
+    limitSearch,
+    delegate,
+    delegatedPrincipal,
+    delegatedActor,
     organizations,
     search,
     read,

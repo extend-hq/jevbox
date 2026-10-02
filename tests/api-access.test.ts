@@ -98,6 +98,12 @@ async function request(
         ? {
             "MCP-Protocol-Version": "2026-07-28",
             "Mcp-Method": String((body as { method?: string })?.method),
+            ...((body as { params?: { name?: string } })?.params?.name
+              ? {
+                  "Mcp-Name": (body as { params: { name: string } }).params
+                    .name,
+                }
+              : {}),
           }
         : {}),
       ...extraHeaders,
@@ -141,6 +147,7 @@ before(async () => {
   headers.Origin = origin;
   directory = mkdtempSync(join(tmpdir(), "jevbox-api-"));
   runtime = await createApp({
+    workers: ["external-search"],
     directory,
     databaseUrl: database.url,
     origin,
@@ -459,9 +466,14 @@ for (const protocolVersion of ["2026-07-28", "2025-11-25"])
       await client.connect(transport);
       const tools = await client.listTools();
       assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
+        "answer",
+        "cancel_run",
         "fetch",
+        "get_run",
         "list_organizations",
+        "list_runs",
         "search",
+        "upload_document",
       ]);
       const organizations = await client.callTool({
         name: "list_organizations",
@@ -738,7 +750,15 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
     (await legacyTools(tokens.access_token)).tools
       .map((tool) => tool.name)
       .sort(),
-    ["fetch", "list_organizations", "search"],
+    [
+      "answer",
+      "cancel_run",
+      "fetch",
+      "get_run",
+      "list_organizations",
+      "list_runs",
+      "search",
+    ],
   );
   assert.equal(
     (await request("/api/v1/organizations", tokens.access_token)).status,
@@ -754,6 +774,87 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
   );
   assert.equal(refresh.status, 200, await refresh.clone().text());
   const refreshed = await refresh.json();
+  async function heldSearch() {
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    onScore = async () => {
+      entered();
+      await gate;
+    };
+    const runId = randomUUID();
+    const admitted = await request("/mcp", refreshed.access_token, "POST", {
+      jsonrpc: "2.0",
+      id: 20,
+      method: "tools/call",
+      params: {
+        name: "search",
+        arguments: {
+          organizationId: orgId,
+          query: "Find evidence",
+          documentIds: [ownId],
+          requestId: runId,
+          waitSeconds: 0,
+        },
+      },
+    });
+    assert.equal(admitted.status, 200, await admitted.clone().text());
+    const reply = (await admitted.json()).result;
+    assert.equal(reply.isError, undefined, JSON.stringify(reply.content));
+    assert.equal(reply.structuredContent.runId, runId);
+    await started;
+    return { runId, release };
+  }
+  async function waitRun(runId: string, status: string) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const row = await runtime.store.one<{ status: string }>(
+        "SELECT status FROM external_runs WHERE id=?",
+        runId,
+      );
+      if (row?.status === status) return;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    assert.fail(`Run did not reach ${status}`);
+  }
+  const expiring = await heldSearch();
+  try {
+    await runtime.store.run(
+      'UPDATE "oauthAccessToken" SET "expiresAt"=now()-interval \'1 second\' WHERE "clientId"=? AND "userId"=?',
+      registration.client_id,
+      userId,
+    );
+    assert.equal(
+      (
+        await request("/mcp", refreshed.access_token, "POST", {
+          jsonrpc: "2.0",
+          id: 21,
+          method: "tools/list",
+        })
+      ).status,
+      401,
+    );
+    expiring.release();
+    onScore = undefined;
+    await waitRun(expiring.runId, "completed");
+  } finally {
+    expiring.release();
+    onScore = undefined;
+  }
+  const renewed = await exchange(
+    new URLSearchParams({
+      client_id: registration.client_id,
+      grant_type: "refresh_token",
+      refresh_token: refreshed.refresh_token,
+      resource: origin + "/mcp",
+    }),
+  );
+  assert.equal(renewed.status, 200, await renewed.clone().text());
+  Object.assign(refreshed, await renewed.json());
   const apps = await (await session("/auth/oauth2/get-consents")).json();
   assert.equal(apps.length, 1);
   assert.equal(
@@ -767,11 +868,29 @@ test("OAuth discovery, registration, PKCE, consent, audience validation, refresh
     ).status,
     401,
   );
-  assert.equal(
-    (await session("/auth/oauth2/delete-consent", "POST", { id: apps[0].id }))
-      .status,
-    200,
-  );
+  const revokedRun = await heldSearch();
+  try {
+    assert.equal(
+      (await session("/auth/oauth2/delete-consent", "POST", { id: apps[0].id }))
+        .status,
+      200,
+    );
+    revokedRun.release();
+    onScore = undefined;
+    await waitRun(revokedRun.runId, "failed");
+    const row = await runtime.store.one<{
+      result: unknown;
+      credential: unknown;
+    }>(
+      "SELECT result,credential FROM external_runs WHERE id=?",
+      revokedRun.runId,
+    );
+    assert.equal(row?.result, null);
+    assert.equal(row?.credential, null);
+  } finally {
+    revokedRun.release();
+    onScore = undefined;
+  }
   await assert.rejects(legacyTools(refreshed.access_token));
   assert.equal(
     (
@@ -1014,5 +1133,388 @@ test("native key management enforces ownership and read-only permissions", async
       })
     ).status,
     401,
+  );
+});
+
+async function uploadRequest(
+  token: string,
+  file: Blob,
+  filename = "note.txt",
+  org = orgId,
+  parentId?: string,
+) {
+  const form = new FormData();
+  form.append("file", file, filename);
+  return fetch(
+    `${base}/api/v1/documents?${new URLSearchParams({ organizationId: org, ...(parentId ? { parentId } : {}) })}`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    },
+  );
+}
+
+test("REST uploads create owned private documents and enforce write scope and folder membership", async () => {
+  await runtime.store.run("DELETE FROM upload_usage");
+  const created = await key();
+  const result = await uploadRequest(
+    created.token,
+    new Blob(["# Uploaded\nSource text"], { type: "application/octet-stream" }),
+  );
+  assert.equal(result.status, 201, await result.clone().text());
+  const document = await result.json();
+  assert.equal(document.access, "private");
+  assert.equal(document.status, "queued");
+  assert.equal(document.mime, "text/plain");
+  assert.equal(
+    (await runtime.store.files.read("document", document.id))?.body.toString(),
+    "# Uploaded\nSource text",
+  );
+  const resource = await runtime.store.one<any>(
+    "SELECT * FROM resources WHERE id=?",
+    document.id,
+  );
+  assert.equal(resource.owner_id, userId);
+  assert.equal(resource.access, "restricted");
+  assert.ok(resource.index_job_id);
+  assert.ok(resource.thumbnail_job_id);
+  assert.equal(
+    (
+      await request(
+        `/api/v1/documents/${document.id}?organizationId=${orgId}`,
+        created.token,
+      )
+    ).status,
+    409,
+  );
+  const other = await key(otherCookie);
+  assert.equal(
+    (
+      await request(
+        `/api/v1/documents/${document.id}?organizationId=${orgId}`,
+        other.token,
+      )
+    ).status,
+    404,
+  );
+  const limited = await runtime.auth.api.createApiKey({
+    body: {
+      userId,
+      name: "Read",
+      permissions: { documents: ["read"] },
+      expiresIn: 86400,
+    },
+  });
+  assert.equal(
+    (await uploadRequest(limited.key, new Blob(["text"]))).status,
+    403,
+  );
+  assert.equal(
+    (
+      await uploadRequest(
+        created.token,
+        new Blob(["text"]),
+        "note.txt",
+        foreignOrgId,
+      )
+    ).status,
+    404,
+  );
+  assert.equal(
+    (
+      await uploadRequest(
+        created.token,
+        new Blob(["text"]),
+        "note.txt",
+        orgId,
+        privateId,
+      )
+    ).status,
+    404,
+  );
+  const folder = randomUUID();
+  await runtime.store.run(
+    "INSERT INTO resources(id,org_id,owner_id,kind,name,access,created) VALUES(?,?,?,'folder','Shared','organization',?)",
+    folder,
+    orgId,
+    otherId,
+    new Date().toISOString(),
+  );
+  assert.equal(
+    (
+      await uploadRequest(
+        created.token,
+        new Blob(["text"]),
+        "note.txt",
+        orgId,
+        folder,
+      )
+    ).status,
+    404,
+  );
+  await runtime.store.run(
+    "INSERT INTO grants(resource_id,user_id,role) VALUES(?,?,'editor')",
+    folder,
+    userId,
+  );
+  const inFolder = await uploadRequest(
+    created.token,
+    new Blob(["text"]),
+    "note.txt",
+    orgId,
+    folder,
+  );
+  assert.equal(inFolder.status, 201, await inFolder.clone().text());
+  const stored = await runtime.store.one<any>(
+    "SELECT parent_id,access FROM resources WHERE id=?",
+    (await inFolder.json()).id,
+  );
+  assert.equal(stored.parent_id, folder);
+  assert.equal(stored.access, "restricted");
+});
+
+test("REST upload rejects multipart abuse and authenticates before buffering", async () => {
+  await runtime.store.run("DELETE FROM upload_usage");
+  const created = await key();
+  assert.equal(
+    (await uploadRequest("invalid", new Blob(["text"]))).status,
+    401,
+  );
+  const cookieOnly = await fetch(
+    `${base}/api/v1/documents?organizationId=${orgId}`,
+    { method: "POST", headers: { Cookie: cookie }, body: new FormData() },
+  );
+  assert.equal(cookieOnly.status, 401);
+  assert.equal((await uploadRequest(created.token, new Blob([]))).status, 400);
+  assert.equal(
+    (await uploadRequest(created.token, new Blob(["bad"]), "document.pdf"))
+      .status,
+    400,
+  );
+  assert.equal(
+    (
+      await uploadRequest(
+        created.token,
+        new Blob([Buffer.alloc(30 * 1024 * 1024 + 1)]),
+        "document.pdf",
+      )
+    ).status,
+    413,
+  );
+  const form = new FormData();
+  form.append("file", new Blob(["one"]), "one.txt");
+  form.append("file", new Blob(["two"]), "two.txt");
+  const two = await fetch(`${base}/api/v1/documents?organizationId=${orgId}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${created.token}` },
+    body: form,
+  });
+  assert.equal(two.status, 400);
+  const denied = await uploadRequest(created.token, new Blob(["next"]));
+  assert.equal(denied.status, 201, await denied.clone().text());
+});
+
+test("MCP uploads expose mutation annotations, preserve read-only grants, and store validated bytes", async () => {
+  await runtime.store.run("DELETE FROM upload_usage");
+  const created = await key();
+  const listing = await request("/mcp", created.token, "POST", {
+    jsonrpc: "2.0",
+    id: 90,
+    method: "tools/list",
+  });
+  const tool = (await listing.json()).result.tools.find(
+    (value: any) => value.name === "upload_document",
+  );
+  assert.equal(tool.annotations.readOnlyHint, false);
+  assert.equal(tool.annotations.idempotentHint, false);
+  const response = await request("/mcp", created.token, "POST", {
+    jsonrpc: "2.0",
+    id: 91,
+    method: "tools/call",
+    params: {
+      name: "upload_document",
+      arguments: {
+        organizationId: orgId,
+        filename: "note.txt",
+        contentBase64: "SGVsbG8K",
+      },
+    },
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  const result = (await response.json()).result;
+  assert.equal(result.isError, undefined, JSON.stringify(result));
+  assert.equal(result.structuredContent.access, "private");
+  assert.equal(
+    (
+      await runtime.store.files.read("document", result.structuredContent.id)
+    )?.body.toString(),
+    "Hello\n",
+  );
+  const bad = await request("/mcp", created.token, "POST", {
+    jsonrpc: "2.0",
+    id: 92,
+    method: "tools/call",
+    params: {
+      name: "upload_document",
+      arguments: {
+        organizationId: orgId,
+        filename: "note.txt",
+        contentBase64: "bad!",
+      },
+    },
+  });
+  assert.equal((await bad.json()).result.isError, true);
+  const limited = await runtime.auth.api.createApiKey({
+    body: {
+      userId,
+      name: "Read",
+      permissions: { documents: ["read"] },
+      expiresIn: 86400,
+    },
+  });
+  const readOnly = await request("/mcp", limited.key, "POST", {
+    jsonrpc: "2.0",
+    id: 93,
+    method: "tools/list",
+  });
+  assert.ok(
+    !(await readOnly.json()).result.tools.some(
+      (value: any) => value.name === "upload_document",
+    ),
+  );
+});
+
+test("upload quotas persist across runtime replacement and credentials, and reject storage and queue overflow atomically", async (t) => {
+  const { createUploads } = await import("../server/uploads");
+  const { uploadLimits } = await import("../shared/uploads");
+  const { HttpError } = await import("../server/db");
+  await runtime.store.run("DELETE FROM upload_usage");
+  const a = { userId, orgId, role: "member", token: "first" };
+  const clock = Date.now();
+  t.mock.method(Date, "now", () => clock);
+  for (let i = 0; i < 5; i++)
+    await createUploads(runtime.store).admit({ ...a, token: String(i) });
+  await assert.rejects(
+    createUploads(runtime.store).admit({
+      ...a,
+      orgId: secondOrgId,
+      token: "different",
+    }),
+    (error: unknown) => error instanceof HttpError && error.status === 429,
+  );
+  await runtime.store.run("DELETE FROM upload_usage");
+  const usage = createUploads(runtime.store);
+  const original = await runtime.store.one<{ size: number }>(
+    "SELECT size FROM resources WHERE id=?",
+    ownId,
+  );
+  await runtime.store.run(
+    "UPDATE resources SET size=? WHERE id=?",
+    uploadLimits.storedBytes.user,
+    ownId,
+  );
+  try {
+    await assert.rejects(
+      usage.save(a, "note.txt", Buffer.from("text"), null, async () => a),
+      /storage quota/,
+    );
+  } finally {
+    await runtime.store.run(
+      "UPDATE resources SET size=? WHERE id=?",
+      original!.size,
+      ownId,
+    );
+  }
+  const bucket = Math.floor(clock / 86_400_000);
+  await runtime.store.run(
+    "INSERT INTO upload_usage(subject,bucket,period,bytes,expires_at) VALUES(?,?,86400000,?,?)",
+    `user:${userId}`,
+    bucket,
+    uploadLimits.dailyBytes.user,
+    new Date(clock + 86_400_000).toISOString(),
+  );
+  await assert.rejects(
+    usage.save(a, "note.txt", Buffer.from("text"), null, async () => a),
+    /Daily upload byte quota/,
+  );
+  await runtime.store.run("DELETE FROM upload_usage");
+  const queued = Array.from({ length: 10 }, () => randomUUID());
+  try {
+    for (const id of queued)
+      await runtime.store.run(
+        "INSERT INTO resources(id,org_id,owner_id,kind,name,status,created) VALUES(?,?,?,'document','Pending','queued',?)",
+        id,
+        orgId,
+        userId,
+        new Date().toISOString(),
+      );
+    await assert.rejects(usage.admit(a), /processing queue is full/);
+  } finally {
+    for (const id of queued)
+      await runtime.store.run("DELETE FROM resources WHERE id=?", id);
+  }
+});
+
+test("upload revocation and storage failure roll back document, bytes, and queued work", async () => {
+  const { createUploads } = await import("../server/uploads");
+  await runtime.store.run("DELETE FROM upload_usage");
+  const a = { userId, orgId, role: "member", token: "test" };
+  const uploads = createUploads(runtime.store);
+  const before = await runtime.store.one<{ count: string }>(
+    "SELECT COUNT(*)::text AS count FROM resources",
+  );
+  const jobsBefore = await runtime.store.one<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM "${runtime.store.jobs.schema}".job`,
+  );
+  await assert.rejects(
+    uploads.save(a, "note.txt", Buffer.from("text"), null, async () => {
+      throw new Error("Revoked");
+    }),
+    /Revoked/,
+  );
+  const write = runtime.store.files.write;
+  let checks = 0;
+  await assert.rejects(
+    uploads.save(a, "note.txt", Buffer.from("text"), null, async () => {
+      if (++checks > 1) throw new Error("Revoked while storing");
+      return a;
+    }),
+    /Revoked while storing/,
+  );
+  runtime.store.files.write = async () => {
+    throw new Error("Storage unavailable");
+  };
+  try {
+    await assert.rejects(
+      uploads.save(a, "note.txt", Buffer.from("text"), null, async () => a),
+      /Storage unavailable/,
+    );
+  } finally {
+    runtime.store.files.write = write;
+  }
+  assert.equal(
+    (
+      await runtime.store.one<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM resources",
+      )
+    )?.count,
+    before?.count,
+  );
+  assert.equal(
+    (
+      await runtime.store.one<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM "${runtime.store.jobs.schema}".job`,
+      )
+    )?.count,
+    jobsBefore?.count,
+  );
+  assert.equal(
+    (
+      await runtime.store.one<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM upload_usage",
+      )
+    )?.count,
+    "0",
   );
 });

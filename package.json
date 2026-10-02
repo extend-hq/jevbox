@@ -119,6 +119,7 @@
     "ipaddr.js": "^2.5.0",
     "jose": "^6.2.12",
     "media-chrome": "^4.19.3",
+    "metal-fx": "2.0.11",
     "multer": "^2.0.2",
     "nodemailer": "10.0.13",
     "nucleo-glass": "^1.4.1",

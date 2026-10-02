@@ -12,8 +12,12 @@ import {
 } from "./db";
 import { availableChatModels } from "./ai";
 import { getSettings, type createProviders } from "./providers";
-import type { ChatModel, ChatTurn } from "../shared/chat";
+import { isChatWorking, type ChatModel, type ChatTurn } from "../shared/chat";
 import { inspectDocument } from "./document-inspection";
+import {
+  createDocumentVisuals,
+  type DocumentPageImage,
+} from "./document-visuals";
 
 type Message = {
   role: string;
@@ -39,6 +43,7 @@ type Turn = {
   chat_id: string;
   position: number;
   session_token: string;
+  credential_type: "session" | "external";
   content: string;
   document_ids: string[];
   attachments: { id: string; name: string }[];
@@ -74,8 +79,10 @@ export function createChatRuntime(
   providers: ReturnType<typeof createProviders>,
   authenticate: (req: Request) => Promise<Actor>,
   authenticateToken: (token: string) => Promise<Actor>,
+  authenticateExternal?: (credential: string, orgId: string) => Promise<Actor>,
 ) {
   const router = Router();
+  const visuals = createDocumentVisuals(store);
   const running = new Map<
     string,
     { controller: AbortController; work: Promise<void> }
@@ -260,9 +267,24 @@ export function createChatRuntime(
     raw: unknown,
     stream: boolean,
     regenerateBase?: string,
+    credential?: string,
+    createdChat?: Chat,
   ) {
     return store.transaction(async () => {
-      const chat = await chatFor(a, chatId);
+      const chat = createdChat ?? (await chatFor(a, chatId));
+      if (
+        createdChat &&
+        (createdChat.id !== chatId ||
+          createdChat.org_id !== a.orgId ||
+          createdChat.user_id !== a.userId ||
+          !(await store.permission(
+            a,
+            "organization",
+            a.orgId,
+            "active_member",
+          )))
+      )
+        throw new HttpError(404, "Conversation not found");
       await assertReadable(a, JSON.parse(chat.dependencies));
       const input = await validateInput(a, raw);
       const turnId = input.id ?? randomUUID();
@@ -304,10 +326,11 @@ export function createChatRuntime(
           "Wait for the current queue to finish before regenerating.",
         );
       await store.run(
-        "INSERT INTO chat_turns(id,chat_id,session_token,content,document_ids,attachments,selected_model,stream,regenerate_base) VALUES(?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?)",
+        "INSERT INTO chat_turns(id,chat_id,session_token,credential_type,content,document_ids,attachments,selected_model,stream,regenerate_base) VALUES(?,?,?,?,?,?::jsonb,?::jsonb,?::jsonb,?,?)",
         turnId,
         chatId,
-        store.encrypt(a.token),
+        store.encrypt(credential ?? a.token),
+        credential === undefined ? "session" : "external",
         input.content,
         JSON.stringify(input.documentIds),
         JSON.stringify(input.attachments),
@@ -336,7 +359,17 @@ export function createChatRuntime(
         controller.abort();
         controller.signal.throwIfAborted();
       }
-      const a = await authenticateToken(store.decrypt(turn.session_token));
+      const token = store.decrypt(turn.session_token);
+      let a: Actor | undefined;
+      if (turn.credential_type === "external") {
+        const owner = await store.one<{ org_id: string }>(
+          "SELECT org_id FROM chats WHERE id=?",
+          turn.chat_id,
+        );
+        if (!owner) throw new HttpError(404, "Conversation not found");
+        a = await authenticateExternal?.(token, owner.org_id);
+      } else a = await authenticateToken(token);
+      if (!a) throw new HttpError(401, "Authorization is no longer available");
       const chat = await chatFor(a, turn.chat_id);
       await assertReadable(a, [...JSON.parse(chat.dependencies), ...deps]);
       return { a, chat };
@@ -383,7 +416,11 @@ export function createChatRuntime(
       let activeLookups = 0;
       let retrievalStarted = 0;
       const runLookup = async (
-        lookup: (actor: Actor) => Promise<typeof retrieval>,
+        lookup: (
+          actor: Actor,
+        ) => Promise<
+          typeof retrieval & { images?: DocumentPageImage[]; message?: string }
+        >,
       ) => {
         if (activeLookups++ === 0) retrievalStarted = performance.now();
         try {
@@ -437,9 +474,25 @@ export function createChatRuntime(
                 title: source.name,
                 documentId: source.documentId,
                 section: source.title,
+                sectionPath: source.sectionPath,
                 page: source.page,
+                endPage: source.endPage,
                 text: source.content,
               })),
+              ...(found.message ? { message: found.message } : {}),
+              ...(found.images
+                ? {
+                    images: found.images.map((image) => ({
+                      ...image,
+                      citation:
+                        retrieval.results.findIndex(
+                          (source) =>
+                            source.documentId === image.documentId &&
+                            source.passageId === `visual-page-${image.page}`,
+                        ) + 1,
+                    })),
+                  }
+                : {}),
             };
           });
           mergeChain = merged.catch(() => {});
@@ -455,7 +508,11 @@ export function createChatRuntime(
       };
       const lookupDocuments = (
         key: string,
-        lookup: (actor: Actor) => Promise<typeof retrieval>,
+        lookup: (
+          actor: Actor,
+        ) => Promise<
+          typeof retrieval & { images?: DocumentPageImage[]; message?: string }
+        >,
       ) => {
         const pending = pendingLookups.get(key);
         if (pending) return pending;
@@ -523,14 +580,17 @@ export function createChatRuntime(
         {
           signal: controller.signal,
           attachedDocuments: turn.attachments,
-          searchDocuments: (query, signal) =>
-            lookupDocuments(`search:${query.trim()}`, (currentActor) =>
-              providers.retrieve(
-                currentActor,
-                query,
-                turn.document_ids,
-                signal ?? controller.signal,
-              ),
+          searchDocuments: (query, signal, filters) =>
+            lookupDocuments(
+              `search:${query.trim()}:${JSON.stringify(filters ?? {})}`,
+              (currentActor) =>
+                providers.retrieve(
+                  currentActor,
+                  query,
+                  turn.document_ids,
+                  signal ?? controller.signal,
+                  filters,
+                ),
             ),
           inspectDocument: (input, signal) => {
             if (
@@ -572,6 +632,46 @@ export function createChatRuntime(
                 };
               },
             );
+          },
+          viewDocumentPages: async (input, signal) => {
+            if (
+              !turn.document_ids.includes(input.documentId) &&
+              !retrieval.results.some(
+                (source) => source.documentId === input.documentId,
+              )
+            )
+              throw new HttpError(
+                400,
+                "Choose an attached or retrieved document to inspect.",
+              );
+            return (await lookupDocuments(
+              `visual:${JSON.stringify(input)}`,
+              async (currentActor) => {
+                const found = await visuals.view(
+                  currentActor,
+                  input,
+                  signal ?? controller.signal,
+                );
+                return {
+                  mode: "jev",
+                  limited: false,
+                  ...found,
+                  trace: found.results.length
+                    ? [
+                        {
+                          stage: "document",
+                          label: found.results[0].name,
+                          resourceId: input.documentId,
+                        },
+                      ]
+                    : [],
+                };
+              },
+            )) as {
+              sources: unknown[];
+              images?: (DocumentPageImage & { citation: number })[];
+              message?: string;
+            };
           },
           beforeStep: async () => {
             await check();
@@ -696,8 +796,11 @@ export function createChatRuntime(
 
   router.get("/", async (req, res) => {
     const a = await authenticate(req);
-    const chats = await store.all<Chat>(
-      "SELECT id,title,updated,dependencies FROM chats WHERE org_id=? AND user_id=? ORDER BY updated DESC",
+    const chats = await store.all<
+      Chat & { activity: ChatTurn["status"] | null }
+    >(
+      "SELECT id,title,updated,dependencies,(SELECT status FROM chat_turns WHERE chat_id=chats.id AND status=ANY(?::text[]) ORDER BY position LIMIT 1) AS activity FROM chats WHERE org_id=? AND user_id=? ORDER BY updated DESC",
+      pendingStatuses,
       a.orgId,
       a.userId,
     );
@@ -710,6 +813,7 @@ export function createChatRuntime(
             title: blocked ? "Sources no longer available" : chat.title,
             updated: chat.updated,
             blocked,
+            working: !blocked && isChatWorking(chat.activity),
           };
         }),
       ),
@@ -976,7 +1080,7 @@ export function createChatRuntime(
       const input = z
         .object({
           content: z.string().trim().min(1).max(4000).optional(),
-          action: z.enum(["retry", "up", "down"]).optional(),
+          action: z.enum(["retry", "send", "up", "down"]).optional(),
         })
         .strict()
         .parse(req.body);
@@ -992,7 +1096,7 @@ export function createChatRuntime(
           turn.id,
         );
       }
-      if (input.action === "retry") {
+      if (input.action === "retry" || input.action === "send") {
         await assertReadable(a, JSON.parse(chat.dependencies));
         await validateInput(a, {
           content: input.content ?? turn.content,
@@ -1000,10 +1104,34 @@ export function createChatRuntime(
           selectedModel: turn.selected_model,
         });
         await store.run(
-          "UPDATE chat_turns SET status='queued',session_token=?,error=NULL,error_status=NULL,partial_text='' WHERE id=?",
+          "UPDATE chat_turns SET status='queued',session_token=?,credential_type='session',error=NULL,error_status=NULL,partial_text='' WHERE id=?",
           store.encrypt(a.token),
           turn.id,
         );
+        if (input.action === "send") {
+          const rows = await store.all<Turn>(
+            "SELECT * FROM chat_turns WHERE chat_id=? AND status=ANY(?::text[]) ORDER BY position",
+            chat.id,
+            pendingStatuses,
+          );
+          const from = rows.findIndex((row) => row.id === turn.id);
+          const positions = rows.map((row) => row.position);
+          const [moved] = rows.splice(from, 1);
+          const to =
+            rows.findLastIndex((row) => activeStatuses.includes(row.status)) +
+            1;
+          rows.splice(to, 0, moved);
+          for (
+            let index = Math.min(from, to);
+            index <= Math.max(from, to);
+            index++
+          )
+            await store.run(
+              "UPDATE chat_turns SET position=? WHERE id=?",
+              positions[index],
+              rows[index].id,
+            );
+        }
       } else if (input.action) {
         if (turn.status !== "queued")
           throw new HttpError(409, "Retry or remove this message first.");
@@ -1091,6 +1219,67 @@ export function createChatRuntime(
     router,
     process,
     snapshot,
+    async startAnswer(
+      a: Actor,
+      raw: unknown,
+      runId: string,
+      credential: string,
+    ) {
+      return store.transaction(async () => {
+        const created = await store.one<Chat>(
+          "INSERT INTO chats(id,org_id,user_id,title,updated) VALUES(?,?,?,'New conversation',?) RETURNING *",
+          runId,
+          a.orgId,
+          a.userId,
+          new Date().toISOString(),
+        );
+        if (!created)
+          throw new HttpError(503, "Conversation could not be created");
+        await enqueue(
+          a,
+          runId,
+          { ...(raw as object), id: runId },
+          true,
+          undefined,
+          credential,
+          created,
+        );
+        return runId;
+      });
+    },
+    async answerRun(a: Actor, runId: string) {
+      await chatFor(a, runId, false);
+      const turn = await store.one<Turn>(
+        "SELECT * FROM chat_turns WHERE id=? AND chat_id=?",
+        runId,
+        runId,
+      );
+      if (!turn) throw new HttpError(404, "Run not found");
+      const chat = await snapshot(a, runId);
+      if (chat.blocked)
+        throw new HttpError(
+          403,
+          "Source access changed. The result is no longer available.",
+        );
+      const answer = chat.messages.find(
+        (message) => message.role === "assistant" && message.turnId === runId,
+      );
+      return {
+        status: turn.status === "dismissed" ? "cancelled" : turn.status,
+        partialText: turn.partial_text,
+        ...(answer ? { result: answer } : {}),
+        ...(turn.error ? { error: turn.error } : {}),
+      };
+    },
+    async cancelAnswer(a: Actor, runId: string) {
+      await chatFor(a, runId, false);
+      await store.run(
+        "UPDATE chat_turns SET status=CASE WHEN status IN ('retrieving','generating') THEN 'cancelling' ELSE 'cancelled' END WHERE id=? AND chat_id=? AND status IN ('queued','retrieving','generating')",
+        runId,
+        runId,
+      );
+      running.get(runId)?.controller.abort();
+    },
     closeStreams() {
       for (const close of streams) close();
     },
@@ -1100,6 +1289,7 @@ export function createChatRuntime(
       const active = [...running.values()];
       for (const { controller } of active) controller.abort();
       await Promise.all(active.map(({ work }) => work));
+      await visuals.close();
     },
   };
 }

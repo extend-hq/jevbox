@@ -5,6 +5,9 @@ import { createProviders } from "./providers";
 import { createChatRuntime } from "./chat";
 import { authenticateToken } from "./sessions";
 import { createAuthentication } from "./auth";
+import { createExternalAccess } from "./external-access";
+import { createRuns } from "./runs";
+import { createUploads } from "./uploads";
 import { resolve } from "node:path";
 import {
   createAuthEmailSender,
@@ -31,20 +34,37 @@ export function createWorkers(
     fetcher?: typeof fetch;
     sendAuthEmail?: SendAuthEmail;
     chats?: ReturnType<typeof createChatRuntime>;
+    runs?: ReturnType<typeof createRuns>;
+    external?: ReturnType<typeof createExternalAccess>;
   },
 ) {
   const providers = createProviders(store, options.fetcher);
   const thumbnails = createThumbnailJobs(store);
   const organization = createOrganization(store, options.fetcher);
+  const authentication =
+    options.external && options.chats
+      ? undefined
+      : createAuthentication(store, {
+          ...options,
+          directory: resolve(
+            options.directory ?? process.env.DATA_DIR ?? ".data",
+          ),
+        });
+  const external =
+    options.external ??
+    createExternalAccess(
+      store,
+      authentication!.auth,
+      providers,
+      options.origin,
+      authentication!.validateOAuthToken,
+      true,
+      createUploads(store),
+    );
   const chats =
     options.chats ??
     (() => {
-      const auth = createAuthentication(store, {
-        ...options,
-        directory: resolve(
-          options.directory ?? process.env.DATA_DIR ?? ".data",
-        ),
-      }).auth;
+      const auth = authentication!.auth;
       return createChatRuntime(
         store,
         providers,
@@ -52,8 +72,11 @@ export function createWorkers(
           throw new Error("Worker has no HTTP authentication");
         },
         (token) => authenticateToken(store, auth, token),
+        external.delegatedActor,
       );
     })();
+  const runs =
+    options.runs ?? createRuns(store, external, chats, options.origin);
   const localDevelopment =
     process.env.AUTH_LOCAL_DEVELOPMENT === "true" &&
     ["localhost", "127.0.0.1", "[::1]"].includes(
@@ -101,10 +124,25 @@ export function createWorkers(
         job.data.chatId,
         sourceId,
       );
+    if (sourceName === queues.search)
+      await store.run(
+        "UPDATE external_runs SET status='failed',error=?,credential=NULL,attempt_id=NULL,updated=now() WHERE id=? AND job_id=? AND status IN ('queued','running')",
+        message,
+        job.data.runId,
+        sourceId,
+      );
   }
   async function reconcile() {
     const schema = store.jobs.schema;
     const message = "The background job is no longer available. Please retry.";
+    await store.run(
+      `UPDATE external_runs SET status='failed',error=?,credential=NULL,attempt_id=NULL,updated=now() WHERE kind='search' AND status IN ('queued','running') AND NOT EXISTS (SELECT 1 FROM "${schema}".job j WHERE j.name=? AND j.id=external_runs.job_id AND j.state IN ('created','retry','active'))`,
+      message,
+      queues.search,
+    );
+    await store.run(
+      "DELETE FROM external_runs WHERE expires<now() AND (kind='answer' OR status NOT IN ('queued','running'))",
+    );
     await store.run(
       `UPDATE resources SET thumbnail_status='failed' WHERE kind='document' AND thumbnail_status IN ('queued','processing') AND NOT EXISTS (SELECT 1 FROM "${schema}".job j WHERE j.name=? AND j.id=resources.thumbnail_job_id AND j.state IN ('created','retry','active'))`,
       queues.thumbnail,
@@ -141,6 +179,7 @@ export function createWorkers(
     [queues.filing]: organization.process,
     [queues.review]: organization.review,
     [queues.chat]: chats.process,
+    [queues.search]: runs.process,
     [queues.email]: async (job) => {
       if (
         !job.data.encryptedEmail ||
@@ -222,6 +261,7 @@ export function createWorkers(
     [queues.filing]: 3,
     [queues.review]: 1,
     [queues.chat]: 3,
+    [queues.search]: 3,
     [queues.email]: 2,
     [queues.cleanup]: 1,
     [queues.failed]: 1,
@@ -248,7 +288,11 @@ export function createWorkers(
             localConcurrency: concurrency[name],
             pollingIntervalSeconds: 1,
             notifyPollingIntervalSeconds:
-              name === queues.index ? 3 : name === queues.failed ? 1 : 10,
+              name === queues.index
+                ? 3
+                : name === queues.failed || name === queues.chat
+                  ? 1
+                  : 10,
             heartbeatRefreshSeconds: 5,
           },
           async ([job]) => {
