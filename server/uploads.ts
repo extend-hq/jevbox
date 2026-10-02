@@ -258,7 +258,10 @@ export function decodeUpload(content: string) {
   return body;
 }
 
-export function createUploads(store: Store) {
+export function createUploads(
+  store: Store,
+  { rateLimits = true }: { rateLimits?: boolean } = {},
+) {
   const active = new Set<string>();
   const leases = new WeakMap<
     Request,
@@ -351,6 +354,7 @@ export function createUploads(store: Store) {
   async function admit(a: Actor) {
     await store.transaction(async () => {
       await capacity(a, 0);
+      if (!rateLimits) return;
       const time = Date.now();
       await store.run("DELETE FROM upload_usage WHERE expires_at<now()");
       for (const [period, limits] of [

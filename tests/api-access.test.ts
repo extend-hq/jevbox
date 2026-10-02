@@ -1403,6 +1403,18 @@ test("upload quotas persist across runtime replacement and credentials, and reje
     }),
     (error: unknown) => error instanceof HttpError && error.status === 429,
   );
+  const unlimitedAttempts = createUploads(runtime.store, { rateLimits: false });
+  await unlimitedAttempts.admit(a);
+  assert.equal(
+    (
+      await runtime.store.one<{ attempts: number }>(
+        "SELECT attempts FROM upload_usage WHERE subject=? AND bucket=? AND period=60000",
+        `user:${userId}`,
+        Math.floor(clock / 60_000),
+      )
+    )!.attempts,
+    5,
+  );
   await runtime.store.run("DELETE FROM upload_usage");
   const usage = createUploads(runtime.store);
   const original = await runtime.store.one<{ size: number }>(
@@ -1450,6 +1462,10 @@ test("upload quotas persist across runtime replacement and credentials, and reje
         new Date().toISOString(),
       );
     await assert.rejects(usage.admit(a), /processing queue is full/);
+    await assert.rejects(
+      unlimitedAttempts.admit(a),
+      /processing queue is full/,
+    );
   } finally {
     for (const id of queued)
       await runtime.store.run("DELETE FROM resources WHERE id=?", id);

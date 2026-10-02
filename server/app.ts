@@ -94,7 +94,7 @@ export async function createApp(options: {
   }
   const { auth } = authentication;
   const providers = createProviders(store, options.fetcher);
-  const uploads = createUploads(store);
+  const uploads = createUploads(store, { rateLimits: options.rateLimits });
   const external = createExternalAccess(
     store,
     auth,
