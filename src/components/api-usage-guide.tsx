@@ -1,61 +1,10 @@
 import { Button } from "./coss/button";
 import { Badge } from "./coss/badge";
 import { Code, Copy } from "./icons";
-
-function RequestCode({
-  label,
-  text,
-  onCopy,
-}: {
-  label: string;
-  text: string;
-  onCopy: (value: string) => void;
-}) {
-  return (
-    <div className="api-docs-code">
-      <div className="api-docs-code-heading">
-        <span>{label}</span>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={`Copy ${label}`}
-          onClick={() => onCopy(text)}
-        >
-          <Copy size={13} />
-          Copy
-        </Button>
-      </div>
-      <pre>
-        <code>{text}</code>
-      </pre>
-    </div>
-  );
-}
-
-function Parameters({ rows }: { rows: { name: string; detail: string }[] }) {
-  return (
-    <div className="api-docs-table-scroll">
-      <table className="api-docs-table">
-        <thead>
-          <tr>
-            <th scope="col">Parameter</th>
-            <th scope="col">Details</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.name}>
-              <th scope="row">
-                <code>{row.name}</code>
-              </th>
-              <td>{row.detail}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+import {
+  DocumentationCode as RequestCode,
+  DocumentationTable as Parameters,
+} from "./api-docs";
 
 export function ApiUsageGuide({
   origin,

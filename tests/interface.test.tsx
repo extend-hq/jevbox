@@ -2109,7 +2109,11 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
   const row = (scope: Element, label: string) => {
     const element = [
       ...scope.querySelectorAll<HTMLButtonElement>("button.retrieval-node"),
-    ].find((e) => e.querySelector("span")?.textContent === label);
+    ].find(
+      (e) =>
+        e.querySelector("span:not([data-resource-thumbnail])")?.textContent ===
+        label,
+    );
     assert.ok(element);
     return element;
   };
