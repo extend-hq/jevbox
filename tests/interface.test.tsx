@@ -110,10 +110,8 @@ beforeEach(() => {
   document.body.append(host);
   root = createRoot(host);
 });
-afterEach(async (t) => {
-  console.error("unmount start", t.name);
+afterEach(async () => {
   await act(async () => root.unmount());
-  console.error("unmount done", t.name);
   document.body.replaceChildren();
 });
 after(() => {
@@ -2465,10 +2463,8 @@ test("coss toasts stack with filled status icons and support downward swipe dism
 });
 
 test("attachment picker searches document contents on Enter and keeps attachment badges and preview slots", async () => {
-  console.error("picker import start");
   const { ChatComposerTools } =
     await import("../src/components/chat-composer-tools");
-  console.error("picker imported");
   const { useState, useRef } = await import("react");
   const resources = ["Alpha", "Beta"].map((name) => ({
     id: name.toLowerCase(),
@@ -2522,9 +2518,7 @@ test("attachment picker searches document contents on Enter and keeps attachment
     );
   }
   await act(async () => root.render(<Picker />));
-  console.error("picker rendered");
   await click(button("Attach documents"));
-  console.error("picker opened");
   const input = document.querySelector<HTMLInputElement>(
     '[aria-label="Find a document to attach"]',
   )!;
@@ -2546,24 +2540,25 @@ test("attachment picker searches document contents on Enter and keeps attachment
     ),
   );
   assert.deepEqual(searches, ["content query"]);
-  console.error("picker searched");
   const option = document.querySelector('[role="option"]')!;
   assert.ok(option.textContent?.includes("Beta.bin"));
   assert.equal(option.querySelectorAll('[data-slot="badge"]').length, 2);
   assert.ok(option.querySelector("[data-resource-thumbnail]"));
   assert.ok(option.querySelector('[style*="aspect-ratio: 1"]'));
   await click(option);
-  console.error("picker attached");
-  console.error("picker popup remains", Boolean(document.querySelector('[aria-label="Library documents"]')));
+  const deadline = Date.now() + 1000;
+  while (
+    document.querySelector('[aria-label="Library documents"]') &&
+    Date.now() < deadline
+  )
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
   assert.equal(
-    document.querySelector('[aria-label="Library documents"]'),
-    null,
+    Boolean(document.querySelector('[aria-label="Library documents"]')),
+    false,
   );
-  console.error("picker popup asserted");
   assert.ok(
     document.querySelector(".prompt-document-pill [data-resource-thumbnail]"),
   );
-  console.error("picker thumbnail asserted");
   assert.ok(
     document
       .querySelector(".prompt-document-pill")
@@ -2572,7 +2567,6 @@ test("attachment picker searches document contents on Enter and keeps attachment
 });
 
 test("promise toasts keep their identity while changing from loading to success or a visible error", async () => {
-  console.error("promise test started");
   const { toastManager } = await import("../src/components/coss/toast");
   await act(async () => root.render(<ToastProvider>{null}</ToastProvider>));
   let resolve!: (value: number) => void;
@@ -2587,7 +2581,6 @@ test("promise toasts keep their identity while changing from loading to success 
       error: "Failed",
     });
   });
-  console.error("promise loading rendered");
   const toast = document.querySelector<HTMLElement>(
     '[data-slot="toast-root"]',
   )!;
@@ -2604,7 +2597,6 @@ test("promise toasts keep their identity while changing from loading to success 
     resolve(2);
     await result;
   });
-  console.error("promise succeeded");
   assert.ok(
     document.querySelector('[data-slot="toast-root"]') === toast,
     "The promise toast should update in place",
@@ -2629,12 +2621,10 @@ test("promise toasts keep their identity while changing from loading to success 
       }),
     });
   });
-  console.error("promise error loading rendered");
   await act(async () => {
     reject(new Error("Connect TypeSafe to continue."));
     await assert.rejects(failure, /Connect TypeSafe/);
   });
-  console.error("promise rejected");
   const errorToast = [
     ...document.querySelectorAll('[data-slot="toast-root"]'),
   ].find((node) => node.textContent?.includes("Couldn't organize documents"));

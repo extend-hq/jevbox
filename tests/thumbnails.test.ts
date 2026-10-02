@@ -284,8 +284,14 @@ test("thumbnail admission rolls back with uploads and deduplicates ready preview
   );
 });
 
-test("unsupported binary content preserves the upload and thumbnail errors stay independent", async () => {
-  const id = await upload(Buffer.from("opaque"), "Content.bin");
+test("stored audio omits thumbnails and thumbnail errors stay independent", async () => {
+  const id = await upload(
+    Buffer.from(
+      "524946462600000057415645666d74201000000001000100401f0000803e00000200100064617461020000000000",
+      "hex",
+    ),
+    "Audio.wav",
+  );
   assert.equal(
     (
       await runtime.store.one<any>(
@@ -295,7 +301,13 @@ test("unsupported binary content preserves the upload and thumbnail errors stay 
     ).thumbnail_status,
     "unsupported",
   );
-  const invalid = await upload(Buffer.from("invalid"), "Image.png");
+  const invalid = await upload();
+  await runtime.store.files.write(
+    "document",
+    invalid,
+    Buffer.from("invalid"),
+    "image/png",
+  );
   await runJobs(runtime, [queues.thumbnail]);
   const resource = await runtime.store.one<any>(
     "SELECT thumbnail_status,status FROM resources WHERE id=?",

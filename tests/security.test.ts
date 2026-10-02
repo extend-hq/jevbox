@@ -207,6 +207,7 @@ before(async () => {
   );
 });
 after(async () => {
+  await runtime.closeChats();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await database.cleanup(runtime.store);
   rmSync(directory, { recursive: true, force: true });
@@ -549,7 +550,7 @@ test("heading hierarchy and link provenance survive indexing", () => {
   assert.equal(parsed.nodes[0].page, 3);
   assert.equal(parsed.nodes[0].endPage, 4);
 });
-test("additional formats index as text or remain safely stored", async () => {
+test("additional text formats index and unsupported uploads are rejected", async () => {
   const code = await upload(
     owner,
     "export const enabled = true;",
@@ -557,19 +558,12 @@ test("additional formats index as text or remain safely stored", async () => {
     "settings.ts",
   );
   assert.equal((await req(`/resources/${code}`, owner)).data.status, "ready");
-  const unknown = await upload(
-    owner,
-    "binary-data",
-    undefined,
-    "attachment.bin",
+  const unsupported = new FormData();
+  unsupported.append("file", new Blob(["binary-data"]), "attachment.bin");
+  assert.equal(
+    (await req("/documents", owner, "POST", unsupported)).status,
+    415,
   );
-  const stored = await req(`/resources/${unknown}`, owner);
-  assert.equal(stored.data.status, "stored");
-  assert.equal(stored.data.parsed, null);
-  const response = await fetch(base + `/api/documents/${unknown}/content`, {
-    headers: { Cookie: owner },
-  });
-  assert.match(response.headers.get("content-disposition")!, /^attachment/);
   const html = await upload(
     owner,
     "<script>alert(1)</script>",
@@ -2148,7 +2142,7 @@ test("empty search results reach the model without rejected excerpts", async () 
     );
     assert.match(
       generation.body.input[0].content,
-      /Say when evidence is missing/,
+      /If the requested fact is not established, say so and stop/,
     );
   } finally {
     scoreContext = undefined;

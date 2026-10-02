@@ -1406,13 +1406,11 @@ test("upload quotas persist across runtime replacement and credentials, and reje
   const unlimitedAttempts = createUploads(runtime.store, { rateLimits: false });
   await unlimitedAttempts.admit(a);
   assert.equal(
-    (
-      await runtime.store.one<{ attempts: number }>(
-        "SELECT attempts FROM upload_usage WHERE subject=? AND bucket=? AND period=60000",
-        `user:${userId}`,
-        Math.floor(clock / 60_000),
-      )
-    )!.attempts,
+    (await runtime.store.one<{ attempts: number }>(
+      "SELECT attempts FROM upload_usage WHERE subject=? AND bucket=? AND period=60000",
+      `user:${userId}`,
+      Math.floor(clock / 60_000),
+    ))!.attempts,
     5,
   );
   await runtime.store.run("DELETE FROM upload_usage");
