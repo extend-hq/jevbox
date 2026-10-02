@@ -32,7 +32,10 @@ import { createAuthentication } from "./auth";
 import { isAPIError } from "better-auth/api";
 import type { SendAuthEmail } from "./auth-email";
 import multer from "multer";
-import { rateLimit, ipKeyGenerator } from "express-rate-limit";
+import {
+  createApiRateLimiter,
+  createAnonymousRateLimiter,
+} from "./rate-limits";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { z } from "zod";
 import {
@@ -163,19 +166,10 @@ export async function createApp(options: {
       return res.status(403).json({ error: "Request origin rejected" });
     next();
   });
-  if (options.rateLimits !== false)
-    app.use(
-      ["/api", "/mcp"],
-      rateLimit({
-        windowMs: 60000,
-        limit: 180,
-        keyGenerator: (req) =>
-          `${ipKeyGenerator(req.ip ?? "127.0.0.1")}:${["GET", "HEAD"].includes(req.method) ? "read" : "write"}`,
-        message: { error: "Too many requests. Wait a moment and try again." },
-        standardHeaders: true,
-        legacyHeaders: false,
-      }),
-    );
+  const anonymousLimit =
+    options.rateLimits !== false ? createAnonymousRateLimiter() : null;
+  if (anonymousLimit)
+    app.use(["/api/auth", "/api/shared", "/api/v1", "/mcp"], anonymousLimit);
   const audit = async (
     actor: Actor,
     action: string,
@@ -317,15 +311,21 @@ export async function createApp(options: {
     createMcpRouter(external, auth, options.origin, uploads, runs),
   );
   app.use("/api/shared", createLinkSharingRouter(store));
-  app.use("/api", async (req, _res, next) => {
+  app.use("/api", async (req, res, next) => {
     try {
       (req as AuthedRequest).actor = await authenticate(req);
       next();
     } catch (error) {
+      if (anonymousLimit) return anonymousLimit(req, res, () => next(error));
       next(error);
     }
   });
   const actor = (req: Request) => (req as AuthedRequest).actor;
+  if (options.rateLimits !== false)
+    app.use(
+      "/api",
+      createApiRateLimiter((req) => actor(req).userId),
+    );
   async function admin(req: Request) {
     const a = await authenticate(req);
     if (!(await store.permission(a, "organization", a.orgId, "manage")))

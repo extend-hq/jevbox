@@ -136,6 +136,107 @@ test("metal flow distances continue from the document through nested and wrapped
   assert.ok(flow.rowDistances[4] > flow.rowDistances[0]);
 });
 
+test("shared outline trunks are drawn once and every segment belongs to the document tree", () => {
+  const rows = [
+    { depth: 0, parent: -1 },
+    ...Array.from({ length: 60 }, () => ({ depth: 1, parent: 0 })),
+  ];
+  const layout = {
+    railY: 0,
+    rowTop: -0.24,
+    rowHeight: 0.32,
+    rowsPerColumn: 24,
+    columnWidth: 4.5,
+    indent: 0.26,
+    cardWidth: 2.9,
+    gap: 0.6,
+  };
+  const { positions } = outlineFlowGeometry(rows, layout);
+  const segments = Array.from({ length: positions.length / 6 }, (_, i) => ({
+    a: [positions[i * 6], positions[i * 6 + 1]],
+    b: [positions[i * 6 + 3], positions[i * 6 + 4]],
+  }));
+  const onSegment = (point: number[], a: number[], b: number[]) => {
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    return (
+      Math.abs(
+        Math.hypot(point[0] - a[0], point[1] - a[1]) +
+          Math.hypot(point[0] - b[0], point[1] - b[1]) -
+          length,
+      ) < 0.000001
+    );
+  };
+  for (let i = 0; i < segments.length; i++) {
+    const a = segments[i];
+    for (const b of segments.slice(i + 1)) {
+      const horizontal =
+        Math.abs(a.a[1] - a.b[1]) < 0.000001 &&
+        Math.abs(b.a[1] - b.b[1]) < 0.000001 &&
+        Math.abs(a.a[1] - b.a[1]) < 0.000001;
+      const vertical =
+        Math.abs(a.a[0] - a.b[0]) < 0.000001 &&
+        Math.abs(b.a[0] - b.b[0]) < 0.000001 &&
+        Math.abs(a.a[0] - b.a[0]) < 0.000001;
+      if (!horizontal && !vertical) continue;
+      const axis = horizontal ? 0 : 1;
+      const overlap =
+        Math.min(
+          Math.max(a.a[axis], a.b[axis]),
+          Math.max(b.a[axis], b.b[axis]),
+        ) -
+        Math.max(
+          Math.min(a.a[axis], a.b[axis]),
+          Math.min(b.a[axis], b.b[axis]),
+        );
+      assert.ok(
+        overlap < 0.000001,
+        "shared trunks must not stack repeated strokes",
+      );
+    }
+  }
+  const cards = rows.map((row, i) => ({
+    left: Math.floor(i / 24) * 4.5 + 0.3 + row.depth * 0.26,
+    right: Math.floor(i / 24) * 4.5 + 0.3 + 2.9,
+    y: -0.24 - (i % 24) * 0.32,
+  }));
+  const onCard = (point: number[], card: (typeof cards)[number]) =>
+    point[0] >= card.left - 0.000001 &&
+    point[0] <= card.right + 0.000001 &&
+    Math.abs(point[1] - card.y) <= 0.125;
+  const reached = new Set<number>([0]);
+  const attached = new Set<number>();
+  let previous = -1;
+  while (reached.size + attached.size !== previous) {
+    previous = reached.size + attached.size;
+    for (const index of reached) {
+      const segment = segments[index];
+      cards.forEach((card, i) => {
+        if (onCard(segment.a, card) || onCard(segment.b, card)) attached.add(i);
+      });
+      segments.forEach((other, i) => {
+        if (
+          onSegment(other.a, segment.a, segment.b) ||
+          onSegment(other.b, segment.a, segment.b) ||
+          onSegment(segment.a, other.a, other.b) ||
+          onSegment(segment.b, other.a, other.b)
+        )
+          reached.add(i);
+      });
+    }
+    for (const index of attached)
+      segments.forEach((segment, i) => {
+        if (onCard(segment.a, cards[index]) || onCard(segment.b, cards[index]))
+          reached.add(i);
+      });
+  }
+  assert.equal(reached.size, segments.length, "no disconnected segments");
+  assert.equal(
+    attached.size,
+    rows.length,
+    "every card connects back to the document",
+  );
+});
+
 test("search filters validate dates and include the entire final UTC day", () => {
   assert.equal(
     searchFiltersSchema.safeParse({

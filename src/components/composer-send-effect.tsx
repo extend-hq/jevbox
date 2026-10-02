@@ -22,7 +22,7 @@ export function ComposerSendEffect({
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   const reflections = useMemo(
-    () => [{ ref: modelRef, strength: 0.55 }],
+    () => [{ ref: modelRef, strength: 1.1 }],
     [modelRef],
   );
   useEffect(() => {
@@ -34,11 +34,11 @@ export function ComposerSendEffect({
   useEffect(() => {
     if (typeof WebGL2RenderingContext === "undefined") return;
     setSharedPresetMode({
-      ...PRESETS.silver.modes[dark ? "dark" : "light"],
-      colorTint: dark ? "#559effa8" : "#386fdc80",
-      speed: 0.16,
-      shiftBlue: 0.18,
-      distortion: 0.28,
+      ...PRESETS.chromatic.modes[dark ? "dark" : "light"],
+      colorTint: dark ? "#78b3ff80" : "#4a8ce580",
+      speed: 1,
+      shiftRed: 0.75,
+      shiftBlue: 0.8,
     });
     return () => setSharedPresetMode(null);
   }, [dark]);
@@ -47,14 +47,13 @@ export function ComposerSendEffect({
     <MetalFx
       className="composer-send-metal"
       variant="circle"
-      preset="silver"
+      preset="chromatic"
       theme={dark ? "dark" : "light"}
-      strength={disabled ? 0.35 : 0.95}
-      glowGain={0.65}
-      ringCssPx={1.6}
-      innerShadow
-      paused={reducedMotion || disabled}
-      normalizeHostStyles={false}
+      strength={disabled ? 0.78 : 1}
+      glowGain={1}
+      ringCssPx={1}
+      scale={0.8}
+      paused={reducedMotion}
       reflectionTargets={reflections}
     >
       {children}

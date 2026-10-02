@@ -462,8 +462,12 @@ test("chat sidebar recovers background activity and refreshes it when the window
   assert.equal(host.querySelectorAll(".chat-history-spinner").length, 1);
   assert.ok(
     host.querySelector(
-      '.chat-history-row a[aria-label="Background"] .chat-history-spinner',
+      '.chat-history-row:has(a[aria-label="Background"]) > .chat-history-spinner',
     ),
+  );
+  assert.equal(
+    host.querySelector(".chat-history-row a .chat-history-spinner"),
+    null,
   );
   items = items.map((item) => ({ ...item, working: false }));
   await act(async () => document.dispatchEvent(new Event("visibilitychange")));
@@ -584,7 +588,9 @@ test("switching chats keeps a bottom composer and blank transcript until the sel
     assert.equal(host.querySelector(".new-chat"), null);
     assert.equal(host.querySelector(".chat-empty"), null);
     assert.ok(host.querySelector(".chat-compose"));
+    assert.equal(host.querySelector(".chat-history-spinner"), null);
     await act(async () => render("second"));
+    assert.equal(host.querySelector(".chat-history-spinner"), null);
     await act(async () =>
       resolve.get("/api/chats/first")!(
         Response.json({

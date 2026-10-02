@@ -13,6 +13,7 @@ import { FOLDER_GLYPH_SVG } from "./extend/folder-glyph";
 import { layoutSpatialTree, type SpatialNode } from "../lib/spatial-tree";
 import { occludesSpatialFocus } from "../lib/spatial-focus";
 import { outlineFlowGeometry } from "../lib/spatial-outline";
+import { OUTLINE_METAL_SHADER } from "../lib/spatial-metal";
 import {
   createDetailThumbnailQueue,
   detailThumbnailCandidates,
@@ -76,7 +77,6 @@ const FOREGROUND_MAP_BLUR = /* glsl */ `
 const LABEL_HEIGHT = 0.22;
 const FOLDER_LABEL_HEIGHT = 0.46;
 const LINK_SEGMENTS = 32;
-const TREE_REVEAL_DISTANCE = 12;
 const TREE_ROW = 0.32;
 const TREE_CARD_HEIGHT = 0.25;
 const TREE_CARD_WIDTH = 2.9;
@@ -301,14 +301,14 @@ function cardTexture(
   context.fill();
   context.save();
   context.clip();
-  const leftReflection = context.createLinearGradient(0, 0, 78, 0);
-  leftReflection.addColorStop(0, options.dark ? "#b7d5ff55" : "#417bc12c");
+  const leftReflection = context.createLinearGradient(0, 0, 24, 0);
+  leftReflection.addColorStop(0, options.dark ? "#b7d5ff2c" : "#417bc11c");
   leftReflection.addColorStop(1, "#719bf900");
   context.fillStyle = leftReflection;
-  context.fillRect(0, 0, 78, canvas.height);
+  context.fillRect(0, 0, 24, canvas.height);
   if (options.accent) {
     const rightReflection = context.createLinearGradient(
-      canvas.width - 90,
+      canvas.width - 24,
       0,
       canvas.width,
       0,
@@ -316,10 +316,10 @@ function cardTexture(
     rightReflection.addColorStop(0, `${options.accent}00`);
     rightReflection.addColorStop(
       1,
-      `${options.accent}${options.dark ? "55" : "35"}`,
+      `${options.accent}${options.dark ? "2c" : "1c"}`,
     );
     context.fillStyle = rightReflection;
-    context.fillRect(canvas.width - 90, 0, 90, canvas.height);
+    context.fillRect(canvas.width - 24, 0, 24, canvas.height);
   }
   context.restore();
   context.lineWidth = 2;
@@ -461,6 +461,7 @@ export function LibrarySpatialView(props: Props) {
   );
 
   useEffect(() => {
+    themeTarget.current = document.documentElement.classList.contains("dark");
     const observer = new MutationObserver(() => {
       themeTarget.current = document.documentElement.classList.contains("dark");
       handle.current?.invalidate();
@@ -638,6 +639,8 @@ export function LibrarySpatialView(props: Props) {
     const particleCount = Math.min(600, 420 + nodes.length * 3);
     const particlePositions = new Float32Array(particleCount * 3);
     const particleSizes = new Float32Array(particleCount);
+    const particleDrift = new Float32Array(particleCount * 3);
+    const particleTime = { value: 0 };
     for (let i = 0; i < particleCount; i++) {
       const radius = extent * 1.2 * Math.cbrt(Math.random());
       const azimuth = Math.random() * Math.PI * 2;
@@ -652,6 +655,14 @@ export function LibrarySpatialView(props: Props) {
         i * 3,
       );
       particleSizes[i] = 0.15 + 0.85 * Math.pow(Math.random(), 1.4);
+      particleDrift.set(
+        [
+          Math.random() * Math.PI * 2,
+          0.12 + Math.random() * 0.1,
+          0.18 + Math.random() * 0.25,
+        ],
+        i * 3,
+      );
     }
     const particleGeometry = geometry(new THREE.BufferGeometry());
     particleGeometry.setAttribute(
@@ -662,21 +673,38 @@ export function LibrarySpatialView(props: Props) {
       "particleScale",
       new THREE.BufferAttribute(particleSizes, 1),
     );
+    particleGeometry.setAttribute(
+      "particleDrift",
+      new THREE.BufferAttribute(particleDrift, 3),
+    );
     const particleMap = texture(softDotTexture());
     const clampParticleSize = (
       value: THREE.PointsMaterial,
       min: number,
       max: number,
     ) => {
-      value.customProgramCacheKey = () => `particle-size-${min}-${max}`;
+      value.customProgramCacheKey = () => `particle-drift-${min}-${max}`;
       value.onBeforeCompile = (shader) => {
         shader.uniforms.particleDpr = { value: pixelRatio };
+        shader.uniforms.particleTime = particleTime;
         shader.vertexShader =
-          "uniform float particleDpr;\nattribute float particleScale;\n" +
-          shader.vertexShader.replace(
-            "#include <logdepthbuf_vertex>",
-            `gl_PointSize = clamp(gl_PointSize, ${min.toFixed(1)} * particleDpr, ${max.toFixed(1)} * particleDpr) * particleScale;\n#include <logdepthbuf_vertex>`,
-          );
+          "uniform float particleDpr;\nuniform float particleTime;\nattribute float particleScale;\nattribute vec3 particleDrift;\n" +
+          shader.vertexShader
+            .replace(
+              "#include <begin_vertex>",
+              `#include <begin_vertex>
+              float drift = particleTime * particleDrift.y;
+              float phase = particleDrift.x;
+              transformed += vec3(
+                sin(drift + phase),
+                cos(drift * 0.83 + phase * 1.7),
+                sin(drift * 0.67 + phase * 2.3)
+              ) * particleDrift.z;`,
+            )
+            .replace(
+              "#include <logdepthbuf_vertex>",
+              `gl_PointSize = clamp(gl_PointSize, ${min.toFixed(1)} * particleDpr, ${max.toFixed(1)} * particleDpr) * particleScale;\n#include <logdepthbuf_vertex>`,
+            );
       };
       return value;
     };
@@ -688,7 +716,8 @@ export function LibrarySpatialView(props: Props) {
           map: particleMap,
           transparent: true,
           opacity: 0.42,
-          depthWrite: false,
+          alphaTest: 0.1,
+          depthWrite: true,
           blending: THREE.NormalBlending,
         }),
       ),
@@ -1025,7 +1054,7 @@ export function LibrarySpatialView(props: Props) {
         );
     };
 
-    // Document structure trees, built lazily when the camera comes close.
+    // Document structure trees are built lazily on selection.
     type Tree = {
       path: string;
       group: THREE.Group;
@@ -1040,25 +1069,28 @@ export function LibrarySpatialView(props: Props) {
     // Outline connectors: world-width so they read clearly up close.
     const lineMaterial = fatLineMaterial({
       color: new THREE.Color(dark ? "#8ba4d4" : "#8295b8").getHex(),
-      linewidth: 0.026,
+      linewidth: 0.012,
       worldUnits: true,
       toneMapped: false,
+      transparent: true,
+      depthFunc: THREE.AlwaysDepth,
     });
     lineMaterial.onBeforeCompile = (shader) => {
       shader.uniforms.outlineTime = outlineTime;
+      shader.uniforms.outlineNight = themeNight;
       shader.vertexShader =
-        `attribute float instanceFlowStart;\nattribute float instanceFlowEnd;\nvarying float vOutlineFlow;\n` +
+        `attribute float instanceFlowStart;\nattribute float instanceFlowEnd;\nvarying float vOutlineFlow;\nvarying float vOutlineAcross;\n` +
         shader.vertexShader.replace(
           "void main() {",
-          "void main() {\n vOutlineFlow = mix(instanceFlowStart, instanceFlowEnd, clamp(position.y, 0.0, 1.0));",
+          "void main() {\n vOutlineFlow = mix(instanceFlowStart, instanceFlowEnd, clamp(position.y, 0.0, 1.0));\n vOutlineAcross = clamp(position.x * 0.5 + 0.5, 0.0, 1.0);",
         );
       shader.fragmentShader =
-        `varying float vOutlineFlow;\nuniform float outlineTime;\n` +
+        `varying float vOutlineFlow;\nvarying float vOutlineAcross;\nuniform float outlineNight;\n${OUTLINE_METAL_SHADER}\n` +
         shader.fragmentShader.replace(
           "gl_FragColor = vec4( diffuseColor.rgb, alpha );",
           `
-        float glint = pow(0.5 + 0.5 * cos((vOutlineFlow - outlineTime * 2.8) * 1.15), 9.0);
-        vec3 steel = mix(diffuseColor.rgb * 0.62, vec3(0.88, 0.94, 1.0), glint);
+        vec3 metal = outlineMetalColor(vOutlineFlow, vOutlineAcross, vec3(0.6, 0.78, 1.0));
+        vec3 steel = diffuseColor.rgb * 0.28 + metal * mix(0.42, 0.82, outlineNight);
         gl_FragColor = vec4(steel, alpha);`,
         );
     };
@@ -1089,16 +1121,16 @@ export function LibrarySpatialView(props: Props) {
         shader.uniforms.outlineFlowStart = { value: flowStart };
         shader.uniforms.outlineCardWidth = { value: width };
         shader.fragmentShader =
-          `uniform float outlineTime;\nuniform float outlineFlowStart;\nuniform float outlineCardWidth;\n` +
+          `${OUTLINE_METAL_SHADER}\nuniform float outlineFlowStart;\nuniform float outlineCardWidth;\n` +
           shader.fragmentShader.replace(
             "diffuseColor *= sampledDiffuseColor;",
             `diffuseColor *= sampledDiffuseColor;
           #ifdef USE_MAP
-            float leftEdge = 1.0 - smoothstep(0.0, 0.075, vMapUv.x);
-            float rightEdge = smoothstep(0.925, 1.0, vMapUv.x);
+            float leftEdge = 1.0 - smoothstep(0.002, 0.018, vMapUv.x);
+            float rightEdge = smoothstep(0.982, 0.998, vMapUv.x);
             float flow = outlineFlowStart + vMapUv.x * outlineCardWidth;
-            float gleam = pow(0.5 + 0.5 * cos((flow - outlineTime * 2.8) * 1.15), 9.0);
-            diffuseColor.rgb += vec3(0.055, 0.07, 0.095) * (leftEdge + rightEdge * 0.6) * gleam;
+            vec3 metal = outlineMetalColor(flow, vMapUv.y, vec3(0.6, 0.78, 1.0));
+            diffuseColor.rgb += metal * 0.075 * (leftEdge + rightEdge * 0.6);
           #endif`,
           );
       };
@@ -1246,6 +1278,7 @@ export function LibrarySpatialView(props: Props) {
       );
       const connectors = new LineSegments2(connectorGeometry, lineMaterial);
       connectors.frustumCulled = false;
+      connectors.renderOrder = 9;
       group.add(connectors);
       if (chips.length) {
         const chipGeometry = geometry(
@@ -1284,14 +1317,16 @@ export function LibrarySpatialView(props: Props) {
                 gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
               }`,
               fragmentShader: `
-              uniform float outlineTime;
+              ${OUTLINE_METAL_SHADER}
               varying vec2 vUv;
               varying vec3 vTint;
               varying float vMetal;
               varying float vFlow;
               void main() {
-                float gleam = pow(0.5 + 0.5 * cos((vFlow + vUv.x * ${CHIP_WIDTH.toFixed(3)} - outlineTime * 2.8) * 1.15), 9.0);
-                vec3 metal = mix(vTint * 0.62, mix(vTint, vec3(0.94), 0.6), gleam);
+                vec3 metal = vTint * 0.72 + outlineMetalColor(
+                  vFlow + vUv.x * ${CHIP_WIDTH.toFixed(3)}, vUv.y,
+                  vec3(0.85, 0.9, 1.0)
+                ) * 0.32;
                 gl_FragColor = vec4(mix(vTint * 1.3, metal, vMetal), 1.0);
                 #include <colorspace_fragment>
               }`,
@@ -1307,21 +1342,22 @@ export function LibrarySpatialView(props: Props) {
         });
         group.add(chipMesh);
         const glowMesh = new THREE.InstancedMesh(
-          geometry(new THREE.PlaneGeometry(0.16, 0.28)),
+          geometry(new THREE.PlaneGeometry(0.1, 0.22)),
           material(
             new THREE.ShaderMaterial({
+              uniforms: { glowNight: themeNight },
               transparent: true,
               depthWrite: false,
               toneMapped: false,
-              blending: dark ? THREE.AdditiveBlending : THREE.NormalBlending,
+              blending: THREE.AdditiveBlending,
               vertexShader: `varying vec2 vUv; varying vec3 vTint;
               void main() { vUv = uv; vTint = instanceColor;
                 gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
-              fragmentShader: `varying vec2 vUv; varying vec3 vTint;
+              fragmentShader: `uniform float glowNight; varying vec2 vUv; varying vec3 vTint;
               void main() {
                 vec2 p = (vUv - 0.5) * vec2(2.5, 1.8);
                 float glow = exp(-dot(p, p) * 4.0) * (1.0 - smoothstep(0.15, 0.5, abs(vUv.y - 0.5)));
-                gl_FragColor = vec4(vTint, glow * ${dark ? "0.28" : "0.12"});
+                gl_FragColor = vec4(vTint, glow * mix(0.06, 0.14, glowNight));
                 #include <colorspace_fragment>
               }`,
             }),
@@ -1619,35 +1655,7 @@ export function LibrarySpatialView(props: Props) {
 
     function pickTreeDocument() {
       const selected = floaters.get(latest.current.selectedPath ?? "\0");
-      if (selected?.node.kind === "file") {
-        projected.copy(selected.group.position).project(camera);
-        if (
-          projected.z > -1 &&
-          projected.z < 1 &&
-          Math.abs(projected.x) < 1.2 &&
-          Math.abs(projected.y) < 1.2 &&
-          camera.position.distanceTo(selected.group.position) < 45
-        )
-          return selected.node.path;
-      }
-      let best: string | null = null;
-      let bestDistance = TREE_REVEAL_DISTANCE;
-      for (const floater of floaters.values()) {
-        if (floater.node.kind !== "file") continue;
-        const distance = camera.position.distanceTo(floater.group.position);
-        if (distance >= bestDistance) continue;
-        projected.copy(floater.group.position).project(camera);
-        if (
-          projected.z > -1 &&
-          projected.z < 1 &&
-          Math.abs(projected.x) < 0.6 &&
-          Math.abs(projected.y) < 0.65
-        ) {
-          best = floater.node.path;
-          bestDistance = distance;
-        }
-      }
-      return best;
+      return selected?.node.kind === "file" ? selected.node.path : null;
     }
 
     const focusBounds = new THREE.Box3();
@@ -1667,7 +1675,7 @@ export function LibrarySpatialView(props: Props) {
     const paperDay = new THREE.Color("#fbfaf6"),
       paperNight = new THREE.Color("#d7dfeb");
     const particleDay = new THREE.Color("#8292a2"),
-      particleNight = new THREE.Color("#d5e4ff");
+      particleNight = new THREE.Color("#e0ecff");
     const lineDay = new THREE.Color("#8295b8"),
       lineNight = new THREE.Color("#8ba4d4");
     const folderDay = new THREE.Color("#a3aec3"),
@@ -1896,8 +1904,8 @@ export function LibrarySpatialView(props: Props) {
         drifters[0].light.intensity = 24 + 12 * moonrise;
         drifters[1].light.intensity = 14 * daylight + 5 * moonrise;
         drifters[2].light.intensity = 18 + 12 * moonrise;
-        particleMaterial.opacity = 0.42 + 0.23 * themeProgress;
-        particleGlowMaterial.opacity = themeProgress * 0.2;
+        particleMaterial.opacity = 0.42 + 0.32 * themeProgress;
+        particleGlowMaterial.opacity = themeProgress * 0.25;
         particleDayHaloMaterial.opacity = (1 - themeProgress) * 0.16;
         particleMaterial.color.lerpColors(
           particleDay,
@@ -1917,12 +1925,7 @@ export function LibrarySpatialView(props: Props) {
           themeProgress,
         );
       }
-      particles.rotation.y = time * 0.004;
-      particles.position.y = Math.sin(time * 0.1) * 0.6;
-      particleGlow.rotation.copy(particles.rotation);
-      particleGlow.position.copy(particles.position);
-      particleDayHalo.rotation.copy(particles.rotation);
-      particleDayHalo.position.copy(particles.position);
+      particleTime.value = time;
       if (keys.size) {
         const forward = new THREE.Vector3();
         camera.getWorldDirection(forward);

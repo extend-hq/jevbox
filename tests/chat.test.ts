@@ -331,7 +331,7 @@ test("streaming exposes partial text, durable queue edits preserve order, and du
   calls[0].release();
   const completed = await waitFor(
     () => state(chat),
-    (s) => s.messages.length === 6,
+    (s) => s.messages.length === 6 && s.turns.length === 0,
   );
   assert.deepEqual(
     completed.messages

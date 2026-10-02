@@ -138,6 +138,71 @@ export function outlineFlowGeometry(
   const starts: number[] = [];
   const ends: number[] = [];
   const rowDistances: number[] = [];
+  const coverage = new Map<string, [number, number][]>();
+  const curves = new Set<string>();
+  const addSegment = (
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    start: number,
+    end: number,
+  ) => {
+    const horizontal = Math.abs(by - ay) < 0.000001;
+    const vertical = Math.abs(bx - ax) < 0.000001;
+    if (!horizontal && !vertical) {
+      const a = `${ax.toFixed(6)},${ay.toFixed(6)}`;
+      const b = `${bx.toFixed(6)},${by.toFixed(6)}`;
+      const key = [a, b].sort().join(":");
+      if (curves.has(key)) return;
+      curves.add(key);
+      positions.push(ax, ay, -0.01, bx, by, -0.01);
+      starts.push(start);
+      ends.push(end);
+      return;
+    }
+    const from = horizontal ? ax : ay;
+    const to = horizontal ? bx : by;
+    const min = Math.min(from, to),
+      max = Math.max(from, to);
+    const key = `${horizontal ? "h" : "v"}:${(horizontal ? ay : ax).toFixed(6)}`;
+    const covered = coverage.get(key) ?? [];
+    let portions: [number, number][] = [[min, max]];
+    for (const [low, high] of covered)
+      portions = portions.flatMap(([a, b]) => {
+        if (high <= a || low >= b) return [[a, b]];
+        const remaining: [number, number][] = [];
+        if (low > a) remaining.push([a, low]);
+        if (high < b) remaining.push([high, b]);
+        return remaining;
+      });
+    if (to < from) portions.reverse();
+    for (const [low, high] of portions) {
+      if (high - low < 0.000001) continue;
+      const a = to < from ? high : low;
+      const b = to < from ? low : high;
+      positions.push(
+        horizontal ? a : ax,
+        horizontal ? ay : a,
+        -0.01,
+        horizontal ? b : bx,
+        horizontal ? by : b,
+        -0.01,
+      );
+      starts.push(start + Math.abs(a - from));
+      ends.push(start + Math.abs(b - from));
+    }
+    const merged: [number, number][] = [];
+    for (const interval of [...covered, [min, max] as [number, number]].sort(
+      (a, b) => a[0] - b[0],
+    )) {
+      const last = merged.at(-1);
+      if (last && interval[0] <= last[1] + 0.000001)
+        last[1] = Math.max(last[1], interval[1]);
+      else merged.push([...interval]);
+    }
+    coverage.set(key, merged);
+  };
   const append = (
     route: readonly (readonly [number, number])[],
     start: number,
@@ -145,14 +210,22 @@ export function outlineFlowGeometry(
     const segments = roundedOutlineSegments(route);
     let distance = start;
     for (let i = 0; i < segments.length; i += 6) {
-      starts.push(distance);
-      distance += Math.hypot(
-        segments[i + 3] - segments[i],
-        segments[i + 4] - segments[i + 1],
+      const end =
+        distance +
+        Math.hypot(
+          segments[i + 3] - segments[i],
+          segments[i + 4] - segments[i + 1],
+        );
+      addSegment(
+        segments[i],
+        segments[i + 1],
+        segments[i + 3],
+        segments[i + 4],
+        distance,
+        end,
       );
-      ends.push(distance);
+      distance = end;
     }
-    positions.push(...segments);
     return distance;
   };
   if (routes.length) append(routes[0], 0);

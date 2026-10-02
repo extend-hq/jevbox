@@ -104,6 +104,8 @@ The Helm chart runs one web replica, a separate pg-boss worker Deployment, and a
 
 ## Security and verification
 
+Authenticated API requests have a per-user sanity limit of 3,000 reads and 600 writes per minute. Multiple tabs share that user's allowance; users sharing an IP have independent allowances. Set `API_READ_LIMIT_PER_MINUTE` and `API_WRITE_LIMIT_PER_MINUTE` to adjust these ceilings. Sign-in and account recovery retain their separate rate limits.
+
 The core schema uses a consolidated initial migration, followed by numbered migrations for durable filing and upload-driven review jobs. There is no production upgrade path from earlier development migration histories. Existing development documents must be reindexed to create the new passage index; retry indexing to rebuild the passage index. Automatic filing applies to new uploads, explicit filing retries, and related documents previously filed automatically. Existing documents are not moved on startup.
 
 Read [security boundaries](docs/security.md) before deploying. Automated integration tests exercise real HTTP routes and an isolated PostgreSQL schema and the real local SpiceDB service; third-party providers use controlled responses. Real parsing and model acceptance require your keys and must be checked in your own organization.

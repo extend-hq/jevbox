@@ -1,0 +1,28 @@
+diff --git a/dist/index.es.js b/dist/index.es.js
+index 5602e033a20be070dcae2d9d2c4f3109289fcc2f..c2d5028f4890a3649e246edb681ee3e6d6e864fb 100644
+--- a/dist/index.es.js
++++ b/dist/index.es.js
+@@ -709,9 +709,9 @@ function Kn() {
+   }
+   if (!a) throw new Error("metal-fx: WebGL2 not supported");
+   const { program: i, buffer: r, uniforms: l, dummyTexture: s } = yo(a), c = (d) => {
+-    d.preventDefault(), x && (x.contextLost = !0);
++    d.preventDefault(), x && x.glCanvas === o && (x.contextLost = !0);
+   }, u = () => {
+-    if (!x) return;
++    if (!x || x.glCanvas !== o) return;
+     const d = yo(x.gl);
+     x.program = d.program, x.buffer = d.buffer, x.uniforms = d.uniforms, x.dummyTexture = d.dummyTexture, x.presetDirty = !0, x.contextLost = !1, en == null || en();
+   };
+@@ -938,8 +938,10 @@ function Ar(t, e) {
+   n.preset = ba ?? da[t].modes[e], n.presetDirty = !0;
+ }
+ function _s(t) {
++  ba = t;
++  if (!t) return;
+   const e = Kn();
+-  ba = t, t && (e.preset = t, e.presetDirty = !0);
++  e.preset = t, e.presetDirty = !0;
+ }
+ function Ss() {
+   return x ? { ...x.preset } : null;

@@ -1010,21 +1010,21 @@ export function ChatView({
                     href={paths.chat(c.id)}
                     aria-label={plainTextPreview(c.title)}
                   >
-                    {!c.blocked &&
-                      (c.id === chatId
-                        ? !blocked &&
-                          (submitting ||
-                            loadingHistory ||
-                            isChatWorking(turns[0]?.status))
-                        : c.working) && (
-                        <Spinner
-                          className="chat-history-spinner size-3 shrink-0"
-                          aria-label="Chat working"
-                        />
-                      )}
                     <span>{plainTextPreview(c.title)}</span>
                   </RouteLink>
                 </CursorTooltip>
+                {!c.blocked &&
+                  (c.id === chatId
+                    ? !blocked &&
+                      (loadingHistory
+                        ? c.working
+                        : isChatWorking(turns[0]?.status))
+                    : c.working) && (
+                    <Spinner
+                      className="chat-history-spinner size-3 shrink-0"
+                      aria-label="Chat working"
+                    />
+                  )}
                 <button
                   aria-label="Delete conversation"
                   onClick={() =>
@@ -1062,6 +1062,7 @@ export function ChatView({
         id="chat-content"
         className="chat-content-panel"
         minSize={compact ? 0 : 280}
+        style={{ overflow: "hidden" }}
       >
         <section
           className={`chat-main ${!chatId && !messages.length && !pending && !visibleQueue.length ? "new-chat" : ""}`}
@@ -1524,39 +1525,41 @@ export function ChatView({
                   disabled={loadingHistory || blocked}
                   onBusyChange={setUploading}
                 />
-                {activeTurn ? (
-                  <CursorTooltip label="Stop answer">
-                    <Button
-                      type="button"
-                      size="icon"
-                      className="chat-stop"
-                      aria-label="Stop answer"
-                      loading={activeTurn.status === "cancelling"}
-                      disabled={action.busy}
-                      onClick={() =>
-                        void action.run(() => removeTurn(activeTurn.id))
-                      }
-                    >
-                      {activeTurn.status !== "cancelling" && (
-                        <Square size={14} />
-                      )}
-                    </Button>
-                  </CursorTooltip>
-                ) : (
-                  <ComposerSendEffect
-                    modelRef={composerModel}
-                    disabled={
-                      !input.trim() ||
-                      submitting ||
-                      loadingHistory ||
-                      input.length > promptLimit ||
-                      uploading ||
-                      attachmentPending ||
-                      blocked ||
-                      visibleQueue.length >= 10 ||
-                      !me.chatEnabled
-                    }
-                  >
+                <ComposerSendEffect
+                  modelRef={composerModel}
+                  disabled={
+                    activeTurn
+                      ? action.busy || activeTurn.status === "cancelling"
+                      : !input.trim() ||
+                        submitting ||
+                        loadingHistory ||
+                        input.length > promptLimit ||
+                        uploading ||
+                        attachmentPending ||
+                        blocked ||
+                        visibleQueue.length >= 10 ||
+                        !me.chatEnabled
+                  }
+                >
+                  {activeTurn ? (
+                    <CursorTooltip label="Stop answer">
+                      <Button
+                        type="button"
+                        size="icon"
+                        className="chat-stop"
+                        aria-label="Stop answer"
+                        loading={activeTurn.status === "cancelling"}
+                        disabled={action.busy}
+                        onClick={() =>
+                          void action.run(() => removeTurn(activeTurn.id))
+                        }
+                      >
+                        {activeTurn.status !== "cancelling" && (
+                          <Square size={14} />
+                        )}
+                      </Button>
+                    </CursorTooltip>
+                  ) : (
                     <Button
                       type="submit"
                       className="chat-send"
@@ -1575,8 +1578,8 @@ export function ChatView({
                     >
                       {!submitting && <ArrowUp size={18} />}
                     </Button>
-                  </ComposerSendEffect>
-                )}
+                  )}
+                </ComposerSendEffect>
               </div>
             </Form>
             {connection === "reconnecting" && chatId && (

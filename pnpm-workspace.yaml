@@ -1,0 +1,2 @@
+patchedDependencies:
+  metal-fx@2.0.11: patches/metal-fx@2.0.11.patch

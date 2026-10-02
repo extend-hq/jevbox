@@ -2206,6 +2206,11 @@ label textarea {
   outline: none;
   font-size: var(--type-body);
 }
+.dark .search-form,
+.dark [data-slot="input-control"]:has(input[type="search"]),
+.dark .file-system-search-field {
+  background: var(--background);
+}
 .search-meta {
   display: flex;
   justify-content: space-between;
@@ -2407,10 +2412,6 @@ label textarea {
   flex: 1;
   font-size: var(--type-ui);
   background: transparent;
-}
-.chat-compose form:has(.chat-prompt-content:focus) {
-  border-color: var(--ring);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent);
 }
 .chat-compose > p {
   margin-top: 10px;
@@ -3129,6 +3130,7 @@ label textarea {
 .chat-history-row {
   height: 28px;
   padding: 0 8px;
+  position: relative;
   color: var(--muted-foreground);
   gap: 8px;
 }
@@ -3153,6 +3155,26 @@ label textarea {
 .chat-history-row:hover > button:last-child,
 .chat-history-row:focus-within > button:last-child {
   opacity: 1;
+}
+.chat-history-row > .chat-history-spinner {
+  position: absolute;
+  inset-inline-end: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.chat-history-row:has(> .chat-history-spinner) > button:last-child {
+  opacity: 0;
+}
+.chat-history-row:has(> .chat-history-spinner) > button:last-child:hover,
+.chat-history-row:has(> .chat-history-spinner)
+  > button:last-child:focus-visible {
+  opacity: 1;
+}
+.chat-history-row:has(> button:last-child:hover) > .chat-history-spinner,
+.chat-history-row:has(> button:last-child:focus-visible)
+  > .chat-history-spinner {
+  opacity: 0;
 }
 .private-chats {
   font-size: var(--type-caption);
@@ -3252,14 +3274,24 @@ label textarea {
   flex-shrink: 0;
   border-radius: 50%;
 }
-.composer-send-metal .chat-send {
+.composer-send-metal.metal-fx-root {
+  background: var(--background);
+  color: var(--foreground);
+}
+.composer-send-metal.metal-fx-root::before,
+.composer-send-metal.metal-fx-root::after,
+.composer-send-metal.metal-fx-root .metal-fx-inner {
+  box-shadow: none;
+}
+.composer-tools .chat-send,
+.composer-tools .chat-stop {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  color: #f5f8ff;
-  border: 1px solid rgb(115 168 255 / 55%);
-  background: linear-gradient(145deg, #528cf5, #2159c6 68%, #164395);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 24%);
+  color: var(--foreground);
+  border: 1px solid rgb(115 168 255 / 45%);
+  background: var(--background);
+  box-shadow: none;
 }
 .composer-tools .chat-stop {
   margin-left: 0;
@@ -3623,7 +3655,7 @@ label textarea {
   box-shadow: none;
 }
 .dark .chat-compose form {
-  background: #28282c;
+  background: #141416;
 }
 .chat-compose textarea {
   background: transparent !important;
@@ -3837,14 +3869,18 @@ label textarea {
   margin-left: auto;
   border-radius: 7px;
   color: var(--muted-foreground);
+  border: var(--hairline) solid var(--border);
+  background: var(--background);
 }
-.composer-model [data-slot="select-trigger"] {
+.composer-model [data-slot="select-trigger"],
+.composer-model > button {
   min-width: 0;
   min-height: 32px;
   height: 32px;
   padding: 0 9px;
-  border: var(--hairline) solid var(--border);
-  background: var(--background);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
   font-size: var(--type-ui);
   color: var(--foreground);
 }
@@ -6086,7 +6122,7 @@ details[open] > .triangle-summary .disclosure-triangle {
     opacity: 0;
   }
 }
-.markdown .chat-source-chip {
+.markdown a.chat-source-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -6102,7 +6138,7 @@ details[open] > .triangle-summary .disclosure-triangle {
   color: var(--foreground);
   text-decoration: none !important;
 }
-.markdown .chat-source-chip:hover {
+.markdown a.chat-source-chip:hover {
   background: var(--accent);
   color: var(--foreground);
 }
