@@ -65,7 +65,7 @@ export function createRuns(
   origin: string,
 ) {
   const running = new Map<string, AbortController>();
-  const activeLimit = configuredLimit("RUN_USER_CONCURRENCY", 25);
+  const activeLimit = configuredLimit("RUN_USER_CONCURRENCY", 10_000);
   async function find(principal: Principal, orgId: string, runId: string) {
     await access.actor(principal, orgId);
     const run = await store.one<Run>(

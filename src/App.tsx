@@ -337,6 +337,20 @@ export default function App() {
           size: r.size,
           access: r.access,
           metadata: { Index: r.status },
+          indexError: r.error,
+          onRetryIndex: r.canWrite
+            ? async () => {
+                await api(`/documents/${r.id}/retry`, { method: "POST" });
+                setResources((current) =>
+                  current.map((item) =>
+                    item.id === r.id
+                      ? { ...item, status: "queued", error: undefined }
+                      : item,
+                  ),
+                );
+                await refresh();
+              }
+            : undefined,
           createdAt: r.created,
           updatedAt: r.created,
           url: `/api/documents/${r.id}/content`,

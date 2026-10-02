@@ -12,20 +12,17 @@ export async function checkStoredDocumentQuota(
   additionalDocuments = 0,
   limits: UploadAdmissionLimits = uploadAdmissionLimits(),
 ) {
-  const rows = await store.all<{
-    subject: string;
-    size: string;
-    count: string;
-  }>(
-    "SELECT subject,COUNT(*)::text AS count,COALESCE(SUM(size::bigint+OCTET_LENGTH(COALESCE(parsed,''))),0)::text AS size FROM resources CROSS JOIN LATERAL (VALUES ('deployment'),(CASE WHEN owner_id=? THEN 'user' END),(CASE WHEN org_id=? THEN 'organization' END)) s(subject) WHERE kind='document' AND subject IS NOT NULL GROUP BY subject",
+  if (
+    !Number.isFinite(limits.documents.user) &&
+    !Number.isFinite(limits.storedBytes.user)
+  )
+    return;
+  const row = await store.one<{ size: string; count: string }>(
+    "SELECT COUNT(*)::text AS count,COALESCE(SUM(size::bigint+OCTET_LENGTH(COALESCE(parsed,''))),0)::text AS size FROM resources WHERE kind='document' AND owner_id=?",
     userId,
-    orgId,
   );
-  for (const row of rows) {
-    const scope = row.subject as keyof typeof limits.storedBytes;
-    if (Number(row.count) + additionalDocuments > limits.documents[scope])
-      throw new HttpError(429, "Document count quota reached");
-    if (Number(row.size) + additionalBytes > limits.storedBytes[scope])
-      throw new HttpError(429, "Document storage quota reached");
-  }
+  if (Number(row?.count ?? 0) + additionalDocuments > limits.documents.user)
+    throw new HttpError(429, "Document count quota reached");
+  if (Number(row?.size ?? 0) + additionalBytes > limits.storedBytes.user)
+    throw new HttpError(429, "Document storage quota reached");
 }

@@ -159,29 +159,39 @@ function response() {
   }) as unknown as Response;
 }
 
-test("upload admission bounds concurrent bodies and holds cancelled work until it exits", () => {
+test("upload admission queues busy bodies and holds cancelled work until it exits", async () => {
   const uploads = createUploads({} as Store, {
     limits: { ...uploadAdmissionLimits(), active: 2, activePerUser: 1 },
   });
   const a = uploads.reserve(request(), response(), "user-a", 10);
-  assert.throws(
-    () => uploads.reserve(request(), response(), "user-a", 10),
-    status(429),
-  );
+  await a.ready;
+  const same = uploads.reserve(request(), response(), "user-a", 10);
+  let sameReady = false;
+  void same.ready.then(() => {
+    sameReady = true;
+  });
   const res = response(),
     req = request();
   const b = uploads.reserve(req, res, "user-b", 10);
+  await b.ready;
   b.retain();
   res.emit("close");
   assert.equal(b.signal.aborted, true);
-  assert.throws(
-    () => uploads.reserve(request(), response(), "user-c", 10),
-    status(429),
-  );
-  b.release();
   const c = uploads.reserve(request(), response(), "user-c", 10);
+  let nextReady = false;
+  void c.ready.then(() => {
+    nextReady = true;
+  });
+  await Promise.resolve();
+  assert.equal(sameReady, false);
+  assert.equal(nextReady, false);
+  b.release();
+  await c.ready;
+  assert.equal(nextReady, true);
   c.release();
   a.release();
+  await same.ready;
+  same.release();
   assert.throws(
     () => uploads.reserve(request("11"), response(), "user-a", 10),
     status(413),
@@ -192,103 +202,90 @@ test("upload admission bounds concurrent bodies and holds cancelled work until i
   );
 });
 
-test("upload deadline cancels work without allowing replacement bodies before cleanup", (t) => {
+test("upload deadline cancels work without admitting replacement bodies before cleanup", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const uploads = createUploads({} as Store, {
-      limits: {
-        ...uploadAdmissionLimits(),
-        activePerUser: 1,
-        receiveMs: uploadLimits.receiveMs,
-      },
-    }),
-    req = request(),
+    limits: { ...uploadAdmissionLimits(), activePerUser: 1 },
+  });
+  const req = request(),
     res = response();
   const lease = uploads.reserve(req, res, "user-a", 10);
+  await lease.ready;
   lease.retain();
   t.mock.timers.tick(uploadLimits.receiveMs);
   assert.equal(lease.signal.aborted, true);
   assert.equal(req.destroyed, true);
-  assert.throws(
-    () => uploads.reserve(request(), response(), "user-a", 10),
-    status(429),
-  );
+  const next = uploads.reserve(request(), response(), "user-a", 10);
+  let ready = false;
+  void next.ready.then(() => {
+    ready = true;
+  });
+  await Promise.resolve();
+  assert.equal(ready, false);
   lease.release();
-  uploads.reserve(request(), response(), "user-a", 10).release();
+  await next.ready;
+  next.release();
 });
 
-test("upload admission supports many concurrent users and multiple uploads per user", () => {
+test("upload admission has no shared or per-user request-count cap by default", async () => {
   const uploads = createUploads({} as Store);
-  const leases = Array.from({ length: 64 }, (_, i) =>
-    uploads.reserve(request("1024"), response(), `user-${i}`, 2048),
+  const leases = Array.from({ length: 1000 }, (_, i) =>
+    uploads.reserve(request("1024"), response(), `user-${i % 10}`, 2048),
   );
   try {
-    assert.throws(
-      () => uploads.reserve(request(), response(), "overflow", 10),
-      status(429),
-    );
-    leases[0].release();
-    leases[0].release();
-    const replacement = uploads.reserve(
-      request(),
-      response(),
-      "replacement",
-      10,
-    );
-    assert.throws(
-      () => uploads.reserve(request(), response(), "overflow", 10),
-      status(429),
-    );
-    replacement.release();
+    await Promise.all(leases.map((lease) => lease.ready));
   } finally {
-    leases.forEach((lease) => lease.release());
-  }
-  const sameUser = Array.from({ length: 4 }, () =>
-    uploads.reserve(request(), response(), "shared-user", 10),
-  );
-  try {
-    assert.throws(
-      () => uploads.reserve(request(), response(), "shared-user", 10),
-      status(429),
-    );
-    uploads.reserve(request(), response(), "independent-user", 10).release();
-    sameUser[0].release();
-    const replacement = uploads.reserve(
-      request(),
-      response(),
-      "shared-user",
-      10,
-    );
-    assert.throws(
-      () => uploads.reserve(request(), response(), "shared-user", 10),
-      status(429),
-    );
-    replacement.release();
-  } finally {
-    sameUser.forEach((lease) => lease.release());
+    leases.forEach((lease) => {
+      lease.release();
+      lease.release();
+    });
   }
 });
 
-test("upload admission enforces a byte budget for declared and chunked bodies", () => {
+test("upload memory backpressure queues declared and chunked bodies and cancels disconnected waiters", async () => {
   const uploads = createUploads({} as Store, {
     limits: { ...uploadAdmissionLimits(), activeBytes: 10 },
   });
   const first = uploads.reserve(request("6"), response(), "first", 10);
-  assert.throws(
-    () => uploads.reserve(request("5"), response(), "second", 10),
-    status(429),
+  const second = uploads.reserve(request("5"), response(), "second", 10);
+  let ready = false;
+  void second.ready.then(() => {
+    ready = true;
+  });
+  await Promise.resolve();
+  assert.equal(ready, false);
+  const small = uploads.reserve(request("4"), response(), "small", 10);
+  await small.ready;
+  const cancelledResponse = response();
+  const cancelled = uploads.reserve(
+    request(""),
+    cancelledResponse,
+    "cancelled",
+    10,
   );
-  const second = uploads.reserve(request("4"), response(), "second", 10);
+  cancelledResponse.emit("close");
+  await assert.rejects(cancelled.ready, /Upload cancelled/);
   first.release();
-  assert.throws(
-    () => uploads.reserve(request(""), response(), "chunked", 10),
-    status(429),
-  );
+  await second.ready;
+  const chunked = uploads.reserve(request(""), response(), "chunked", 10);
+  let chunkedReady = false;
+  void chunked.ready.then(() => {
+    chunkedReady = true;
+  });
+  small.release();
+  await Promise.resolve();
+  assert.equal(chunkedReady, false);
   second.release();
-  uploads.reserve(request(""), response(), "chunked", 10).release();
-  const finished = response();
-  uploads.reserve(request("10"), finished, "finished", 10);
-  finished.emit("finish");
-  uploads.reserve(request("10"), response(), "next", 10).release();
+  await chunked.ready;
+  chunked.release();
+  const oversizedBudget = uploads.reserve(
+    request("11"),
+    response(),
+    "large",
+    20,
+  );
+  await oversizedBudget.ready;
+  oversizedBudget.release();
 });
 
 test("text and parsed documents index beyond the former page, section, text, and block caps", async () => {
@@ -353,18 +350,27 @@ test("parser responses above the former 16 MiB cap are accepted for declared and
   }
 });
 
-test("document quotas include a count cap so tiny stored files cannot exhaust metadata storage", async () => {
+test("document storage and counts are unlimited by default, with optional user-only overrides", async () => {
   const { checkStoredDocumentQuota } = await import("../server/upload-quotas");
-  for (const subject of ["user", "organization", "deployment"] as const) {
-    const store = {
-      all: async () => [
-        { subject, count: String(uploadLimits.documents[subject]), size: "0" },
-      ],
-    } as unknown as Store;
-    await assert.rejects(
-      checkStoredDocumentQuota(store, "actor", "org", 1, 1),
-      /count quota/,
-    );
-    await checkStoredDocumentQuota(store, "actor", "org", 0);
-  }
+  let queried = false;
+  const store = {
+    one: async () => {
+      queried = true;
+      return { count: "1000000", size: "1000000000000000" };
+    },
+  } as unknown as Store;
+  await checkStoredDocumentQuota(store, "actor", "org", 1, 1);
+  assert.equal(queried, false);
+  const defaults = uploadAdmissionLimits();
+  await assert.rejects(
+    checkStoredDocumentQuota(store, "actor", "org", 1, 1, {
+      ...defaults,
+      documents: { ...defaults.documents, user: 1000000 },
+    }),
+    /count quota/,
+  );
+  await checkStoredDocumentQuota(store, "actor", "org", 1, 1, {
+    ...defaults,
+    documents: { ...defaults.documents, organization: 1, deployment: 1 },
+  });
 });

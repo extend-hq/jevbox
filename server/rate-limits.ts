@@ -13,8 +13,8 @@ export const configuredLimit = (name: string, fallback: number) =>
 
 export function apiRateLimits() {
   return {
-    read: configuredLimit("API_READ_LIMIT_PER_MINUTE", 6000),
-    write: configuredLimit("API_WRITE_LIMIT_PER_MINUTE", 1200),
+    read: configuredLimit("API_READ_LIMIT_PER_MINUTE", 100_000),
+    write: configuredLimit("API_WRITE_LIMIT_PER_MINUTE", 100_000),
   };
 }
 
@@ -34,15 +34,15 @@ export function authRateLimits() {
       "AUTH_OAUTH_REGISTRATION_LIMIT_PER_MINUTE",
       120,
     ),
-    apiKey: configuredLimit("API_KEY_LIMIT_PER_MINUTE", 6000),
+    apiKey: configuredLimit("API_KEY_LIMIT_PER_MINUTE", 100_000),
   };
 }
 
 export function searchRateLimits() {
   return {
-    user: configuredLimit("SEARCH_USER_LIMIT_PER_MINUTE", 120),
-    credential: configuredLimit("SEARCH_CREDENTIAL_LIMIT_PER_MINUTE", 120),
-    organization: configuredLimit("SEARCH_ORGANIZATION_LIMIT_PER_MINUTE", 3000),
+    user: configuredLimit("SEARCH_USER_LIMIT_PER_MINUTE", 10_000),
+    credential: configuredLimit("SEARCH_CREDENTIAL_LIMIT_PER_MINUTE", 10_000),
+    organization: Infinity,
   };
 }
 

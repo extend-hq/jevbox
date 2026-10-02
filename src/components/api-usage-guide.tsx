@@ -227,19 +227,16 @@ export function ApiUsageGuide({
       <article className="api-docs-section">
         <h3>Limits and errors</h3>
         <p>
-          Search allows 120 requests per minute per user and key, and 3,000 per
-          organization. Search uses the organization’s configured TypeSafe
-          connection and indexed documents.
+          Search allows 10,000 requests per minute per user and key, with no
+          organization-wide cap. Search uses the organization’s configured
+          TypeSafe connection and indexed documents.
         </p>
         <p>
-          Default uploads share limits with the app and MCP: 120 attempts per
-          minute, 2,000 per hour, 2 GiB accepted per UTC day, 10 GiB stored, and
-          500 documents awaiting processing per user. Organization and
-          deployment limits also apply, with a total cap of 10,000 documents per
-          user. Changing keys does not reset these counters. Four upload
-          requests per user and 64 upload/MCP requests per web process are
-          admitted at once, within a shared memory budget and a 120-second
-          deadline.
+          Uploads allow 10,000 attempts per minute and 100,000 per hour per user
+          across the app, API, and MCP. There are no shared quotas or default
+          limits on stored bytes, daily bytes, document counts, or processing
+          queues. Concurrent bodies wait for available memory. Admitted uploads
+          have a 120-second deadline.
         </p>
         <div className="api-docs-table-scroll">
           <table className="api-docs-table">

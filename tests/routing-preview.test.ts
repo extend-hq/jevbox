@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildIndex, flatten } from "../server/indexing";
+import { buildIndex } from "../server/indexing";
 import { buildSectionPreviews } from "../server/routing-preview";
 import { retrieveDocuments } from "../server/retrieval";
 import type { Actor, Resource, Store } from "../server/db";
@@ -90,7 +90,7 @@ test("routing samples find Unicode query terms in long unsplit text", () => {
   assert.match(previews.get(parsed.nodes[0].id)!, /énergie quantique/);
 });
 
-test("sampled routing rechecks authorization before sending any source excerpts", async () => {
+test("default routing samples source excerpts and rechecks authorization", async () => {
   const parsed = buildIndex(
     [
       {
@@ -166,12 +166,8 @@ test("sampled routing rechecks authorization before sending any source excerpts"
         ? scoreResponse(body, 3)
         : choiceResponse(body);
     },
-    [],
-    undefined,
-    { sectionPreview: "sampled" },
   );
   assert.equal(sawPreview, true);
   assert.equal(result.results.length, 0);
   assert.ok(!result.trace.some((step) => step.resourceId === "allowed"));
-  assert.ok(flatten(parsed.nodes).length > 0);
 });

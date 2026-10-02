@@ -1,22 +1,22 @@
 import { uploadLimits } from "../shared/uploads";
 import { configuredLimit } from "./rate-limits";
 
+const optionalLimit = (name: string, fallback: number) =>
+  process.env[name] === undefined ? fallback : configuredLimit(name, fallback);
+
 const scopedLimits = (
   name: string,
   defaults: { user: number; organization: number; deployment: number },
 ) => ({
-  user: configuredLimit(`UPLOAD_USER_${name}`, defaults.user),
-  organization: configuredLimit(
-    `UPLOAD_ORGANIZATION_${name}`,
-    defaults.organization,
-  ),
-  deployment: configuredLimit(`UPLOAD_DEPLOYMENT_${name}`, defaults.deployment),
+  user: optionalLimit(`UPLOAD_USER_${name}`, defaults.user),
+  organization: Infinity,
+  deployment: Infinity,
 });
 
 export function uploadAdmissionLimits() {
   return {
-    active: configuredLimit("UPLOAD_CONCURRENCY", uploadLimits.active),
-    activePerUser: configuredLimit(
+    active: optionalLimit("UPLOAD_CONCURRENCY", uploadLimits.active),
+    activePerUser: optionalLimit(
       "UPLOAD_USER_CONCURRENCY",
       uploadLimits.activePerUser,
     ),

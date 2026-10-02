@@ -1,5 +1,8 @@
 import { BoxLoader } from "@/components/box-loader";
-import { IndexStatusBadge } from "@/components/index-status-badge";
+import {
+  IndexStatusControl,
+  needsIndexAttention,
+} from "@/components/index-status-control";
 import {
   ResourceAccessBadge,
   resourceAccessOptions,
@@ -174,6 +177,8 @@ export type FileSystemFileItem = {
   previewPageCount?: number;
   previewAspectRatio?: number;
   metadata?: Record<string, string>;
+  indexError?: string;
+  onRetryIndex?: () => Promise<unknown>;
 };
 export type FileSystemItem = FileSystemFolderItem | FileSystemFileItem;
 export type FileSystemLoadChildrenArgs = {
@@ -3615,6 +3620,15 @@ const ICON_TILE_GAP_X = 4;
 const ICON_TILE_HEIGHT = 102;
 const ICON_ROW_GAP = 12;
 const ICON_ROW_STRIDE = ICON_TILE_HEIGHT + ICON_ROW_GAP;
+function FileIndexStatus({ file }: { file: FileSystemFileItem }) {
+  return (
+    <IndexStatusControl
+      status={file.metadata?.Index ?? ""}
+      error={file.indexError}
+      onRetry={file.onRetryIndex}
+    />
+  );
+}
 function FileSystemIconsView({
   entries,
   loadPreviewImageUrl,
@@ -3912,67 +3926,74 @@ function FileSystemIconsView({
           {visibleEntries.map((entry) => {
             const isSelected = selectedPaths.has(entry.path);
             return (
-              <button
-                key={entry.path}
-                data-entry-path={entry.path}
-                type="button"
-                role="option"
-                aria-label={entry.name}
-                aria-selected={isSelected}
-                tabIndex={entry.path === tabStopPath ? 0 : -1}
-                ref={(element) => {
-                  if (element) {
-                    itemRefs.current.set(entry.path, element);
-                  } else {
-                    itemRefs.current.delete(entry.path);
-                  }
-                }}
-                onClick={(event) => onSelect(entry, event, entries)}
-                onDoubleClick={() => onOpen(entry)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") onOpen(entry);
-                }}
-                className="group flex h-[6.375rem] flex-col items-center gap-1.5 outline-none"
-              >
-                <span
-                  className={cn(
-                    "flex h-16 w-20 shrink-0 items-center justify-center rounded-lg p-1.5 transition-colors group-focus-visible:ring-2 group-focus-visible:ring-ring",
-                    isSelected && "bg-accent",
-                  )}
+              <div key={entry.path} className="relative">
+                <button
+                  data-entry-path={entry.path}
+                  type="button"
+                  role="option"
+                  aria-label={entry.name}
+                  aria-selected={isSelected}
+                  tabIndex={entry.path === tabStopPath ? 0 : -1}
+                  ref={(element) => {
+                    if (element) {
+                      itemRefs.current.set(entry.path, element);
+                    } else {
+                      itemRefs.current.delete(entry.path);
+                    }
+                  }}
+                  onClick={(event) => onSelect(entry, event, entries)}
+                  onDoubleClick={() => onOpen(entry)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") onOpen(entry);
+                  }}
+                  className="group flex w-full h-[6.375rem] flex-col items-center gap-1.5 outline-none"
                 >
-                  {entry.kind === "folder" ? (
-                    <FileSystemFolderGlyph className="h-13 w-auto drop-shadow-sm" />
-                  ) : (
-                    <span
-                      className="block shrink-0"
-                      style={{
-                        width: `min(4.25rem, calc((3.25rem - 2px) * ${entry.previewAspectRatio ?? 0.78} + 2px))`,
-                      }}
-                    >
-                      <FileVisual
-                        file={entry}
-                        loadPreviewImageUrl={loadPreviewImageUrl}
-                        pageUrlCache={pageUrlCache}
-                        className="w-full rounded-sm shadow-xs"
-                        previewAspectRatio={0.78}
-                        renderFilePreview={renderFilePreview}
-                      />
+                  <span
+                    className={cn(
+                      "flex h-16 w-20 shrink-0 items-center justify-center rounded-lg p-1.5 transition-colors group-focus-visible:ring-2 group-focus-visible:ring-ring",
+                      isSelected && "bg-accent",
+                    )}
+                  >
+                    {entry.kind === "folder" ? (
+                      <FileSystemFolderGlyph className="h-13 w-auto drop-shadow-sm" />
+                    ) : (
+                      <span
+                        className="block shrink-0"
+                        style={{
+                          width: `min(4.25rem, calc((3.25rem - 2px) * ${entry.previewAspectRatio ?? 0.78} + 2px))`,
+                        }}
+                      >
+                        <FileVisual
+                          file={entry}
+                          loadPreviewImageUrl={loadPreviewImageUrl}
+                          pageUrlCache={pageUrlCache}
+                          className="w-full rounded-sm shadow-xs"
+                          previewAspectRatio={0.78}
+                          renderFilePreview={renderFilePreview}
+                        />
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className={cn(
+                      "max-w-full rounded-sm px-1.5 py-px text-center text-xs leading-tight break-words",
+                      isSelected
+                        ? "bg-primary text-primary-foreground"
+                        : "text-foreground",
+                    )}
+                  >
+                    <span className="block truncate" title={entry.name}>
+                      {entry.name}
+                    </span>
+                  </span>
+                </button>
+                {entry.kind === "file" &&
+                  needsIndexAttention(entry.metadata?.Index) && (
+                    <span className="absolute top-10 left-[calc(50%+0.5rem)]">
+                      <FileIndexStatus file={entry} />
                     </span>
                   )}
-                </span>
-                <span
-                  className={cn(
-                    "max-w-full rounded-sm px-1.5 py-px text-center text-xs leading-tight break-words",
-                    isSelected
-                      ? "bg-primary text-primary-foreground"
-                      : "text-foreground",
-                  )}
-                >
-                  <span className="block truncate" title={entry.name}>
-                    {entry.name}
-                  </span>
-                </span>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -4348,6 +4369,100 @@ function FileSystemPierreTree({
       );
     },
   });
+  const [statusHosts, setStatusHosts] = React.useState<
+    { file: FileEntry; host: HTMLSpanElement }[]
+  >([]);
+  React.useEffect(() => {
+    const container =
+      model.getFileTreeContainer() ?? document.getElementById(treeId);
+    const shadow = container?.shadowRoot;
+    if (!container || !shadow) return;
+    const previousPosition = container.style.position;
+    container.style.position = "relative";
+    const layer = document.createElement("div");
+    Object.assign(layer.style, {
+      position: "absolute",
+      inset: "0",
+      pointerEvents: "none",
+      overflow: "hidden",
+      zIndex: "1",
+    });
+    shadow.appendChild(layer);
+    const hosts = new Map<
+      HTMLElement,
+      { file: FileEntry; host: HTMLSpanElement }
+    >();
+    const sync = () => {
+      const rect = container.getBoundingClientRect();
+      const rows = new Set<HTMLElement>();
+      let changed = false;
+      for (const row of shadow.querySelectorAll<HTMLElement>(
+        "button[data-type='item'][data-item-path]",
+      )) {
+        const file = indexFiles.get(`${currentPath}${row.dataset.itemPath}`);
+        if (!file || !needsIndexAttention(file.metadata?.Index)) continue;
+        const content = row.querySelector<HTMLElement>(
+          "[data-item-section='content']",
+        );
+        if (!content) continue;
+        rows.add(row);
+        let entry = hosts.get(row);
+        if (!entry) {
+          const host = document.createElement("span");
+          Object.assign(host.style, {
+            position: "absolute",
+            pointerEvents: "auto",
+            display: "flex",
+          });
+          layer.appendChild(host);
+          entry = { file, host };
+          hosts.set(row, entry);
+          content.style.paddingRight = "24px";
+          changed = true;
+        }
+        const bounds = content.getBoundingClientRect();
+        const rowBounds = row.getBoundingClientRect();
+        entry.host.style.left = `${bounds.right - rect.left - 22}px`;
+        entry.host.style.top = `${rowBounds.top - rect.top + (rowBounds.height - 20) / 2}px`;
+      }
+      for (const [row, entry] of hosts)
+        if (!rows.has(row)) {
+          row
+            .querySelector<HTMLElement>("[data-item-section='content']")
+            ?.style.removeProperty("padding-right");
+          entry.host.remove();
+          hosts.delete(row);
+          changed = true;
+        }
+      if (changed) setStatusHosts([...hosts.values()]);
+    };
+    sync();
+    const observer = new MutationObserver((changes) => {
+      if (changes.some((change) => !layer.contains(change.target))) sync();
+    });
+    observer.observe(shadow, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-item-path"],
+    });
+    const resize = new ResizeObserver(sync);
+    resize.observe(container);
+    shadow.addEventListener("scroll", sync, true);
+    window.addEventListener("resize", sync);
+    return () => {
+      observer.disconnect();
+      resize.disconnect();
+      shadow.removeEventListener("scroll", sync, true);
+      window.removeEventListener("resize", sync);
+      for (const row of hosts.keys())
+        row
+          .querySelector<HTMLElement>("[data-item-section='content']")
+          ?.style.removeProperty("padding-right");
+      layer.remove();
+      container.style.position = previousPosition;
+    };
+  }, [currentPath, indexFiles, model, treeId]);
   React.useEffect(() => {
     const container =
       model.getFileTreeContainer() ?? document.getElementById(treeId);
@@ -4569,65 +4684,72 @@ function FileSystemPierreTree({
   };
   const typeAhead = useEntryTypeAhead();
   return (
-    <PierreFileTree
-      id={treeId}
-      model={model}
-      className="block min-h-0 flex-1"
-      onDoubleClick={(event) => {
-        const entry = entryFromEvent(event);
-        if (entry) onOpen(entry);
-      }}
-      onKeyDown={(event) => {
-        if (
-          ARROW_KEYS.has(event.key) &&
-          !event.shiftKey &&
-          !event.metaKey &&
-          !event.ctrlKey
-        ) {
-          requestAnimationFrame(() => {
-            const item = model.getFocusedItem();
-            if (!item) return;
-            for (const path of model.getSelectedPaths())
-              if (path !== item.getPath()) model.getItem(path)?.deselect();
-            item.select();
-          });
-        }
-        if (event.key === "Enter") {
+    <>
+      <PierreFileTree
+        id={treeId}
+        model={model}
+        className="block min-h-0 flex-1"
+        onDoubleClick={(event) => {
           const entry = entryFromEvent(event);
-          if (entry) {
-            event.preventDefault();
-            onOpen(entry);
+          if (entry) onOpen(entry);
+        }}
+        onKeyDown={(event) => {
+          if (
+            ARROW_KEYS.has(event.key) &&
+            !event.shiftKey &&
+            !event.metaKey &&
+            !event.ctrlKey
+          ) {
+            requestAnimationFrame(() => {
+              const item = model.getFocusedItem();
+              if (!item) return;
+              for (const path of model.getSelectedPaths())
+                if (path !== item.getPath()) model.getItem(path)?.deselect();
+              item.select();
+            });
           }
-          return;
+          if (event.key === "Enter") {
+            const entry = entryFromEvent(event);
+            if (entry) {
+              event.preventDefault();
+              onOpen(entry);
+            }
+            return;
+          }
+          if (!isTypeAheadKey(event)) return;
+          const visibleEntries = collectVisibleEntries();
+          const focusedPath =
+            model.getFocusedPath()?.replace(/\/$/, "") ?? null;
+          const focusedIndex = visibleEntries.findIndex(
+            (entry) =>
+              entry.path.slice(currentPath.length).replace(/\/$/, "") ===
+              focusedPath,
+          );
+          const match = typeAhead(event, visibleEntries, focusedIndex);
+          if (!match) return;
+          const item = resolveTreeItem(match.path.slice(currentPath.length));
+          if (item) {
+            model.scrollToPath(item.getPath());
+            item.focus();
+          }
+        }}
+        style={
+          {
+            "--trees-bg-override": "transparent",
+            "--trees-border-color-override": "var(--color-border)",
+            "--trees-fg-override": "var(--color-foreground)",
+            "--trees-focus-ring-color-override": "var(--color-ring)",
+            "--trees-focus-ring-width-override": "2px",
+            "--trees-selected-bg-override": "var(--color-primary)",
+            "--trees-selected-focused-border-color-override":
+              "var(--color-ring)",
+          } as React.CSSProperties
         }
-        if (!isTypeAheadKey(event)) return;
-        const visibleEntries = collectVisibleEntries();
-        const focusedPath = model.getFocusedPath()?.replace(/\/$/, "") ?? null;
-        const focusedIndex = visibleEntries.findIndex(
-          (entry) =>
-            entry.path.slice(currentPath.length).replace(/\/$/, "") ===
-            focusedPath,
-        );
-        const match = typeAhead(event, visibleEntries, focusedIndex);
-        if (!match) return;
-        const item = resolveTreeItem(match.path.slice(currentPath.length));
-        if (item) {
-          model.scrollToPath(item.getPath());
-          item.focus();
-        }
-      }}
-      style={
-        {
-          "--trees-bg-override": "transparent",
-          "--trees-border-color-override": "var(--color-border)",
-          "--trees-fg-override": "var(--color-foreground)",
-          "--trees-focus-ring-color-override": "var(--color-ring)",
-          "--trees-focus-ring-width-override": "2px",
-          "--trees-selected-bg-override": "var(--color-primary)",
-          "--trees-selected-focused-border-color-override": "var(--color-ring)",
-        } as React.CSSProperties
-      }
-    />
+      />
+      {statusHosts.map(({ file, host }) =>
+        createPortal(<FileIndexStatus file={file} />, host, file.path),
+      )}
+    </>
   );
 }
 function FileSystemColumnsView(props: FileSystemViewProps) {
@@ -4912,64 +5034,76 @@ const FileSystemColumn = React.memo(function FileSystemColumn({
               const isOnTrail =
                 entry.kind === "folder" && entry.path === trailChildPath;
               return (
-                <button
-                  key={entry.path}
-                  data-entry-path={entry.path}
-                  type="button"
-                  role="option"
-                  aria-label={entry.name}
-                  aria-selected={isSelected}
-                  tabIndex={entry.path === tabStopChildPath ? 0 : -1}
-                  ref={(element) => {
-                    if (element) {
-                      rowRefs.current.set(entry.path, element);
-                    } else {
-                      rowRefs.current.delete(entry.path);
-                    }
-                  }}
-                  onClick={(event) => onSelect(entry, event, entries)}
-                  onDoubleClick={() => onOpen(entry)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") onOpen(entry);
-                  }}
-                  className={cn(
-                    "flex h-7 shrink-0 items-center gap-2 rounded-md px-2 py-1 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    isSelected
-                      ? "bg-primary text-primary-foreground"
-                      : isOnTrail
-                        ? "bg-accent"
-                        : "hover:bg-accent/50",
-                  )}
-                >
-                  {entry.kind === "folder" ? (
-                    <Folder className="size-3.5 shrink-0" />
-                  ) : (
-                    <FileVisual
-                      file={entry}
-                      className="size-4 shrink-0 rounded-[3px]"
-                      previewClassName="size-full"
-                      loadPreviewImageUrl={loadPreviewImageUrl}
-                      pageUrlCache={pageUrlCache}
-                      renderFilePreview={() => (
-                        <FileTypeIcon
-                          fileName={entry.name}
-                          className="size-full"
-                          selected={isSelected}
-                        />
-                      )}
-                    />
-                  )}
-                  <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                  {entry.kind === "folder" &&
-                  folderHasChildren(index, entry) ? (
-                    <ChevronRight
-                      className={cn(
-                        "size-3.5 shrink-0",
-                        !isSelected && "text-muted-foreground/60",
-                      )}
-                    />
-                  ) : null}
-                </button>
+                <div key={entry.path} className="relative">
+                  <button
+                    data-entry-path={entry.path}
+                    type="button"
+                    role="option"
+                    aria-label={entry.name}
+                    aria-selected={isSelected}
+                    tabIndex={entry.path === tabStopChildPath ? 0 : -1}
+                    ref={(element) => {
+                      if (element) {
+                        rowRefs.current.set(entry.path, element);
+                      } else {
+                        rowRefs.current.delete(entry.path);
+                      }
+                    }}
+                    onClick={(event) => onSelect(entry, event, entries)}
+                    onDoubleClick={() => onOpen(entry)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") onOpen(entry);
+                    }}
+                    className={cn(
+                      "flex w-full h-7 shrink-0 items-center gap-2 rounded-md px-2 py-1 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      entry.kind === "file" &&
+                        needsIndexAttention(entry.metadata?.Index) &&
+                        "pr-8",
+                      isSelected
+                        ? "bg-primary text-primary-foreground"
+                        : isOnTrail
+                          ? "bg-accent"
+                          : "hover:bg-accent/50",
+                    )}
+                  >
+                    {entry.kind === "folder" ? (
+                      <Folder className="size-3.5 shrink-0" />
+                    ) : (
+                      <FileVisual
+                        file={entry}
+                        className="size-4 shrink-0 rounded-[3px]"
+                        previewClassName="size-full"
+                        loadPreviewImageUrl={loadPreviewImageUrl}
+                        pageUrlCache={pageUrlCache}
+                        renderFilePreview={() => (
+                          <FileTypeIcon
+                            fileName={entry.name}
+                            className="size-full"
+                            selected={isSelected}
+                          />
+                        )}
+                      />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">
+                      {entry.name}
+                    </span>
+                    {entry.kind === "folder" &&
+                    folderHasChildren(index, entry) ? (
+                      <ChevronRight
+                        className={cn(
+                          "size-3.5 shrink-0",
+                          !isSelected && "text-muted-foreground/60",
+                        )}
+                      />
+                    ) : null}
+                  </button>
+                  {entry.kind === "file" &&
+                    needsIndexAttention(entry.metadata?.Index) && (
+                      <span className="absolute right-2 top-1">
+                        <FileIndexStatus file={entry} />
+                      </span>
+                    )}
+                </div>
               );
             })}
           </div>
@@ -5000,7 +5134,16 @@ function FileSystemInformation({
     for (const [label, value] of Object.entries(entry.metadata ?? {}))
       rows.push([
         label,
-        label === "Index" ? <IndexStatusBadge status={value} /> : value,
+        label === "Index" && entry.kind === "file" ? (
+          <IndexStatusControl
+            badge
+            status={value}
+            error={entry.indexError}
+            onRetry={entry.onRetryIndex}
+          />
+        ) : (
+          value
+        ),
       ]);
   } else {
     const childCount = index.children.get(entry.path)?.length;
@@ -5424,57 +5567,65 @@ function FileSystemGalleryView(props: FileSystemViewProps) {
               const isActive =
                 entry.path === (activeEntry?.path ?? selectedPath);
               return (
-                <Tooltip key={entry.path}>
-                  <TooltipTrigger asChild>
-                    <button
-                      data-entry-path={entry.path}
-                      type="button"
-                      role="option"
-                      aria-label={entry.name}
-                      aria-selected={selectedPaths.has(entry.path)}
-                      tabIndex={isActive ? 0 : -1}
-                      ref={(element) => {
-                        if (element) {
-                          stripRefs.current.set(entry.path, element);
-                        } else {
-                          stripRefs.current.delete(entry.path);
-                        }
-                      }}
-                      onClick={(event) => onSelect(entry, event, entries)}
-                      onDoubleClick={() => onOpen(entry)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") onOpen(entry);
-                      }}
-                      className={cn(
-                        "flex size-14 shrink-0 items-center justify-center rounded-md border border-transparent p-1 outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        selectedPaths.has(entry.path) &&
-                          "border-ring/40 bg-accent",
-                      )}
-                    >
-                      {entry.kind === "folder" ? (
-                        <FileSystemFolderGlyph className="h-9 w-auto" />
-                      ) : (
-                        <span
-                          className="block shrink-0"
-                          style={{
-                            width: `min(2.875rem, calc((2.875rem - 2px) * ${entry.previewAspectRatio ?? 0.78} + 2px))`,
-                          }}
-                        >
-                          <FileVisual
-                            file={entry}
-                            className="w-full rounded-sm"
-                            previewAspectRatio={0.78}
-                            renderFilePreview={renderFilePreview}
-                            loadPreviewImageUrl={loadPreviewImageUrl}
-                          />
-                        </span>
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-80 break-words">
-                    {entry.name}
-                  </TooltipContent>
-                </Tooltip>
+                <div key={entry.path} className="relative">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        data-entry-path={entry.path}
+                        type="button"
+                        role="option"
+                        aria-label={entry.name}
+                        aria-selected={selectedPaths.has(entry.path)}
+                        tabIndex={isActive ? 0 : -1}
+                        ref={(element) => {
+                          if (element) {
+                            stripRefs.current.set(entry.path, element);
+                          } else {
+                            stripRefs.current.delete(entry.path);
+                          }
+                        }}
+                        onClick={(event) => onSelect(entry, event, entries)}
+                        onDoubleClick={() => onOpen(entry)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") onOpen(entry);
+                        }}
+                        className={cn(
+                          "flex size-14 shrink-0 items-center justify-center rounded-md border border-transparent p-1 outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          selectedPaths.has(entry.path) &&
+                            "border-ring/40 bg-accent",
+                        )}
+                      >
+                        {entry.kind === "folder" ? (
+                          <FileSystemFolderGlyph className="h-9 w-auto" />
+                        ) : (
+                          <span
+                            className="block shrink-0"
+                            style={{
+                              width: `min(2.875rem, calc((2.875rem - 2px) * ${entry.previewAspectRatio ?? 0.78} + 2px))`,
+                            }}
+                          >
+                            <FileVisual
+                              file={entry}
+                              className="w-full rounded-sm"
+                              previewAspectRatio={0.78}
+                              renderFilePreview={renderFilePreview}
+                              loadPreviewImageUrl={loadPreviewImageUrl}
+                            />
+                          </span>
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-80 break-words">
+                      {entry.name}
+                    </TooltipContent>
+                  </Tooltip>
+                  {entry.kind === "file" &&
+                    needsIndexAttention(entry.metadata?.Index) && (
+                      <span className="absolute bottom-1 right-1">
+                        <FileIndexStatus file={entry} />
+                      </span>
+                    )}
+                </div>
               );
             })}
           </div>

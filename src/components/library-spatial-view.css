@@ -132,3 +132,18 @@
     display: none;
   }
 }
+
+.library-space-index-statuses {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  overflow: hidden;
+}
+.library-space-index-status {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: auto;
+}

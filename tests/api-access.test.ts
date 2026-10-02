@@ -1514,7 +1514,7 @@ test("API key migration raises the old default and preserves custom limits", asy
   await runtime.store.db.query(
     readFileSync(
       new URL(
-        "../server/migrations/019-higher-api-key-limits.sql",
+        "../server/migrations/020-unrestricted-api-key-limits.sql",
         import.meta.url,
       ),
       "utf8",
@@ -1525,7 +1525,7 @@ test("API key migration raises the old default and preserves custom limits", asy
       'SELECT "rateLimitMax" FROM apikey WHERE id=?',
       id,
     ))!.rateLimitMax;
-  assert.equal(await allowance(first.key.id), 6000);
+  assert.equal(await allowance(first.key.id), 100000);
   assert.equal(await allowance(second.key.id), 42);
 });
 
@@ -1561,45 +1561,46 @@ test("search admission isolates users and prevents rotating credentials from res
     { ...principal, userId: otherId, credentialId: "fourth" },
     orgId,
   );
-  await assert.rejects(
-    access.limitSearch(
-      { ...principal, userId: "another", credentialId: "fifth" },
-      orgId,
-    ),
-    /Search limit/,
+  await access.limitSearch(
+    { ...principal, userId: "another", credentialId: "fifth" },
+    orgId,
   );
 });
 
-test("default upload admission supports concurrent bursts across users on one deployment", async (t) => {
+test("default upload admission isolates users and ignores prior shared counters", async (t) => {
   const { createUploads } = await import("../server/uploads");
   const { uploadLimits } = await import("../shared/uploads");
-  const { HttpError } = await import("../server/db");
   await runtime.store.run("DELETE FROM upload_usage");
   const clock = Date.now();
   t.mock.method(Date, "now", () => clock);
+  const bucket = Math.floor(clock / 60000);
   const uploads = createUploads(runtime.store);
   const a = { userId, orgId, role: "member", token: "first" };
   const b = { ...a, userId: otherId, token: "second" };
   try {
+    await runtime.store.run(
+      "INSERT INTO upload_usage(subject,bucket,period,attempts,expires_at) VALUES('deployment',?,60000,10000000,?)",
+      bucket,
+      new Date(clock + 60000).toISOString(),
+    );
     await Promise.all(
       [a, b].flatMap((actor) =>
-        Array.from({ length: uploadLimits.attemptsPerMinute.user }, () =>
-          uploads.admit(actor),
-        ),
+        Array.from({ length: 240 }, () => uploads.admit(actor)),
       ),
-    );
-    await assert.rejects(
-      uploads.admit({ ...a, orgId: secondOrgId }),
-      (error: unknown) =>
-        error instanceof HttpError &&
-        error.status === 429 &&
-        (error.retryAfter ?? 0) > 0,
     );
     const usage = await runtime.store.one<{ attempts: number }>(
       "SELECT attempts FROM upload_usage WHERE subject='deployment' AND bucket=? AND period=60000",
-      Math.floor(clock / 60_000),
+      bucket,
     );
-    assert.equal(usage?.attempts, 2 * uploadLimits.attemptsPerMinute.user);
+    assert.equal(usage?.attempts, 10000000);
+    await runtime.store.run(
+      "UPDATE upload_usage SET attempts=? WHERE subject=? AND bucket=? AND period=60000",
+      uploadLimits.attemptsPerMinute.user,
+      `user:${userId}`,
+      bucket,
+    );
+    await assert.rejects(uploads.admit(a), /Upload rate limit/);
+    await uploads.admit(b);
   } finally {
     await runtime.store.run("DELETE FROM upload_usage");
   }
@@ -1618,6 +1619,7 @@ test("upload quotas persist across runtime replacement and credentials, and reje
     attemptsPerMinute: { ...defaults.attemptsPerMinute, user: 5 },
     pending: { ...defaults.pending, user: 10 },
     storedBytes: { ...defaults.storedBytes, user: 512 * 1024 * 1024 },
+    dailyBytes: { ...defaults.dailyBytes, user: 1024 },
   };
   const clock = Date.now();
   t.mock.method(Date, "now", () => clock);
@@ -1675,7 +1677,7 @@ test("upload quotas persist across runtime replacement and credentials, and reje
     "INSERT INTO upload_usage(subject,bucket,period,bytes,expires_at) VALUES(?,?,86400000,?,?)",
     `user:${userId}`,
     bucket,
-    uploadLimits.dailyBytes.user,
+    limits.dailyBytes.user,
     new Date(clock + 86_400_000).toISOString(),
   );
   await assert.rejects(

@@ -1,5 +1,6 @@
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
+import { Spinner } from "./coss/spinner";
 import { CircleCheckFilled, TriangleWarningFilled } from "./icons";
 
 function normalizeStatus(status: string) {
@@ -15,9 +16,9 @@ export function indexStatusDescription(status: string, error?: string) {
   if (normalized === "ready")
     return "Index: complete. This document is ready for search and citations.";
   if (normalized === "stored")
-    return "Index: unavailable for this format. The original is available for viewing and download.";
+    return "Not indexed. This document is available to view and download, but is not ready for search.";
   if (normalized === "failed" || normalized === "awaiting_key")
-    return `Index: ${statusLabel(normalized)}. ${error || (normalized === "awaiting_key" ? "Connect Extend to index this document." : "Indexing failed. Open Index to retry.")}`;
+    return `Index: ${statusLabel(normalized)}. ${error || (normalized === "awaiting_key" ? "Connect Extend to index this document." : "Indexing failed. Retry to make this document searchable.")}`;
   return `Index: ${statusLabel(normalized)}. Parsed output and the index will appear when processing finishes.`;
 }
 
@@ -41,6 +42,8 @@ export function IndexStatusBadge({
     >
       {normalized === "ready" ? (
         <CircleCheckFilled className="size-3.5" />
+      ) : normalized === "processing" ? (
+        <Spinner className="size-3.5 shrink-0" aria-hidden="true" />
       ) : normalized === "failed" || normalized === "awaiting_key" ? (
         <TriangleWarningFilled className="size-4 micro-alert-icon" />
       ) : null}

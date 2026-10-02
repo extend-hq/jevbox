@@ -7,6 +7,10 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { Maximize, Minus, Plus } from "./icons";
+import {
+  IndexStatusControl,
+  needsIndexAttention,
+} from "./index-status-control";
 import { BlockTypeBadge, BlockPageBadge, blockStyle } from "./block-type-badge";
 import type { IndexNode } from "@/lib/api";
 import type { ParsedBlock } from "../../shared/parsed-blocks";
@@ -517,6 +521,7 @@ export function LibrarySpatialView(props: Props) {
     { id: string; type: string; page: number }[]
   >([]);
   const badgeElements = useRef(new Map<string, HTMLSpanElement>());
+  const statusElements = useRef(new Map<string, HTMLSpanElement>());
   const [outlineRows, setOutlineRows] = useState<{
     path: string;
     rows: SpatialOutlineRow[];
@@ -2729,6 +2734,26 @@ export function LibrarySpatialView(props: Props) {
       renderer.render(scene, camera);
       renderer.setRenderTarget(null);
       quad.render(renderer);
+      for (const [path, element] of statusElements.current) {
+        const floater = floaters.get(path);
+        if (!floater) {
+          element.style.visibility = "hidden";
+          continue;
+        }
+        const corner = floater.group
+          .localToWorld(
+            badgeCenter.set(floater.width / 2, -floater.height / 2, 0.01),
+          )
+          .project(camera);
+        const visible =
+          floater.group.visible &&
+          corner.z >= -1 &&
+          corner.z <= 1 &&
+          Math.abs(corner.x) < 1 &&
+          Math.abs(corner.y) < 1;
+        element.style.visibility = visible ? "visible" : "hidden";
+        element.style.transform = `translate(${(corner.x * 0.5 + 0.5) * width()}px, ${(-corner.y * 0.5 + 0.5) * height()}px) translate(-100%, -100%)`;
+      }
       if (activePreview) {
         for (const badge of activePreview.badges) {
           const element = badgeElements.current.get(badge.id);
@@ -3248,6 +3273,31 @@ export function LibrarySpatialView(props: Props) {
         aria-label="Interactive library space"
         aria-describedby="spatial-controls-help"
       >
+        <div className="library-space-index-statuses">
+          {props.items
+            .filter(
+              (item): item is FileSystemEntry & FileSystemFileItem =>
+                item.kind === "file" &&
+                needsIndexAttention(item.metadata?.Index),
+            )
+            .map((item) => (
+              <span
+                key={item.path}
+                className="library-space-index-status"
+                ref={(element) => {
+                  if (element) statusElements.current.set(item.path, element);
+                  else statusElements.current.delete(item.path);
+                  handle.current?.invalidate();
+                }}
+              >
+                <IndexStatusControl
+                  status={item.metadata?.Index ?? ""}
+                  error={item.indexError}
+                  onRetry={item.onRetryIndex}
+                />
+              </span>
+            ))}
+        </div>
         <div
           className="library-space-block-badges"
           aria-label="OCR block types"

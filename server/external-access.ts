@@ -274,7 +274,6 @@ export function createExternalAccess(
     for (const [key, max] of [
       [`search:user:${principal.userId}`, searchAllowances.user],
       [`search:key:${principal.credentialId}`, searchAllowances.credential],
-      [`search:org:${orgId}`, searchAllowances.organization],
     ] as const) {
       if ((await searchLimits.increment(key)).totalHits > max)
         throw new HttpError(

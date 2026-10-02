@@ -1,5 +1,5 @@
 import { DocumentIndexTree } from "./document-index-tree";
-import { IndexStatusBadge, indexStatusDescription } from "./index-status-badge";
+import { IndexStatusControl } from "./index-status-control";
 import { PreviewCard } from "@base-ui/react/preview-card";
 import {
   AlertDialog,
@@ -489,13 +489,12 @@ export function DocumentView({
       pdf.current?.scrollToPageArea(firstBlock.page, area);
     else pdf.current?.scrollToPage(n.page);
   };
-  const statusDescription = indexStatusDescription(doc.status, doc.error);
-  const reindex = () =>
-    void action.run(async () => {
-      await api(`/documents/${doc.id}/retry`, { method: "POST" });
-      setDoc({ ...doc, status: "queued", error: undefined });
-      onChange();
-    });
+  const retryIndex = async () => {
+    await api(`/documents/${doc.id}/retry`, { method: "POST" });
+    setDoc({ ...doc, status: "queued", error: undefined });
+    onChange();
+  };
+  const reindex = () => void action.run(retryIndex);
   const indexingNotice = indexIssue ? (
     <div className={`index-warning ${doc.status}`} role="alert">
       <TriangleAlert className="size-4.5 shrink-0 micro-alert-icon" />
@@ -746,20 +745,12 @@ export function DocumentView({
                 : ""}
               {(doc.size / 1024).toFixed(1)} KB
               <ResourceAccessBadge access={doc.access} />
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <IndexStatusBadge
-                      status={doc.status}
-                      error={doc.error}
-                      tabIndex={0}
-                    />
-                  }
-                />
-                <TooltipPopup className="max-w-72">
-                  {statusDescription}
-                </TooltipPopup>
-              </Tooltip>
+              <IndexStatusControl
+                badge
+                status={doc.status}
+                error={doc.error}
+                onRetry={doc.canWrite ? retryIndex : undefined}
+              />
             </p>
           </div>
         </div>

@@ -22,7 +22,6 @@ const { values } = parseArgs({
     follow: { type: "boolean", default: false },
     "judge-model": { type: "string", default: "gpt-6-luna" },
     "report-only": { type: "boolean", default: false },
-    preview: { type: "string", default: "outline" },
     sample: { type: "string" },
     seed: { type: "string", default: "routing-preview-2026-10-02" },
     "reuse-from": { type: "string" },
@@ -31,8 +30,6 @@ const { values } = parseArgs({
 if (!/^[a-z0-9-]+$/.test(values.label!)) throw new Error("Invalid run label");
 if (!["document", "library"].includes(values.scope!))
   throw new Error("Invalid scope");
-if (!["outline", "sampled"].includes(values.preview!))
-  throw new Error("Invalid preview strategy");
 const concurrency = Number(values.concurrency);
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8)
   throw new Error("Concurrency must be between one and eight");
@@ -146,7 +143,6 @@ const implementation = await Promise.all(
 );
 let implementationHash = createHash("sha256")
   .update(Buffer.concat(implementation))
-  .update(values.preview!)
   .digest("hex");
 let previousConfig:
   | {
@@ -156,7 +152,6 @@ let previousConfig:
       concurrency: number;
       searchConcurrency?: number;
       evaluatorConcurrency?: number;
-      preview?: string;
     }
   | undefined;
 if (values.evaluate || values["report-only"]) {
@@ -248,7 +243,6 @@ const runSettings = {
   sourceHash,
   questionHash,
   implementationHash,
-  preview: previousConfig?.preview ?? values.preview,
   sampleSeed: values.sample ? values.seed : undefined,
   selectedIds: selected.map((question) => question.id),
   judgeSelection,
@@ -393,7 +387,6 @@ async function search(question: Question): Promise<Result> {
         fetcher,
         values.scope === "document" ? [`document-${question.benchmarkId}`] : [],
         AbortSignal.timeout(120000),
-        { sectionPreview: values.preview as "outline" | "sampled" },
       ),
     );
     row.sources = found.results;

@@ -62,7 +62,6 @@ export async function retrieveDocuments(
     maxResults?: number;
     recoverRoutes?: boolean;
     filters?: SearchFilters;
-    sectionPreview?: "outline" | "sampled";
   },
 ) {
   if (!key)
@@ -216,9 +215,9 @@ export async function retrieveDocuments(
   function section(
     doc: Resource,
     node: IndexNode,
+    previews: ReadonlyMap<string, string>,
     parentNodeId?: string,
     ancestors: string[] = [],
-    previews?: ReadonlyMap<string, string>,
   ): RouteNode<Value> {
     const sectionPath = [...ancestors, node.title].slice(-8);
     return {
@@ -226,7 +225,7 @@ export async function retrieveDocuments(
       scope: doc.id,
       describe: async () =>
         (await canRead(doc.id))
-          ? (previews?.get(node.id) ??
+          ? (previews.get(node.id) ??
             `${node.title}\nPages ${node.page}–${node.endPage}\n${node.summary}`.slice(
               0,
               1200,
@@ -234,7 +233,7 @@ export async function retrieveDocuments(
           : undefined,
       children: bounded(
         node.children.map((child) =>
-          section(doc, child, node.id, sectionPath, previews),
+          section(doc, child, previews, node.id, sectionPath),
         ),
         `section:${doc.id}:${node.id}`,
       ),
@@ -300,13 +299,10 @@ export async function retrieveDocuments(
           const parsed = withSearchPassages(
             JSON.parse(current.parsed) as ParsedDocument,
           );
-          const previews =
-            options?.sectionPreview === "sampled"
-              ? buildSectionPreviews(parsed.nodes, query)
-              : undefined;
+          const previews = buildSectionPreviews(parsed.nodes, query);
           children = bounded(
             [...parsed.nodes, searchMetadata(parsed, query)].map((node) =>
-              section(current, node, undefined, [], previews),
+              section(current, node, previews),
             ),
             `document:${resource.id}`,
           );

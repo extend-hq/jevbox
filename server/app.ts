@@ -314,6 +314,8 @@ export async function createApp(options: {
         principal.userId,
         uploadLimits.mcpRequestBytes,
       );
+      await lease.ready;
+      lease.signal.throwIfAborted();
       express.json({ limit: uploadLimits.mcpRequestBytes, inflate: false })(
         req,
         res,

@@ -96,6 +96,8 @@ const { ParsedBlocks } = await import("../src/components/parsed-blocks");
 const { FinderDropZone } = await import("../src/components/finder-drop-zone");
 const { IndexStatusBadge } =
   await import("../src/components/index-status-badge");
+const { IndexStatusControl } =
+  await import("../src/components/index-status-control");
 const { ChatPromptEditor } =
   await import("../src/components/chat-prompt-editor");
 const { useFinderView, useDocumentSidebarPreference } =
@@ -1400,6 +1402,87 @@ test("Finder Gallery uses lazy thumbnails in its information header and has a re
   );
   assert.ok(loads.includes(0));
   assert.ok(pane.textContent?.includes("failed"));
+});
+
+test("unindexed status offers retry, reports errors, and hides after successful admission", async () => {
+  let attempts = 0;
+  let parentClicks = 0;
+  const render = (status: string, onRetry?: () => Promise<unknown>) =>
+    root.render(
+      <div onClick={() => parentClicks++}>
+        <IndexStatusControl
+          status={status}
+          error="Processing failed"
+          onRetry={onRetry}
+        />
+      </div>,
+    );
+  const retry = async () => {
+    if (++attempts === 1) throw new Error("Try again later");
+  };
+  await act(async () => render("failed", retry));
+  await click(host.querySelector("[data-index-attention]"));
+  assert.ok(document.body.textContent?.includes("Processing failed"));
+  await click(button("Retry indexing"));
+  assert.equal(attempts, 1);
+  assert.ok(
+    document
+      .querySelector('[role="alert"]')
+      ?.textContent?.includes("Try again later"),
+  );
+  await click(button("Retry indexing"));
+  assert.equal(attempts, 2);
+  assert.equal(parentClicks, 0);
+  for (const status of ["queued", "processing", "ready"]) {
+    await act(async () => render(status, retry));
+    assert.equal(host.querySelector("[data-index-attention]"), null);
+  }
+  await act(async () => render("stored"));
+  await click(host.querySelector("[data-index-attention]"));
+  assert.ok(document.body.textContent?.includes("Not indexed"));
+  assert.equal(button("Retry indexing"), undefined);
+});
+
+test("library indexing controls are independent of file selection across views", async () => {
+  for (const view of ["icons", "columns", "gallery", "list"] as const) {
+    let retries = 0;
+    let opens = 0;
+    await act(async () =>
+      root.render(
+        <FileSystem
+          key={view}
+          defaultView={view}
+          onFileOpen={() => opens++}
+          items={[
+            {
+              kind: "file",
+              path: "Unindexed.bin",
+              metadata: { Index: "failed" },
+              onRetryIndex: async () => {
+                retries++;
+              },
+            },
+            { kind: "file", path: "Queued.bin", metadata: { Index: "queued" } },
+            { kind: "file", path: "Ready.bin", metadata: { Index: "ready" } },
+          ]}
+        />,
+      ),
+    );
+    const tree = host.querySelector("file-tree-container")?.shadowRoot;
+    const trigger =
+      view === "list"
+        ? tree?.querySelector("[data-index-attention]")
+        : host.querySelector("[data-index-attention]");
+    assert.ok(trigger, view);
+    assert.equal(
+      trigger.closest("button[data-entry-path], button[data-type='item']"),
+      null,
+    );
+    await click(trigger);
+    await click(button("Retry indexing"));
+    assert.equal(retries, 1, view);
+    assert.equal(opens, 0, view);
+  }
 });
 
 test("library and chat indexing badges share status labels, icons, and color classes", async () => {

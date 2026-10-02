@@ -40,30 +40,29 @@ Generate secrets with `openssl rand -hex 32`. Store them in your cloud secret ma
 
 The defaults support concurrent users on one web instance. Authenticated browser, REST, and MCP requests share per-user buckets across tabs and credentials. Anonymous requests and native authentication endpoints use trusted client IPs. These admission ceilings do not change Render service sizes or background-worker concurrency.
 
-| Variable                                                              | Default                        |
-| --------------------------------------------------------------------- | ------------------------------ |
-| `API_READ_LIMIT_PER_MINUTE` / `API_WRITE_LIMIT_PER_MINUTE`            | 6,000 / 1,200 per user         |
-| `API_KEY_LIMIT_PER_MINUTE`                                            | 6,000 per key                  |
-| `ANONYMOUS_LIMIT_PER_MINUTE`                                          | 3,000 per IP and request kind  |
-| `AUTH_LIMIT_PER_MINUTE`                                               | 3,000 per IP and endpoint      |
-| `AUTH_SIGN_IN_LIMIT_PER_15_MINUTES`                                   | 300 per IP                     |
-| `AUTH_SIGN_UP_LIMIT_PER_MINUTE`                                       | 120 per IP                     |
-| `AUTH_RECOVERY_LIMIT_PER_15_MINUTES`                                  | 60 per IP                      |
-| `AUTH_VERIFICATION_LIMIT_PER_15_MINUTES`                              | 120 per IP                     |
-| `AUTH_KEY_CREATION_LIMIT_PER_HOUR`                                    | 300 per IP                     |
-| `AUTH_OAUTH_LIMIT_PER_MINUTE`                                         | 1,000 per IP and endpoint      |
-| `AUTH_OAUTH_REGISTRATION_LIMIT_PER_MINUTE`                            | 120 per IP                     |
-| `SEARCH_USER_LIMIT_PER_MINUTE` / `SEARCH_CREDENTIAL_LIMIT_PER_MINUTE` | 120 / 120                      |
-| `SEARCH_ORGANIZATION_LIMIT_PER_MINUTE`                                | 3,000                          |
-| `RUN_USER_CONCURRENCY`                                                | 25 per user in an organization |
-| `UPLOAD_CONCURRENCY` / `UPLOAD_USER_CONCURRENCY`                      | 64 / 4                         |
-| `UPLOAD_IN_FLIGHT_BYTES`                                              | 536,870,912 (512 MiB)          |
-| `UPLOAD_VALIDATION_CONCURRENCY`                                       | 4                              |
-| `UPLOAD_TIMEOUT_MS`                                                   | 120,000                        |
+| Variable                                                              | Default                            |
+| --------------------------------------------------------------------- | ---------------------------------- |
+| `API_READ_LIMIT_PER_MINUTE` / `API_WRITE_LIMIT_PER_MINUTE`            | 100,000 / 100,000 per user         |
+| `API_KEY_LIMIT_PER_MINUTE`                                            | 100,000 per key                    |
+| `ANONYMOUS_LIMIT_PER_MINUTE`                                          | 3,000 per IP and request kind      |
+| `AUTH_LIMIT_PER_MINUTE`                                               | 3,000 per IP and endpoint          |
+| `AUTH_SIGN_IN_LIMIT_PER_15_MINUTES`                                   | 300 per IP                         |
+| `AUTH_SIGN_UP_LIMIT_PER_MINUTE`                                       | 120 per IP                         |
+| `AUTH_RECOVERY_LIMIT_PER_15_MINUTES`                                  | 60 per IP                          |
+| `AUTH_VERIFICATION_LIMIT_PER_15_MINUTES`                              | 120 per IP                         |
+| `AUTH_KEY_CREATION_LIMIT_PER_HOUR`                                    | 300 per IP                         |
+| `AUTH_OAUTH_LIMIT_PER_MINUTE`                                         | 1,000 per IP and endpoint          |
+| `AUTH_OAUTH_REGISTRATION_LIMIT_PER_MINUTE`                            | 120 per IP                         |
+| `SEARCH_USER_LIMIT_PER_MINUTE` / `SEARCH_CREDENTIAL_LIMIT_PER_MINUTE` | 10,000 / 10,000                    |
+| `RUN_USER_CONCURRENCY`                                                | 10,000 per user in an organization |
+| `UPLOAD_CONCURRENCY` / `UPLOAD_USER_CONCURRENCY`                      | Unlimited / unlimited              |
+| `UPLOAD_IN_FLIGHT_BYTES`                                              | 536,870,912 (512 MiB)              |
+| `UPLOAD_VALIDATION_CONCURRENCY`                                       | 4                                  |
+| `UPLOAD_TIMEOUT_MS`                                                   | 120,000                            |
 
-Upload attempts, daily bytes, stored bytes, document counts, and pending-document quotas use the [upload quota defaults](api-access.md#upload-safeguards). Override any scope with `UPLOAD_{USER,ORGANIZATION,DEPLOYMENT}_{ATTEMPTS_PER_MINUTE,ATTEMPTS_PER_HOUR,DAILY_BYTES,STORED_BYTES,DOCUMENTS,PENDING_DOCUMENTS}`. Every setting requires a positive integer; byte settings use bytes. Configure upload storage quotas on both the web service and worker so indexing uses the same allowance. Higher request-body and validation concurrency settings need matching memory capacity.
+Upload attempts default to 10,000 per minute and 100,000 per hour per user. There are no shared organization or deployment quotas. Document counts, stored bytes, daily bytes, and pending-document counts are unlimited by default. Optional positive-integer `UPLOAD_USER_{ATTEMPTS_PER_MINUTE,ATTEMPTS_PER_HOUR,DAILY_BYTES,STORED_BYTES,DOCUMENTS,PENDING_DOCUMENTS}` settings can impose user-specific limits; organization and deployment quota settings are ignored. Leave `UPLOAD_CONCURRENCY` and `UPLOAD_USER_CONCURRENCY` unset for unlimited request counts. The memory budget and any configured concurrency settings queue excess bodies instead of rejecting them. Receipt/processing deadlines start when a body is admitted. Higher memory and validation concurrency settings need matching instance capacity.
 
-The normal migration raises existing API keys that still have the previous default of 180 requests per minute to 6,000. Custom key limits are preserved. `API_KEY_LIMIT_PER_MINUTE` configures newly created keys; existing keys store their own limits. Render environment overrides take precedence over code defaults, so remove or update an old override to adopt a raised limit.
+The normal migration raises existing API keys that still have a previous default of 180 or 6,000 requests per minute to 100,000. Custom key limits are preserved. `API_KEY_LIMIT_PER_MINUTE` configures newly created keys; existing keys store their own limits. Render environment overrides take precedence over code defaults, so remove or update an old override to adopt a raised limit.
 
 ## Web and background services
 

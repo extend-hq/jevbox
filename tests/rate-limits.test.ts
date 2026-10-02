@@ -61,19 +61,19 @@ test("API limits isolate users sharing an IP and separate reads from writes", as
 test("API sanity ceilings allow ordinary request bursts above the old limit", async () => {
   await withLimiter(
     createApiRateLimiter((req) => req.header("Authorization")!, {
-      read: 6000,
-      write: 1200,
+      read: 100000,
+      write: 100000,
     }),
     async (request) => {
       for (let index = 0; index < 200; index++) {
         const response = await request("first");
         assert.equal(response.status, 200);
-        assert.equal(response.headers.get("ratelimit-limit"), "6000");
+        assert.equal(response.headers.get("ratelimit-limit"), "100000");
         await response.arrayBuffer();
       }
       const response = await request("first", "POST");
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get("ratelimit-limit"), "1200");
+      assert.equal(response.headers.get("ratelimit-limit"), "100000");
     },
   );
 });
@@ -95,7 +95,7 @@ test("API ceilings are configurable and reject invalid limits", () => {
   try {
     delete process.env.API_READ_LIMIT_PER_MINUTE;
     delete process.env.API_WRITE_LIMIT_PER_MINUTE;
-    assert.deepEqual(apiRateLimits(), { read: 6000, write: 1200 });
+    assert.deepEqual(apiRateLimits(), { read: 100000, write: 100000 });
     process.env.API_READ_LIMIT_PER_MINUTE = "4500";
     process.env.API_WRITE_LIMIT_PER_MINUTE = "900";
     assert.deepEqual(apiRateLimits(), { read: 4500, write: 900 });
@@ -111,17 +111,17 @@ test("API ceilings are configurable and reject invalid limits", () => {
   }
 });
 
-test("public deployment ceilings are high and configurable without disabling enforcement", (t) => {
+test("shared quotas are disabled and user safeguards remain configurable", (t) => {
   t.mock.property(process, "env", {
     ...process.env,
     UPLOAD_USER_ATTEMPTS_PER_MINUTE: "240",
     UPLOAD_DEPLOYMENT_PENDING_DOCUMENTS: "100000",
-    SEARCH_ORGANIZATION_LIMIT_PER_MINUTE: "6000",
+    SEARCH_ORGANIZATION_LIMIT_PER_MINUTE: "100000",
     AUTH_OAUTH_LIMIT_PER_MINUTE: "2000",
   });
   assert.equal(uploadAdmissionLimits().attemptsPerMinute.user, 240);
-  assert.equal(uploadAdmissionLimits().pending.deployment, 100000);
-  assert.equal(searchRateLimits().organization, 6000);
+  assert.equal(uploadAdmissionLimits().pending.deployment, Infinity);
+  assert.equal(searchRateLimits().organization, Infinity);
   assert.equal(authRateLimits().oauth, 2000);
   process.env.UPLOAD_IN_FLIGHT_BYTES = "0";
   assert.throws(uploadAdmissionLimits);

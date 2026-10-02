@@ -72,10 +72,19 @@ export function createUploads(
   const active = new Map<string, number>();
   let activeRequests = 0;
   let activeBytes = 0;
+  const waiting = new Set<() => boolean>();
+  const drain = () => {
+    for (const start of waiting) if (start()) waiting.delete(start);
+  };
   const validate = createLimiter(limits.validation);
   const leases = new WeakMap<
     Request,
-    { retain: () => void; release: () => void; signal: AbortSignal }
+    {
+      ready: Promise<void>;
+      retain: () => void;
+      release: () => void;
+      signal: AbortSignal;
+    }
   >();
   function reserve(
     req: Request,
@@ -92,36 +101,58 @@ export function createUploads(
     )
       throw new HttpError(415, "Compressed request bodies are not supported");
     const bytes = length ? Number(length) : maxBytes;
-    const userActive = active.get(userId) ?? 0;
-    if (
-      userActive >= limits.activePerUser ||
-      activeRequests >= limits.active ||
-      activeBytes + bytes > limits.activeBytes
-    )
-      throw new HttpError(429, "Uploads are busy. Retry shortly.", 2);
-    active.set(userId, userActive + 1);
-    activeRequests++;
-    activeBytes += bytes;
     let released = false;
     let retained = false;
+    let started = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
+    let resolveReady!: () => void;
+    let rejectReady!: (error: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+    void ready.catch(() => {});
     const release = () => {
       if (released) return;
       released = true;
-      const remaining = (active.get(userId) ?? 1) - 1;
-      if (remaining) active.set(userId, remaining);
-      else active.delete(userId);
-      activeRequests--;
-      activeBytes -= bytes;
       clearTimeout(timer);
+      waiting.delete(start);
+      if (started) {
+        const remaining = (active.get(userId) ?? 1) - 1;
+        if (remaining) active.set(userId, remaining);
+        else active.delete(userId);
+        activeRequests--;
+        activeBytes -= bytes;
+      } else {
+        controller.abort();
+        rejectReady(new HttpError(499, "Upload cancelled"));
+      }
+      drain();
     };
-    const timer = setTimeout(() => {
-      controller.abort();
-      if (!res.headersSent) res.status(408).json({ error: "Upload timed out" });
-      req.destroy();
-      if (!retained) release();
-    }, limits.receiveMs);
-    timer.unref();
+    const start = () => {
+      if (released) return true;
+      if (
+        (active.get(userId) ?? 0) >= limits.activePerUser ||
+        activeRequests >= limits.active ||
+        (activeRequests > 0 && activeBytes + bytes > limits.activeBytes)
+      )
+        return false;
+      started = true;
+      active.set(userId, (active.get(userId) ?? 0) + 1);
+      activeRequests++;
+      activeBytes += bytes;
+      timer = setTimeout(() => {
+        controller.abort();
+        if (!res.headersSent)
+          res.status(408).json({ error: "Upload timed out" });
+        req.destroy();
+        if (!retained) release();
+      }, limits.receiveMs);
+      timer.unref();
+      resolveReady();
+      return true;
+    };
     res.once("finish", () => {
       if (!retained) release();
     });
@@ -130,6 +161,7 @@ export function createUploads(
       if (!retained) release();
     });
     const lease = {
+      ready,
       retain: () => {
         retained = true;
       },
@@ -137,6 +169,7 @@ export function createUploads(
       signal: controller.signal,
     };
     leases.set(req, lease);
+    if (!start()) waiting.add(start);
     return lease;
   }
   async function checkParent(a: Actor, parentId: string | null) {
@@ -148,31 +181,20 @@ export function createUploads(
     )
       throw new HttpError(404, "Writable folder not found");
   }
-  const subjects = (a: Actor) => [
-    `user:${a.userId}`,
-    `org:${a.orgId}`,
-    "deployment",
-  ];
+  const subjects = (a: Actor) => [`user:${a.userId}`];
   async function capacity(a: Actor, bytes: number) {
     await checkStoredDocumentQuota(store, a.userId, a.orgId, bytes, 1, limits);
-    const rows = await store.all<{
-      subject: string;
-      size: string;
-      pending: string;
-    }>(
-      "SELECT subject,COALESCE(SUM(size),0)::text AS size,COUNT(*) FILTER (WHERE status IN ('queued','processing') OR thumbnail_status IN ('queued','processing') OR EXISTS (SELECT 1 FROM document_filing f WHERE f.resource_id=r.id AND f.state IN ('pending','working')))::text AS pending FROM resources r CROSS JOIN LATERAL (VALUES ('deployment'),(CASE WHEN owner_id=? THEN 'user' END),(CASE WHEN org_id=? THEN 'organization' END)) s(subject) WHERE kind='document' AND subject IS NOT NULL GROUP BY subject",
+    if (!Number.isFinite(limits.pending.user)) return;
+    const row = await store.one<{ pending: string }>(
+      "SELECT COUNT(*)::text AS pending FROM resources r WHERE kind='document' AND owner_id=? AND (status IN ('queued','processing') OR thumbnail_status IN ('queued','processing') OR EXISTS (SELECT 1 FROM document_filing f WHERE f.resource_id=r.id AND f.state IN ('pending','working')))",
       a.userId,
-      a.orgId,
     );
-    for (const row of rows) {
-      const scope = row.subject as keyof typeof limits.pending;
-      if (Number(row.pending) >= limits.pending[scope])
-        throw new HttpError(
-          429,
-          "Document processing queue is full. Wait for existing uploads to finish.",
-          10,
-        );
-    }
+    if (Number(row?.pending ?? 0) >= limits.pending.user)
+      throw new HttpError(
+        429,
+        "Document processing queue is full. Wait for existing uploads to finish.",
+        10,
+      );
   }
   async function admit(a: Actor) {
     await store.transaction(async () => {
@@ -181,8 +203,8 @@ export function createUploads(
       const time = Date.now();
       await store.run("DELETE FROM upload_usage WHERE expires_at<now()");
       for (const [period, allowances] of [
-        [60_000, Object.values(limits.attemptsPerMinute)],
-        [3_600_000, Object.values(limits.attemptsPerHour)],
+        [60_000, [limits.attemptsPerMinute.user]],
+        [3_600_000, [limits.attemptsPerHour.user]],
       ] as const) {
         const bucket = Math.floor(time / period);
         const current = subjects(a);
@@ -244,6 +266,7 @@ export function createUploads(
           uploadLimits.fileBytes + 16 * 1024,
         );
         await admit(a);
+        await lease.ready;
         lease.signal.throwIfAborted();
         receive(req, res, (error) => {
           if (error) lease.release();
@@ -278,7 +301,7 @@ export function createUploads(
       await capacity(current, body.length);
       const period = 86_400_000,
         bucket = Math.floor(Date.now() / period);
-      const allowances = Object.values(limits.dailyBytes);
+      const allowances = [limits.dailyBytes.user];
       const currentSubjects = subjects(current);
       for (let i = 0; i < currentSubjects.length; i++) {
         const row = await store.one<{ bytes: string }>(

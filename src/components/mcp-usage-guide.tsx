@@ -104,8 +104,8 @@ export function McpUsageGuide({ onCopy }: { onCopy: (value: string) => void }) {
       <article className="api-docs-section">
         <h3>Upload limits</h3>
         <p>
-          API, MCP, and browser uploads share these default quotas across your
-          keys. Organization and deployment caps also apply.
+          API, MCP, and browser uploads share a generous per-user attempt
+          safeguard across keys. There are no organization or deployment quotas.
         </p>
         <DocumentationTable
           nameLabel="Limit"
@@ -116,15 +116,15 @@ export function McpUsageGuide({ onCopy }: { onCopy: (value: string) => void }) {
             { name: "Multipart API file size", detail: "250 MB" },
             {
               name: "Upload attempts",
-              detail: "120 per minute · 2,000 per hour",
+              detail: "10,000 per minute · 100,000 per hour",
             },
-            { name: "Uploaded bytes", detail: "2 GiB per UTC day" },
-            { name: "Stored bytes", detail: "10 GiB" },
+            { name: "Uploaded bytes", detail: "Unlimited" },
+            { name: "Stored bytes", detail: "Unlimited" },
             {
               name: "Processing queue",
-              detail: "500 documents awaiting processing",
+              detail: "Unlimited",
             },
-            { name: "Document count", detail: "10,000 documents per user" },
+            { name: "Document count", detail: "Unlimited" },
           ]}
         />
         <p>
