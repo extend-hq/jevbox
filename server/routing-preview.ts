@@ -55,7 +55,10 @@ function fragments(content: string) {
   return [...new Set(output)].filter((text) => text.length >= 25);
 }
 
-function similarity(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>) {
+function similarity(
+  a: ReadonlyMap<string, number>,
+  b: ReadonlyMap<string, number>,
+) {
   let shared = 0;
   for (const word of a.keys()) if (b.has(word)) shared++;
   return shared / Math.max(1, a.size + b.size - shared);
@@ -104,7 +107,9 @@ export function buildSectionPreviews(nodes: IndexNode[], query: string) {
   nodes.forEach(index);
   const frequencies = new Map<string, number>();
   for (const samples of own.values()) {
-    const words = new Set(samples.flatMap((sample) => [...sample.words.keys()]));
+    const words = new Set(
+      samples.flatMap((sample) => [...sample.words.keys()]),
+    );
     for (const word of words)
       frequencies.set(word, (frequencies.get(word) ?? 0) + 1);
   }
@@ -159,16 +164,21 @@ export function buildSectionPreviews(nodes: IndexNode[], query: string) {
       for (const sample of pool) {
         const redundancy = Math.max(
           0,
-          ...selected.map((previous) => similarity(previous.words, sample.words)),
+          ...selected.map((previous) =>
+            similarity(previous.words, sample.words),
+          ),
         );
         if (
           redundancy > 0.8 ||
           selected.some((previous) => previous.text === sample.text)
-        ) continue;
+        )
+          continue;
         const score =
           (focused ? sample.relevance / maxRelevance : 0) +
           (0.2 * sample.information) / maxInformation +
-          (selected.every((previous) => previous.node !== sample.node) ? 0.15 : 0) +
+          (selected.every((previous) => previous.node !== sample.node)
+            ? 0.15
+            : 0) +
           (sample.position === 0 ? 0.05 : 0) -
           0.45 * redundancy;
         if (score > bestScore) {

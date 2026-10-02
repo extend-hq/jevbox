@@ -791,6 +791,7 @@ test("candidate sections score every passage without a passage routing gate", as
     (node) => node.passages ?? [],
   );
   const scored: string[] = [];
+  let sawPreview = false;
   const result = await retrieveDocuments(
     store,
     actor,
@@ -799,10 +800,20 @@ test("candidate sections score every passage without a passage routing gate", as
     async (_url, init) => {
       const body = JSON.parse(String(init?.body));
       if (!isScoreRequest(body)) {
-        assert.equal(
-          JSON.stringify(body.questions).includes("Background only"),
-          false,
-        );
+        const questions = Object.values(body.questions) as {
+          criteria: Record<string, string>;
+        }[];
+        for (const { criteria } of questions) {
+          assert.ok(
+            !Object.keys(criteria).some((id) => id.startsWith("passage:")),
+          );
+          for (const description of Object.values(criteria)) {
+            assert.ok(description.length <= 1200);
+            assert.notEqual(description, content);
+            if (description.includes("Source excerpts (partial)"))
+              sawPreview = true;
+          }
+        }
         return choiceResponse(body);
       }
       scored.push(...scoreContents(body));
@@ -811,7 +822,12 @@ test("candidate sections score every passage without a passage routing gate", as
       );
     },
   );
+  assert.equal(sawPreview, true);
   assert.equal(scored.length, expected.length + 2);
+  for (const passage of expected)
+    assert.ok(
+      scored.some((evidence) => evidence.endsWith(`\n\n${passage.content}`)),
+    );
   assert.equal(result.results.length, 1);
   assert.match(result.results[0].content, /739/);
 });

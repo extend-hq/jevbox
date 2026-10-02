@@ -1540,7 +1540,9 @@ test("library and chat indexing badges share status labels, icons, and color cla
       );
       assert.equal(
         badge.querySelectorAll("svg").length,
-        ["ready", "failed", "awaiting_key"].includes(status) ? 1 : 0,
+        ["ready", "failed", "awaiting_key", "processing"].includes(status)
+          ? 1
+          : 0,
       );
       assert.equal(badge.innerHTML, badges[0].innerHTML);
     }

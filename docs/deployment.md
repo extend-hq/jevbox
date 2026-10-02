@@ -44,15 +44,15 @@ The defaults support concurrent users on one web instance. Authenticated browser
 | --------------------------------------------------------------------- | ---------------------------------- |
 | `API_READ_LIMIT_PER_MINUTE` / `API_WRITE_LIMIT_PER_MINUTE`            | 100,000 / 100,000 per user         |
 | `API_KEY_LIMIT_PER_MINUTE`                                            | 100,000 per key                    |
-| `ANONYMOUS_LIMIT_PER_MINUTE`                                          | 3,000 per IP and request kind      |
-| `AUTH_LIMIT_PER_MINUTE`                                               | 3,000 per IP and endpoint          |
-| `AUTH_SIGN_IN_LIMIT_PER_15_MINUTES`                                   | 300 per IP                         |
-| `AUTH_SIGN_UP_LIMIT_PER_MINUTE`                                       | 120 per IP                         |
-| `AUTH_RECOVERY_LIMIT_PER_15_MINUTES`                                  | 60 per IP                          |
-| `AUTH_VERIFICATION_LIMIT_PER_15_MINUTES`                              | 120 per IP                         |
-| `AUTH_KEY_CREATION_LIMIT_PER_HOUR`                                    | 300 per IP                         |
-| `AUTH_OAUTH_LIMIT_PER_MINUTE`                                         | 1,000 per IP and endpoint          |
-| `AUTH_OAUTH_REGISTRATION_LIMIT_PER_MINUTE`                            | 120 per IP                         |
+| `ANONYMOUS_LIMIT_PER_MINUTE`                                          | 100,000 per IP and request kind    |
+| `AUTH_LIMIT_PER_MINUTE`                                               | 100,000 per IP and endpoint        |
+| `AUTH_SIGN_IN_LIMIT_PER_15_MINUTES`                                   | 10,000 per IP                      |
+| `AUTH_SIGN_UP_LIMIT_PER_MINUTE`                                       | 10,000 per IP                      |
+| `AUTH_RECOVERY_LIMIT_PER_15_MINUTES`                                  | 1,000 per IP                       |
+| `AUTH_VERIFICATION_LIMIT_PER_15_MINUTES`                              | 10,000 per IP                      |
+| `AUTH_KEY_CREATION_LIMIT_PER_HOUR`                                    | 10,000 per IP                      |
+| `AUTH_OAUTH_LIMIT_PER_MINUTE`                                         | 100,000 per IP and endpoint        |
+| `AUTH_OAUTH_REGISTRATION_LIMIT_PER_MINUTE`                            | 10,000 per IP                      |
 | `SEARCH_USER_LIMIT_PER_MINUTE` / `SEARCH_CREDENTIAL_LIMIT_PER_MINUTE` | 10,000 / 10,000                    |
 | `RUN_USER_CONCURRENCY`                                                | 10,000 per user in an organization |
 | `UPLOAD_CONCURRENCY` / `UPLOAD_USER_CONCURRENCY`                      | Unlimited / unlimited              |

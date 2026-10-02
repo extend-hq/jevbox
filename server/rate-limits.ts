@@ -20,19 +20,19 @@ export function apiRateLimits() {
 
 export function authRateLimits() {
   return {
-    requests: configuredLimit("AUTH_LIMIT_PER_MINUTE", 3000),
-    signIn: configuredLimit("AUTH_SIGN_IN_LIMIT_PER_15_MINUTES", 300),
-    signUp: configuredLimit("AUTH_SIGN_UP_LIMIT_PER_MINUTE", 120),
-    recovery: configuredLimit("AUTH_RECOVERY_LIMIT_PER_15_MINUTES", 60),
+    requests: configuredLimit("AUTH_LIMIT_PER_MINUTE", 100_000),
+    signIn: configuredLimit("AUTH_SIGN_IN_LIMIT_PER_15_MINUTES", 10_000),
+    signUp: configuredLimit("AUTH_SIGN_UP_LIMIT_PER_MINUTE", 10_000),
+    recovery: configuredLimit("AUTH_RECOVERY_LIMIT_PER_15_MINUTES", 1000),
     verification: configuredLimit(
       "AUTH_VERIFICATION_LIMIT_PER_15_MINUTES",
-      120,
+      10_000,
     ),
-    keyCreation: configuredLimit("AUTH_KEY_CREATION_LIMIT_PER_HOUR", 300),
-    oauth: configuredLimit("AUTH_OAUTH_LIMIT_PER_MINUTE", 1000),
+    keyCreation: configuredLimit("AUTH_KEY_CREATION_LIMIT_PER_HOUR", 10_000),
+    oauth: configuredLimit("AUTH_OAUTH_LIMIT_PER_MINUTE", 100_000),
     oauthRegistration: configuredLimit(
       "AUTH_OAUTH_REGISTRATION_LIMIT_PER_MINUTE",
-      120,
+      10_000,
     ),
     apiKey: configuredLimit("API_KEY_LIMIT_PER_MINUTE", 100_000),
   };
@@ -64,7 +64,7 @@ export function createApiRateLimiter(
 }
 
 export function createAnonymousRateLimiter(
-  limit = configuredLimit("ANONYMOUS_LIMIT_PER_MINUTE", 3000),
+  limit = configuredLimit("ANONYMOUS_LIMIT_PER_MINUTE", 100_000),
 ) {
   return rateLimit({
     windowMs: 60000,
