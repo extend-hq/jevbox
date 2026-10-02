@@ -35,7 +35,7 @@ function ToastList() {
               )}
               <div className="min-w-0 flex-1">
                 <Toast.Title className="text-sm font-medium" />
-                <Toast.Description className="text-xs text-muted-foreground" />
+                <Toast.Description className="break-words whitespace-pre-line text-xs text-muted-foreground" />
               </div>
               <Toast.Close
                 aria-label="Dismiss notification"

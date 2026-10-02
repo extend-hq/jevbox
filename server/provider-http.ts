@@ -1,5 +1,4 @@
 import { HttpError } from "./errors";
-import { uploadLimits } from "../shared/uploads";
 export class ProviderResponseError extends HttpError {
   readonly retryable = false;
   constructor(message: string) {
@@ -35,28 +34,15 @@ export async function jsonRequest(
     };
     signal.addEventListener("abort", cancel, { once: true });
     const chunks: Uint8Array[] = [];
-    let size = 0;
     try {
-      if (
-        Number(response.headers.get("Content-Length")) >
-        uploadLimits.parserResponseBytes
-      )
-        throw new ProviderResponseError(
-          "The provider response exceeds its 16 MiB processing limit",
-        );
       while (true) {
         signal.throwIfAborted();
         const { value, done } = await reader.read();
         if (done) break;
-        size += value.byteLength;
-        if (size > uploadLimits.parserResponseBytes)
-          throw new ProviderResponseError(
-            "The provider response exceeds its 16 MiB processing limit",
-          );
         chunks.push(value);
       }
       signal.throwIfAborted();
-      return JSON.parse(Buffer.concat(chunks, size).toString("utf8"));
+      return JSON.parse(Buffer.concat(chunks).toString("utf8"));
     } finally {
       signal.removeEventListener("abort", cancel);
       await reader.cancel().catch(() => {});

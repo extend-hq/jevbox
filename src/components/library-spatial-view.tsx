@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { FullScreenQuad } from "three/addons/postprocessing/Pass.js";
@@ -6,7 +7,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { Maximize, Minus, Plus } from "./icons";
-import { BlockTypeBadge, BlockPageBadge } from "./block-type-badge";
+import { BlockTypeBadge, BlockPageBadge, blockStyle } from "./block-type-badge";
 import type { IndexNode } from "@/lib/api";
 import type { ParsedBlock } from "../../shared/parsed-blocks";
 import type { FileSystemEntry, FileSystemFileItem } from "./extend/file-system";
@@ -305,7 +306,12 @@ function fitText(
 function cardTexture(
   title: string,
   meta: string,
-  options: { dark: boolean; accent?: string },
+  options: {
+    dark: boolean;
+    accent?: string;
+    icon?: Promise<HTMLImageElement | null>;
+    onUpdate?: () => void;
+  },
 ) {
   const canvas = document.createElement("canvas");
   canvas.width = 768;
@@ -343,7 +349,7 @@ function cardTexture(
     ? "rgb(255 255 255 / 8%)"
     : "rgb(0 0 0 / 8%)";
   context.stroke();
-  const left = 22;
+  const left = options.icon ? 62 : 22;
   context.textBaseline = "middle";
   context.font = `500 24px Inter, system-ui, sans-serif`;
   const metaWidth = meta ? context.measureText(meta).width + 16 : 0;
@@ -360,6 +366,18 @@ function cardTexture(
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
+  if (options.icon) {
+    let active = true;
+    texture.addEventListener("dispose", () => {
+      active = false;
+    });
+    void options.icon.then((image) => {
+      if (!active || !image) return;
+      context.drawImage(image, 20, 16, 32, 32);
+      texture.needsUpdate = true;
+      options.onUpdate?.();
+    });
+  }
   return texture;
 }
 
@@ -611,6 +629,31 @@ export function LibrarySpatialView(props: Props) {
       return value;
     }
     const nightMaps = new WeakMap<THREE.Material, THREE.Texture>();
+    const blockIcons = new Map<string, Promise<HTMLImageElement | null>>();
+    const themeColors = getComputedStyle(document.documentElement);
+    function blockIcon(type: string, dark: boolean) {
+      const { icon: Icon, tone } = blockStyle(type);
+      const key = `${tone}:${dark}`;
+      let cached = blockIcons.get(key);
+      if (!cached) {
+        const color =
+          themeColors
+            .getPropertyValue(`--color-${tone}-${dark ? 300 : 700}`)
+            .trim() || blockColor(type);
+        const image = new Image();
+        image.src = `data:image/svg+xml,${encodeURIComponent(
+          renderToStaticMarkup(
+            <Icon xmlns="http://www.w3.org/2000/svg" size={32} color={color} />,
+          ),
+        )}`;
+        cached = image
+          .decode()
+          .then(() => image)
+          .catch(() => null);
+        blockIcons.set(key, cached);
+      }
+      return cached;
+    }
     function themeMap<T extends THREE.Material>(
       value: T,
       nightMap: THREE.Texture,
@@ -1330,14 +1373,22 @@ export function LibrarySpatialView(props: Props) {
         const meta = row.page
           ? `p.${row.page}${row.blocks.length ? ` · ${row.blocks.length}` : ""}`
           : "";
-        const accent = row.blocks[0]
-          ? blockColor(row.blocks[0].type)
-          : undefined;
+        const accent = row.blockType ? blockColor(row.blockType) : undefined;
         const card = new THREE.Mesh(
           geometry(new THREE.PlaneGeometry(width, TREE_CARD_HEIGHT)),
           cardMaterial(
-            cardTexture(row.title, meta, { dark: false, accent }),
-            cardTexture(row.title, meta, { dark: true, accent }),
+            cardTexture(row.title, meta, {
+              dark: false,
+              accent,
+              icon: row.blockType ? blockIcon(row.blockType, false) : undefined,
+              onUpdate: invalidate,
+            }),
+            cardTexture(row.title, meta, {
+              dark: true,
+              accent,
+              icon: row.blockType ? blockIcon(row.blockType, true) : undefined,
+              onUpdate: invalidate,
+            }),
             flowGeometry.rowDistances[index] - 0.02,
             width,
           ),

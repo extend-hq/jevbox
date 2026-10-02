@@ -23,10 +23,3 @@ export function mutationSuccessMessage(path: string, method: string) {
   if (method === "DELETE" && /^\/chats\/[^/]+$/.test(path))
     return "Conversation deleted";
 }
-
-export function notifyUploads(count: number) {
-  if (count > 0)
-    notifySuccess(
-      count === 1 ? "Document uploaded" : `${count} documents uploaded`,
-    );
-}

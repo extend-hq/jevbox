@@ -3,6 +3,7 @@ import {
   type ParsedBlock,
 } from "../../shared/parsed-blocks";
 import type { IndexNode } from "./api";
+import { sectionBlockType } from "../../shared/section-block-type";
 
 export type SpatialOutlineRow = {
   id: string;
@@ -10,6 +11,7 @@ export type SpatialOutlineRow = {
   page: number;
   depth: number;
   parent: number;
+  blockType?: string;
   blocks: ParsedBlock[];
 };
 
@@ -40,6 +42,7 @@ export function spatialOutlineRows(
         page: node.page,
         depth,
         parent,
+        blockType: sectionBlockType(node),
         blocks: collect(node),
       });
       if (depth < maxDepth) visit(node.children, depth + 1, index);
@@ -58,6 +61,7 @@ export function spatialOutlineRows(
         page,
         depth: 0,
         parent: -1,
+        blockType: "page_number",
         blocks,
       });
     }

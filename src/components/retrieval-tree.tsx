@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { ScrollArea } from "./coss/scroll-area";
 import type { RetrievalStep } from "../../shared/retrieval";
 import { FileText, Folder, IndexTreeIcon, ShapeTriangle } from "./icons";
 import { blockStyle } from "./block-type-badge";
 import { ResourceThumbnail } from "./resource-thumbnail";
+import { OutlineTree } from "./outline-tree";
+import { retrievalNodeId, retrievalOutline } from "../lib/retrieval-outline";
 
 function SectionIcon({ step }: { step: RetrievalStep }) {
   const type =
@@ -47,86 +49,20 @@ export function RetrievalTree({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const latency = formatLatency(retrievalDurationMs);
-  const categories = trace.filter((step) => step.stage === "category");
+  const nodes = useMemo(() => retrievalOutline(trace), [trace]);
   const documents = trace.filter((step) => step.stage === "document");
-  const sections = trace.filter((step) => step.stage === "section");
-  function renderSections(
-    documentId: string,
-    parentNodeId?: string,
-  ): React.ReactNode {
-    return sections
-      .filter(
-        (step) =>
-          step.resourceId === documentId &&
-          (parentNodeId
-            ? step.parentNodeId === parentNodeId
-            : !step.parentNodeId ||
-              !sections.some(
-                (parent) =>
-                  parent.resourceId === documentId &&
-                  parent.nodeId === step.parentNodeId,
-              )),
-      )
-      .map((step, i) => (
-        <li key={step.nodeId ?? i}>
-          <button
-            className="retrieval-node"
-            data-active={
-              (activeDocumentId === documentId &&
-                activeNodeId === step.nodeId) ||
-              undefined
-            }
-            onClick={() => onSelect?.(documentId, step.nodeId)}
-            onMouseMove={() => onPreview?.(documentId, step.nodeId)}
-            onFocus={() => onPreview?.(documentId, step.nodeId)}
-            disabled={!onSelect}
-          >
-            <SectionIcon step={step} />
-            <span>{step.label}</span>
-            {step.page && <small>p. {step.page}</small>}
-          </button>
-          {sections.some(
-            (child) =>
-              child.resourceId === documentId &&
-              child.parentNodeId === step.nodeId,
-          ) && <ul>{renderSections(documentId, step.nodeId)}</ul>}
-        </li>
-      ));
-  }
-  function renderDocument(step: RetrievalStep, i: number) {
-    return (
-      <li key={step.resourceId ?? i}>
-        <button
-          className="retrieval-node"
-          data-active={
-            (activeDocumentId === step.resourceId && !activeNodeId) || undefined
-          }
-          onClick={() => step.resourceId && onSelect?.(step.resourceId)}
-          onMouseMove={() => step.resourceId && onPreview?.(step.resourceId)}
-          onFocus={() => step.resourceId && onPreview?.(step.resourceId)}
-          disabled={!onSelect || !step.resourceId}
-        >
-          {step.resourceId ? (
-            <ResourceThumbnail
-              name={step.label}
-              mime=""
-              src={`/api/documents/${step.resourceId}/content`}
-              className="retrieval-file-thumbnail"
-              square
-              inline
-            />
-          ) : (
-            <FileText size={14} />
-          )}
-          <span>{step.label}</span>
-        </button>
-        {step.resourceId &&
-          sections.some(
-            (section) => section.resourceId === step.resourceId,
-          ) && <ul>{renderSections(step.resourceId)}</ul>}
-      </li>
-    );
-  }
+  const selectedIndex = trace.findIndex(
+    (step) =>
+      activeDocumentId &&
+      step.resourceId === activeDocumentId &&
+      (activeNodeId
+        ? step.stage === "section" && step.nodeId === activeNodeId
+        : step.stage === "document"),
+  );
+  const selected =
+    selectedIndex >= 0
+      ? retrievalNodeId(trace[selectedIndex], selectedIndex)
+      : undefined;
   return (
     <Collapsible.Root
       open={open}
@@ -162,51 +98,55 @@ export function RetrievalTree({
           orientation="vertical"
           scrollFade
         >
-          <ul className="retrieval-tree" aria-label="Retrieval path">
-            {categories.map((category, i) => (
-              <li key={category.resourceId ?? i}>
-                <div className="retrieval-node">
-                  <Folder size={14} />
-                  <span>{category.label}</span>
-                </div>
-                <ul>
-                  {documents
-                    .filter((doc) =>
-                      category.resourceId
-                        ? doc.parentId === category.resourceId
-                        : !doc.parentId,
-                    )
-                    .map(renderDocument)}
-                </ul>
-              </li>
-            ))}
-            {documents
-              .filter(
-                (doc) =>
-                  !categories.some((category) =>
-                    category.resourceId
-                      ? category.resourceId === doc.parentId
-                      : !doc.parentId,
-                  ),
+          <OutlineTree
+            nodes={nodes}
+            selected={selected}
+            label="Retrieval path"
+            className="retrieval-tree"
+            rowClassName={() => "retrieval-node"}
+            accessibleLabel={({ step }) =>
+              step.page ? `${step.label}, page ${step.page}` : step.label
+            }
+            canSelect={({ step }) =>
+              (step.stage === "document" || step.stage === "section") &&
+              !!step.resourceId
+            }
+            onSelect={
+              onSelect
+                ? ({ step }) => {
+                    if (step.resourceId) onSelect(step.resourceId, step.nodeId);
+                  }
+                : undefined
+            }
+            onPreview={({ step }) => {
+              if (
+                step.resourceId &&
+                (step.stage === "document" || step.stage === "section")
               )
-              .map(renderDocument)}
-            {!documents.length &&
-              trace
-                .filter((step) => step.stage !== "category")
-                .map((step, i) => (
-                  <li key={i}>
-                    <div className="retrieval-node">
-                      {step.stage === "section" ? (
-                        <SectionIcon step={step} />
-                      ) : (
-                        <FileText size={14} />
-                      )}
-                      <span>{step.label}</span>
-                      <small>{step.stage}</small>
-                    </div>
-                  </li>
-                ))}
-          </ul>
+                onPreview?.(step.resourceId, step.nodeId);
+            }}
+            renderIcon={({ step }) => {
+              if (step.stage === "category") return <Folder size={14} />;
+              if (step.stage === "section") return <SectionIcon step={step} />;
+              if (step.stage === "document" && step.resourceId)
+                return (
+                  <ResourceThumbnail
+                    name={step.label}
+                    mime=""
+                    src={`/api/documents/${step.resourceId}/content`}
+                    className="retrieval-file-thumbnail"
+                    square
+                    inline
+                  />
+                );
+              return <FileText size={14} />;
+            }}
+            renderMeta={({ step }) =>
+              step.page ? (
+                <small aria-hidden="true">p. {step.page}</small>
+              ) : null
+            }
+          />
         </ScrollArea>
       </Collapsible.Panel>
     </Collapsible.Root>

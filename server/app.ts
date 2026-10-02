@@ -6,6 +6,7 @@ import { createMcpRouter } from "./mcp";
 import { createRuns } from "./runs";
 import { apiScopes } from "../shared/api-access";
 import { createUploads } from "./uploads";
+import { uploadLimits } from "../shared/uploads";
 import {
   isAuthPage,
   loginPath,
@@ -19,7 +20,7 @@ import { createWorkers } from "./workers";
 import { queues, type QueueName } from "./jobs";
 import { authenticateToken as tokenActor, sessionActor } from "./sessions";
 import { asyncFilter, asyncEvery } from "./async";
-import { supportsIndex, extension } from "../shared/file-types";
+import { extension } from "../shared/file-types";
 import { availableChatModels, validateProviderURL } from "./ai";
 import { providerCatalog } from "../shared/providers";
 import express, {
@@ -168,8 +169,14 @@ export async function createApp(options: {
   });
   const anonymousLimit =
     options.rateLimits !== false ? createAnonymousRateLimiter() : null;
-  if (anonymousLimit)
-    app.use(["/api/auth", "/api/shared", "/api/v1", "/mcp"], anonymousLimit);
+  const externalUsers = new WeakMap<Request, string>();
+  const apiLimit =
+    options.rateLimits !== false
+      ? createApiRateLimiter(
+          (req) => externalUsers.get(req) ?? actor(req).userId,
+        )
+      : null;
+  if (anonymousLimit) app.use(["/api/auth", "/api/shared"], anonymousLimit);
   const audit = async (
     actor: Actor,
     action: string,
@@ -277,6 +284,26 @@ export async function createApp(options: {
       }),
     );
   app.all("/api/auth/{*path}", authHandler);
+  app.use(["/api/v1", "/mcp"], async (req, res, next) => {
+    if (req.baseUrl === "/mcp" && req.method !== "POST")
+      return anonymousLimit ? anonymousLimit(req, res, next) : next();
+    try {
+      const principal = await external.authenticate(
+        req,
+        req.baseUrl === "/mcp" ? "/mcp" : "/api/v1",
+      );
+      externalUsers.set(req, principal.userId);
+      if (apiLimit) return apiLimit(req, res, next);
+      next();
+    } catch (error) {
+      if (external.status(error) === 401) {
+        const header = external.challenge(req, error);
+        if (header) res.set("WWW-Authenticate", header);
+      }
+      if (anonymousLimit) return anonymousLimit(req, res, () => next(error));
+      next(error);
+    }
+  });
   app.use("/mcp", async (req, res, next) => {
     if (req.method !== "POST") return next();
     try {
@@ -285,18 +312,22 @@ export async function createApp(options: {
         req,
         res,
         principal.userId,
-        3 * 1024 * 1024,
+        uploadLimits.mcpRequestBytes,
       );
-      express.json({ limit: "3mb", inflate: false })(req, res, (error) => {
-        if (error) lease.release();
-        else if (
-          req.body?.method === "tools/call" &&
-          req.body?.params?.name === "upload_document"
-        )
-          lease.retain();
-        else lease.release();
-        next(error);
-      });
+      express.json({ limit: uploadLimits.mcpRequestBytes, inflate: false })(
+        req,
+        res,
+        (error) => {
+          if (error) lease.release();
+          else if (
+            req.body?.method === "tools/call" &&
+            req.body?.params?.name === "upload_document"
+          )
+            lease.retain();
+          else lease.release();
+          next(error);
+        },
+      );
     } catch (error) {
       const header = external.challenge(req, error);
       if (header && external.status(error) === 401)
@@ -321,11 +352,7 @@ export async function createApp(options: {
     }
   });
   const actor = (req: Request) => (req as AuthedRequest).actor;
-  if (options.rateLimits !== false)
-    app.use(
-      "/api",
-      createApiRateLimiter((req) => actor(req).userId),
-    );
+  if (apiLimit) app.use("/api", apiLimit);
   async function admin(req: Request) {
     const a = await authenticate(req);
     if (!(await store.permission(a, "organization", a.orgId, "manage")))
@@ -882,11 +909,6 @@ export async function createApp(options: {
         id.parse(req.params.id),
         "write",
       );
-      if (!supportsIndex(r.name))
-        throw new HttpError(
-          400,
-          "Indexing is unavailable for this file format",
-        );
       if (r.kind !== "document" || ["queued", "processing"].includes(r.status))
         throw new HttpError(409, "Document is already processing");
       await store.run(
@@ -1350,7 +1372,7 @@ export async function createApp(options: {
       if (error instanceof multer.MulterError)
         return res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({
           error:
-            "Upload must contain one file at most 30 MiB and valid metadata",
+            "Upload must contain one file at most 250 MB and valid metadata",
         });
       if (
         error &&
@@ -1374,8 +1396,11 @@ export async function createApp(options: {
         return res.status(error.statusCode).json({
           error: error.body?.message ?? "Authentication request rejected",
         });
-      if (error instanceof HttpError)
+      if (error instanceof HttpError) {
+        if (error.status === 429)
+          res.set("Retry-After", String(error.retryAfter ?? 60));
         return res.status(error.status).json({ error: error.message });
+      }
       res
         .status(500)
         .json({ error: "The request could not be completed. Please retry." });

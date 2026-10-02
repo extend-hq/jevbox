@@ -3,9 +3,12 @@ import { test } from "node:test";
 import express from "express";
 import {
   apiRateLimits,
+  authRateLimits,
+  searchRateLimits,
   createApiRateLimiter,
   createAnonymousRateLimiter,
 } from "../server/rate-limits";
+import { uploadAdmissionLimits } from "../server/upload-limits";
 
 async function withLimiter(
   limiter: ReturnType<typeof createApiRateLimiter>,
@@ -58,25 +61,25 @@ test("API limits isolate users sharing an IP and separate reads from writes", as
 test("API sanity ceilings allow ordinary request bursts above the old limit", async () => {
   await withLimiter(
     createApiRateLimiter((req) => req.header("Authorization")!, {
-      read: 3000,
-      write: 600,
+      read: 6000,
+      write: 1200,
     }),
     async (request) => {
       for (let index = 0; index < 200; index++) {
         const response = await request("first");
         assert.equal(response.status, 200);
-        assert.equal(response.headers.get("ratelimit-limit"), "3000");
+        assert.equal(response.headers.get("ratelimit-limit"), "6000");
         await response.arrayBuffer();
       }
       const response = await request("first", "POST");
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get("ratelimit-limit"), "600");
+      assert.equal(response.headers.get("ratelimit-limit"), "1200");
     },
   );
 });
 
 test("anonymous requests retain a shared IP ceiling", async () => {
-  await withLimiter(createAnonymousRateLimiter(), async (request) => {
+  await withLimiter(createAnonymousRateLimiter(180), async (request) => {
     for (let index = 0; index < 180; index++) {
       const response = await request(index % 2 ? "first" : "second");
       assert.equal(response.status, 200);
@@ -92,7 +95,7 @@ test("API ceilings are configurable and reject invalid limits", () => {
   try {
     delete process.env.API_READ_LIMIT_PER_MINUTE;
     delete process.env.API_WRITE_LIMIT_PER_MINUTE;
-    assert.deepEqual(apiRateLimits(), { read: 3000, write: 600 });
+    assert.deepEqual(apiRateLimits(), { read: 6000, write: 1200 });
     process.env.API_READ_LIMIT_PER_MINUTE = "4500";
     process.env.API_WRITE_LIMIT_PER_MINUTE = "900";
     assert.deepEqual(apiRateLimits(), { read: 4500, write: 900 });
@@ -106,4 +109,20 @@ test("API ceilings are configurable and reject invalid limits", () => {
       delete process.env.API_WRITE_LIMIT_PER_MINUTE;
     else process.env.API_WRITE_LIMIT_PER_MINUTE = previousWrite;
   }
+});
+
+test("public deployment ceilings are high and configurable without disabling enforcement", (t) => {
+  t.mock.property(process, "env", {
+    ...process.env,
+    UPLOAD_USER_ATTEMPTS_PER_MINUTE: "240",
+    UPLOAD_DEPLOYMENT_PENDING_DOCUMENTS: "100000",
+    SEARCH_ORGANIZATION_LIMIT_PER_MINUTE: "6000",
+    AUTH_OAUTH_LIMIT_PER_MINUTE: "2000",
+  });
+  assert.equal(uploadAdmissionLimits().attemptsPerMinute.user, 240);
+  assert.equal(uploadAdmissionLimits().pending.deployment, 100000);
+  assert.equal(searchRateLimits().organization, 6000);
+  assert.equal(authRateLimits().oauth, 2000);
+  process.env.UPLOAD_IN_FLIGHT_BYTES = "0";
+  assert.throws(uploadAdmissionLimits);
 });

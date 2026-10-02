@@ -24,10 +24,10 @@ Explore folders and documents in a spatial library, then move closer to reveal t
 
 Switch between visual browsing, a compact outline, folder columns, and full-page previews.
 
-| Grid | List |
-| :---: | :---: |
-| ![Grid view with document covers and folders](docs/screenshots/finder-grid.png) | ![List view with nested folders and document metadata](docs/screenshots/finder-list.png) |
-| **Columns** | **Gallery** |
+|                                               Grid                                                |                                                  List                                                  |
+| :-----------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------------------------: |
+|          ![Grid view with document covers and folders](docs/screenshots/finder-grid.png)          |        ![List view with nested folders and document metadata](docs/screenshots/finder-list.png)        |
+|                                            **Columns**                                            |                                              **Gallery**                                               |
 | ![Columns view with a folder hierarchy and document preview](docs/screenshots/finder-columns.png) | ![Gallery view with a large document preview and thumbnail strip](docs/screenshots/finder-gallery.png) |
 
 <sub>Captured from the app using a demo workspace.</sub>
@@ -110,7 +110,7 @@ The Helm chart runs one web replica, a separate pg-boss worker Deployment, and a
 
 ## Security and verification
 
-Authenticated API requests have a per-user sanity limit of 3,000 reads and 600 writes per minute. Multiple tabs share that user's allowance; users sharing an IP have independent allowances. Set `API_READ_LIMIT_PER_MINUTE` and `API_WRITE_LIMIT_PER_MINUTE` to adjust these ceilings. Sign-in and account recovery retain their separate rate limits.
+Authenticated browser, REST, and MCP requests share a per-user sanity limit of 6,000 reads and 1,200 writes per minute. Multiple tabs and credentials share that user's allowance; users sharing an IP have independent allowances. Set `API_READ_LIMIT_PER_MINUTE` and `API_WRITE_LIMIT_PER_MINUTE` to adjust these ceilings. Uploads allow 120 attempts per minute and 2,000 per hour per user, with 10,000 attempts per minute across the deployment. Up to 64 upload/MCP requests can be active, at most four per user, within a 512 MiB request-body budget. Sign-in, account recovery, and provider-backed search have separate limits. See [deployment configuration](docs/deployment.md#request-and-upload-limits) for all defaults and overrides.
 
 The core schema uses a consolidated initial migration, followed by numbered migrations for durable filing and upload-driven review jobs. There is no production upgrade path from earlier development migration histories. Existing development documents must be reindexed to create the new passage index; retry indexing to rebuild the passage index. Automatic filing applies to new uploads, explicit filing retries, and related documents previously filed automatically. Existing documents are not moved on startup.
 

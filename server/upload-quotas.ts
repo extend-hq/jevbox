@@ -1,4 +1,7 @@
-import { uploadLimits } from "../shared/uploads";
+import {
+  uploadAdmissionLimits,
+  type UploadAdmissionLimits,
+} from "./upload-limits";
 import { HttpError, type Store } from "./db";
 
 export async function checkStoredDocumentQuota(
@@ -7,6 +10,7 @@ export async function checkStoredDocumentQuota(
   orgId: string,
   additionalBytes: number,
   additionalDocuments = 0,
+  limits: UploadAdmissionLimits = uploadAdmissionLimits(),
 ) {
   const rows = await store.all<{
     subject: string;
@@ -18,10 +22,10 @@ export async function checkStoredDocumentQuota(
     orgId,
   );
   for (const row of rows) {
-    const scope = row.subject as keyof typeof uploadLimits.storedBytes;
-    if (Number(row.count) + additionalDocuments > uploadLimits.documents[scope])
+    const scope = row.subject as keyof typeof limits.storedBytes;
+    if (Number(row.count) + additionalDocuments > limits.documents[scope])
       throw new HttpError(429, "Document count quota reached");
-    if (Number(row.size) + additionalBytes > uploadLimits.storedBytes[scope])
+    if (Number(row.size) + additionalBytes > limits.storedBytes[scope])
       throw new HttpError(429, "Document storage quota reached");
   }
 }

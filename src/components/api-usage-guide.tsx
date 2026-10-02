@@ -199,8 +199,7 @@ export function ApiUsageGuide({
             },
             {
               name: "file",
-              detail:
-                "Required multipart part. One file, at most 30 MiB. Text and SVG are limited to 2 MiB.",
+              detail: "Required multipart part. One file, at most 250 MB.",
             },
           ]}
         />
@@ -220,27 +219,27 @@ export function ApiUsageGuide({
           existing documents or share them.
         </p>
         <p className="muted">
-          Supports PDF, Office documents, UTF-8 text and code, images, ZIP, and
-          common audio/video formats. Media and ZIP are stored without indexing.
-          Malformed documents, excessive archive expansion, and oversized images
-          are rejected.
+          Accepts any file up to 250 MB. Text and code index locally when they
+          contain UTF-8; other content is sent to Extend for parsing. Parsing
+          failures appear in the document’s processing status.
         </p>
       </article>
       <article className="api-docs-section">
         <h3>Limits and errors</h3>
         <p>
-          Search allows 20 requests per minute per key and 100 per organization.
-          Search uses the organization’s configured TypeSafe connection and
-          indexed documents.
+          Search allows 120 requests per minute per user and key, and 3,000 per
+          organization. Search uses the organization’s configured TypeSafe
+          connection and indexed documents.
         </p>
         <p>
-          Uploads share limits with the app and MCP: 5 attempts per minute, 20
-          per hour, 150 MiB accepted per UTC day, 512 MiB stored, and 10
-          documents awaiting processing per user. Organization and deployment
-          limits also apply, with a total cap of 1,000 documents per user.
-          Changing keys does not reset these counters. One upload per user and
-          two upload/MCP requests per web process are admitted at once, with a
-          30-second deadline.
+          Default uploads share limits with the app and MCP: 120 attempts per
+          minute, 2,000 per hour, 2 GiB accepted per UTC day, 10 GiB stored, and
+          500 documents awaiting processing per user. Organization and
+          deployment limits also apply, with a total cap of 10,000 documents per
+          user. Changing keys does not reset these counters. Four upload
+          requests per user and 64 upload/MCP requests per web process are
+          admitted at once, within a shared memory budget and a 120-second
+          deadline.
         </p>
         <div className="api-docs-table-scroll">
           <table className="api-docs-table">

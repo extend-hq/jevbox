@@ -4,9 +4,9 @@ import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { deriveDpopAth } from "better-auth/oauth2";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { join } from "node:path";
 import {
   Client,
@@ -15,6 +15,7 @@ import {
 import { createApp } from "../server/app";
 import { hashPassword } from "better-auth/crypto";
 import { buildIndex } from "../server/indexing";
+import { uploadLimits } from "../shared/uploads";
 import { testDatabase } from "./database";
 import { choiceResponse } from "./model-tools";
 
@@ -1286,22 +1287,45 @@ test("REST upload rejects multipart abuse and authenticates before buffering", a
     { method: "POST", headers: { Cookie: cookie }, body: new FormData() },
   );
   assert.equal(cookieOnly.status, 401);
-  assert.equal((await uploadRequest(created.token, new Blob([]))).status, 400);
+  assert.equal((await uploadRequest(created.token, new Blob([]))).status, 201);
   assert.equal(
     (await uploadRequest(created.token, new Blob(["bad"]), "document.pdf"))
       .status,
-    400,
+    201,
   );
   assert.equal(
     (
       await uploadRequest(
         created.token,
-        new Blob([Buffer.alloc(30 * 1024 * 1024 + 1)]),
+        new Blob([Buffer.alloc(31 * 1024 * 1024)]),
         "document.pdf",
       )
     ).status,
-    413,
+    201,
   );
+  const oversized = await new Promise<number>((resolve, reject) => {
+    const pending = httpRequest(
+      `${base}/api/v1/documents?organizationId=${orgId}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${created.token}`,
+          "Content-Type": "multipart/form-data; boundary=upload",
+          "Content-Length": String(uploadLimits.fileBytes + 16 * 1024 + 1),
+        },
+      },
+      (response) => {
+        response.resume();
+        response.once("end", () => resolve(response.statusCode!));
+      },
+    );
+    pending.on("error", reject);
+    pending.setTimeout(5000, () =>
+      pending.destroy(new Error("Upload timed out")),
+    );
+    pending.end();
+  });
+  assert.equal(oversized, 413);
   const form = new FormData();
   form.append("file", new Blob(["one"]), "one.txt");
   form.append("file", new Blob(["two"]), "two.txt");
@@ -1315,7 +1339,7 @@ test("REST upload rejects multipart abuse and authenticates before buffering", a
   assert.equal(denied.status, 201, await denied.clone().text());
 });
 
-test("MCP uploads expose mutation annotations, preserve read-only grants, and store validated bytes", async () => {
+test("MCP uploads expose mutation annotations, preserve read-only grants, and accept larger inline files", async () => {
   await runtime.store.run("DELETE FROM upload_usage");
   const created = await key();
   const listing = await request("/mcp", created.token, "POST", {
@@ -1351,6 +1375,32 @@ test("MCP uploads expose mutation annotations, preserve read-only grants, and st
     )?.body.toString(),
     "Hello\n",
   );
+  const inline = Buffer.alloc(3 * 1024 * 1024, 65);
+  const larger = await request("/mcp", created.token, "POST", {
+    jsonrpc: "2.0",
+    id: 94,
+    method: "tools/call",
+    params: {
+      name: "upload_document",
+      arguments: {
+        organizationId: orgId,
+        filename: "attachment.bin",
+        contentBase64: inline.toString("base64"),
+      },
+    },
+  });
+  assert.equal(larger.status, 200, await larger.clone().text());
+  const largerResult = (await larger.json()).result;
+  assert.equal(largerResult.isError, undefined, JSON.stringify(largerResult));
+  assert.deepEqual(
+    (
+      await runtime.store.files.read(
+        "document",
+        largerResult.structuredContent.id,
+      )
+    )?.body,
+    inline,
+  );
   const bad = await request("/mcp", created.token, "POST", {
     jsonrpc: "2.0",
     id: 92,
@@ -1385,25 +1435,209 @@ test("MCP uploads expose mutation annotations, preserve read-only grants, and st
   );
 });
 
-test("upload quotas persist across runtime replacement and credentials, and reject storage and queue overflow atomically", async (t) => {
+test("authenticated REST and MCP requests share user limits without consuming shared IP allowance", async (t) => {
+  const first = await key();
+  const second = await key();
+  const other = await key(otherCookie);
+  t.mock.property(process, "env", {
+    ...process.env,
+    API_READ_LIMIT_PER_MINUTE: "2",
+    API_WRITE_LIMIT_PER_MINUTE: "2",
+    ANONYMOUS_LIMIT_PER_MINUTE: "1",
+  });
+  const isolated = await createApp({
+    directory,
+    databaseUrl: database.url,
+    origin,
+    fetcher,
+  });
+  const listener = isolated.app.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => listener.once("listening", resolve));
+  const address = listener.address();
+  assert.ok(address && typeof address !== "string");
+  const previousBase = base;
+  base = `http://127.0.0.1:${address.port}`;
+  try {
+    assert.equal(
+      (await request("/api/v1/organizations", "invalid")).status,
+      401,
+    );
+    assert.equal(
+      (await request("/api/v1/organizations", "invalid")).status,
+      429,
+    );
+    assert.equal(
+      (await request("/api/v1/organizations", first.token)).status,
+      200,
+    );
+    assert.equal(
+      (await request("/api/v1/organizations", second.token)).status,
+      200,
+    );
+    assert.equal((await session("/me")).status, 429);
+    assert.equal(
+      (await request("/api/v1/organizations", other.token)).status,
+      200,
+    );
+    assert.equal(
+      (await session("/me", "GET", undefined, otherCookie)).status,
+      200,
+    );
+    const rpc = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+    assert.equal((await request("/mcp", first.token, "POST", rpc)).status, 200);
+    assert.equal(
+      (await request("/mcp", second.token, "POST", rpc)).status,
+      200,
+    );
+    const rejected = await request("/mcp", first.token, "POST", rpc);
+    assert.equal(rejected.status, 429);
+    assert.ok(Number(rejected.headers.get("Retry-After")) > 0);
+    assert.equal((await request("/mcp", other.token, "POST", rpc)).status, 200);
+  } finally {
+    base = previousBase;
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+    await isolated.close();
+  }
+});
+
+test("API key migration raises the old default and preserves custom limits", async () => {
+  const first = await key();
+  const second = await key();
+  await runtime.store.run(
+    'UPDATE apikey SET "rateLimitEnabled"=true,"rateLimitTimeWindow"=60000,"rateLimitMax"=180 WHERE id=?',
+    first.key.id,
+  );
+  await runtime.store.run(
+    'UPDATE apikey SET "rateLimitEnabled"=true,"rateLimitTimeWindow"=60000,"rateLimitMax"=42 WHERE id=?',
+    second.key.id,
+  );
+  await runtime.store.db.query(
+    readFileSync(
+      new URL(
+        "../server/migrations/019-higher-api-key-limits.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const allowance = async (id: string) =>
+    (await runtime.store.one<{ rateLimitMax: number }>(
+      'SELECT "rateLimitMax" FROM apikey WHERE id=?',
+      id,
+    ))!.rateLimitMax;
+  assert.equal(await allowance(first.key.id), 6000);
+  assert.equal(await allowance(second.key.id), 42);
+});
+
+test("search admission isolates users and prevents rotating credentials from resetting a user's allowance", async (t) => {
+  const { createExternalAccess } = await import("../server/external-access");
+  const { createUploads } = await import("../server/uploads");
+  t.mock.property(process, "env", {
+    ...process.env,
+    SEARCH_USER_LIMIT_PER_MINUTE: "2",
+    SEARCH_CREDENTIAL_LIMIT_PER_MINUTE: "2",
+    SEARCH_ORGANIZATION_LIMIT_PER_MINUTE: "4",
+  });
+  const access = createExternalAccess(
+    runtime.store,
+    runtime.auth,
+    runtime.providers,
+    origin,
+    async () => {
+      throw new Error("Token validation is not used for admission");
+    },
+    true,
+    createUploads(runtime.store),
+  );
+  const principal = { userId, credentialId: "first", scopes: ["search:read"] };
+  await access.limitSearch(principal, orgId);
+  await access.limitSearch({ ...principal, credentialId: "second" }, orgId);
+  await assert.rejects(
+    access.limitSearch({ ...principal, credentialId: "third" }, secondOrgId),
+    /Search limit/,
+  );
+  await access.limitSearch({ ...principal, userId: otherId }, orgId);
+  await access.limitSearch(
+    { ...principal, userId: otherId, credentialId: "fourth" },
+    orgId,
+  );
+  await assert.rejects(
+    access.limitSearch(
+      { ...principal, userId: "another", credentialId: "fifth" },
+      orgId,
+    ),
+    /Search limit/,
+  );
+});
+
+test("default upload admission supports concurrent bursts across users on one deployment", async (t) => {
   const { createUploads } = await import("../server/uploads");
   const { uploadLimits } = await import("../shared/uploads");
   const { HttpError } = await import("../server/db");
   await runtime.store.run("DELETE FROM upload_usage");
+  const clock = Date.now();
+  t.mock.method(Date, "now", () => clock);
+  const uploads = createUploads(runtime.store);
   const a = { userId, orgId, role: "member", token: "first" };
+  const b = { ...a, userId: otherId, token: "second" };
+  try {
+    await Promise.all(
+      [a, b].flatMap((actor) =>
+        Array.from({ length: uploadLimits.attemptsPerMinute.user }, () =>
+          uploads.admit(actor),
+        ),
+      ),
+    );
+    await assert.rejects(
+      uploads.admit({ ...a, orgId: secondOrgId }),
+      (error: unknown) =>
+        error instanceof HttpError &&
+        error.status === 429 &&
+        (error.retryAfter ?? 0) > 0,
+    );
+    const usage = await runtime.store.one<{ attempts: number }>(
+      "SELECT attempts FROM upload_usage WHERE subject='deployment' AND bucket=? AND period=60000",
+      Math.floor(clock / 60_000),
+    );
+    assert.equal(usage?.attempts, 2 * uploadLimits.attemptsPerMinute.user);
+  } finally {
+    await runtime.store.run("DELETE FROM upload_usage");
+  }
+});
+
+test("upload quotas persist across runtime replacement and credentials, and reject storage and queue overflow atomically", async (t) => {
+  const { createUploads } = await import("../server/uploads");
+  const { uploadAdmissionLimits } = await import("../server/upload-limits");
+  const { uploadLimits } = await import("../shared/uploads");
+  const { HttpError } = await import("../server/db");
+  await runtime.store.run("DELETE FROM upload_usage");
+  const a = { userId, orgId, role: "member", token: "first" };
+  const defaults = uploadAdmissionLimits();
+  const limits = {
+    ...defaults,
+    attemptsPerMinute: { ...defaults.attemptsPerMinute, user: 5 },
+    pending: { ...defaults.pending, user: 10 },
+    storedBytes: { ...defaults.storedBytes, user: 512 * 1024 * 1024 },
+  };
   const clock = Date.now();
   t.mock.method(Date, "now", () => clock);
   for (let i = 0; i < 5; i++)
-    await createUploads(runtime.store).admit({ ...a, token: String(i) });
+    await createUploads(runtime.store, { limits }).admit({
+      ...a,
+      token: String(i),
+    });
   await assert.rejects(
-    createUploads(runtime.store).admit({
+    createUploads(runtime.store, { limits }).admit({
       ...a,
       orgId: secondOrgId,
       token: "different",
     }),
     (error: unknown) => error instanceof HttpError && error.status === 429,
   );
-  const unlimitedAttempts = createUploads(runtime.store, { rateLimits: false });
+  const unlimitedAttempts = createUploads(runtime.store, {
+    rateLimits: false,
+    limits,
+  });
   await unlimitedAttempts.admit(a);
   assert.equal(
     (await runtime.store.one<{ attempts: number }>(
@@ -1414,14 +1648,14 @@ test("upload quotas persist across runtime replacement and credentials, and reje
     5,
   );
   await runtime.store.run("DELETE FROM upload_usage");
-  const usage = createUploads(runtime.store);
+  const usage = createUploads(runtime.store, { limits });
   const original = await runtime.store.one<{ size: number }>(
     "SELECT size FROM resources WHERE id=?",
     ownId,
   );
   await runtime.store.run(
     "UPDATE resources SET size=? WHERE id=?",
-    uploadLimits.storedBytes.user,
+    limits.storedBytes.user,
     ownId,
   );
   try {

@@ -15,8 +15,10 @@ import {
   type ParsedDocument,
 } from "./indexing";
 import type { RetrievalStep } from "../shared/retrieval";
+import { sectionBlockType } from "../shared/section-block-type";
 import { searchMetadata } from "./search-metadata";
 import { metadataCandidates } from "./search-candidates";
+import { buildSectionPreviews } from "./routing-preview";
 import {
   searchFiltersSchema,
   matchesSearchFilters,
@@ -46,20 +48,6 @@ const authorizationSlot = createLimiter(
   retrievalLimits.authorizationConcurrency,
 );
 
-function sectionBlockType(node: IndexNode) {
-  const content = node.content.trimStart();
-  const block = node.blocks.find(
-    (block) => block.content.trim() && content.startsWith(block.content.trim()),
-  );
-  const type = block?.type;
-  const normalized = type?.toLowerCase().replace(/[ -]+/g, "_");
-  if (type && normalized !== "heading" && normalized !== "section_heading")
-    return type;
-  const heading = content.match(/^(#{1,6})[\t ]+/);
-  if (heading) return heading[1].length === 1 ? "heading" : "section_heading";
-  return type ?? "section";
-}
-
 export async function retrieveDocuments(
   store: Store,
   actor: Actor,
@@ -74,6 +62,7 @@ export async function retrieveDocuments(
     maxResults?: number;
     recoverRoutes?: boolean;
     filters?: SearchFilters;
+    sectionPreview?: "outline" | "sampled";
   },
 ) {
   if (!key)
@@ -229,6 +218,7 @@ export async function retrieveDocuments(
     node: IndexNode,
     parentNodeId?: string,
     ancestors: string[] = [],
+    previews?: ReadonlyMap<string, string>,
   ): RouteNode<Value> {
     const sectionPath = [...ancestors, node.title].slice(-8);
     return {
@@ -236,13 +226,16 @@ export async function retrieveDocuments(
       scope: doc.id,
       describe: async () =>
         (await canRead(doc.id))
-          ? `${node.title}\nPages ${node.page}–${node.endPage}\n${node.summary}`.slice(
+          ? (previews?.get(node.id) ??
+            `${node.title}\nPages ${node.page}–${node.endPage}\n${node.summary}`.slice(
               0,
               1200,
-            )
+            ))
           : undefined,
       children: bounded(
-        node.children.map((child) => section(doc, child, node.id, sectionPath)),
+        node.children.map((child) =>
+          section(doc, child, node.id, sectionPath, previews),
+        ),
         `section:${doc.id}:${node.id}`,
       ),
       value: {
@@ -307,9 +300,13 @@ export async function retrieveDocuments(
           const parsed = withSearchPassages(
             JSON.parse(current.parsed) as ParsedDocument,
           );
+          const previews =
+            options?.sectionPreview === "sampled"
+              ? buildSectionPreviews(parsed.nodes, query)
+              : undefined;
           children = bounded(
             [...parsed.nodes, searchMetadata(parsed, query)].map((node) =>
-              section(current, node),
+              section(current, node, undefined, [], previews),
             ),
             `document:${resource.id}`,
           );

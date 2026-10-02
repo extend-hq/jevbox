@@ -1,8 +1,6 @@
 import { z } from "zod";
 import type { ParsedBlock } from "../shared/parsed-blocks";
 import { buildSearchProfile } from "./search-metadata";
-import { uploadLimits } from "../shared/uploads";
-import { HttpError } from "./errors";
 export type IndexNode = {
   id: string;
   title: string;
@@ -233,26 +231,7 @@ export function buildIndex(
   source: "extend" | "text",
   outputMetadata?: unknown,
 ): ParsedDocument {
-  if (!Array.isArray(input) || input.length > uploadLimits.indexChunks)
-    throw new HttpError(413, "Document has too many indexed pages");
-  let textCharacters = 0,
-    blockCount = 0;
-  for (const chunk of input) {
-    if (chunk && typeof chunk === "object") {
-      textCharacters +=
-        typeof chunk.content === "string" ? chunk.content.length : 0;
-      blockCount += Array.isArray(chunk.blocks) ? chunk.blocks.length : 0;
-    }
-    if (
-      textCharacters > uploadLimits.indexTextCharacters ||
-      blockCount > uploadLimits.indexBlocks
-    )
-      throw new HttpError(
-        413,
-        "Parsed document exceeds its text or block limit",
-      );
-  }
-  const chunks = z.array(chunkSchema).min(1).max(10000).parse(input);
+  const chunks = z.array(chunkSchema).min(1).parse(input);
   const pageMetadata = z
     .object({
       pages: z
@@ -271,7 +250,6 @@ export function buildIndex(
       : [],
   );
   let seq = 0;
-  const budget = { references: 0, characters: 0 };
   const nodes: IndexNode[] = [];
   const blocks: ParsedBlock[] = [];
   const seenBlocks = new Map<string, ParsedBlock>();
@@ -322,15 +300,13 @@ export function buildIndex(
     for (const part of parts.length ? parts : [""]) {
       const heading = part.match(/^(#{1,6})\s+(.+)/);
       if (!heading && stack.length) {
-        append(stack.at(-1)!.node, part, page, endPage, chunkBlocks, budget);
+        append(stack.at(-1)!.node, part, page, endPage, chunkBlocks);
         stack.forEach((s) => {
           s.node.endPage = Math.max(s.node.endPage, endPage);
         });
         continue;
       }
       const level = heading?.[1].length ?? 6;
-      if (seq >= uploadLimits.indexNodes)
-        throw new HttpError(413, "Document has too many indexed sections");
       const node: IndexNode = {
         id: `node-${++seq}`,
         title: heading?.[2].trim() ?? `Page ${page}`,
@@ -343,7 +319,7 @@ export function buildIndex(
         children: [],
         passages: [],
       };
-      append(node, part, page, endPage, chunkBlocks, budget);
+      append(node, part, page, endPage, chunkBlocks);
       while (stack.length && stack.at(-1)!.level >= level) stack.pop();
       if (stack.length) stack.at(-1)!.node.children.push(node);
       else nodes.push(node);
@@ -360,8 +336,12 @@ export function buildIndex(
     passageVersion: 2,
     source,
     pages: Math.max(
-      ...chunks.map((c, i) => c.metadata?.pageRange?.end ?? i + 1),
-      ...blocks.map((b) => b.page),
+      chunks.reduce(
+        (last, chunk, i) =>
+          Math.max(last, chunk.metadata?.pageRange?.end ?? i + 1),
+        0,
+      ),
+      blocks.reduce((last, block) => Math.max(last, block.page), 0),
     ),
     nodes,
     blocks,
@@ -531,29 +511,11 @@ function append(
   page: number,
   endPage: number,
   blocks: ParsedBlock[],
-  budget?: { references: number; characters: number },
 ) {
-  const consume = (references: number, characters: number) => {
-    if (!budget) return;
-    budget.references += references;
-    budget.characters += characters;
-    if (
-      budget.references > uploadLimits.indexReferences ||
-      budget.characters > uploadLimits.indexReferenceCharacters
-    )
-      throw new HttpError(
-        413,
-        "Document contains excessive repeated block references",
-      );
-  };
-  consume(0, content.length);
   node.content += (node.content ? "\n\n" : "") + content;
   node.endPage = Math.max(node.endPage, endPage);
-  node.links.push(
-    ...[...content.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g)].map(
-      (match) => ({ label: match[1], url: match[2] }),
-    ),
-  );
+  for (const match of content.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g))
+    node.links.push({ label: match[1], url: match[2] });
   const matches = blocks.flatMap((block) => {
     const start = block.content ? content.indexOf(block.content) : -1;
     return start < 0
@@ -562,14 +524,12 @@ function append(
   });
   for (const { block } of matches)
     if (!node.blocks.some((existing) => existing.id === block.id)) {
-      consume(1, block.content.length);
       node.blocks.push(block);
     }
   for (const passage of splitPassages(content)) {
     const covered = matches.filter(
       (match) => match.start < passage.end && match.end > passage.start,
     );
-    consume(covered.length, 0);
     node.passages!.push({
       id: `${node.id}-passage-${node.passages!.length + 1}`,
       content: passage.content,

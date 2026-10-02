@@ -439,13 +439,14 @@ test("failed membership provisioning removes the credential account and can be r
   assert.equal((await request("/me", undefined, cookie)).status, 200);
 });
 test("native database rate limits survive auth recreation", async () => {
+  const { authRateLimits } = await import("../server/rate-limits");
   let auth = createAuthentication(runtime.store, {
     directory,
     origin,
     sendAuthEmail: mailbox.sendAuthEmail,
   }).auth;
-  for (let index = 0; index < 11; index++) {
-    if (index === 10)
+  for (let index = 0; index < 3; index++) {
+    if (index === 2)
       auth = createAuthentication(runtime.store, {
         directory,
         origin,
@@ -462,8 +463,20 @@ test("native database rate limits survive auth recreation", async () => {
         body: JSON.stringify({ email: "throttled@local.test", password }),
       }),
     );
-    assert.equal(response.status, index < 10 ? 401 : 429);
-    if (index === 10)
+    assert.equal(response.status, index < 2 ? 401 : 429);
+    if (index === 0) {
+      const limit = await runtime.store.one<{ id: string; count: number }>(
+        'SELECT id,count FROM "rateLimit" WHERE key=?',
+        "192.0.2.200|/sign-in/email",
+      );
+      assert.equal(limit?.count, 1);
+      await runtime.store.run(
+        'UPDATE "rateLimit" SET count=? WHERE id=?',
+        authRateLimits().signIn - 1,
+        limit!.id,
+      );
+    }
+    if (index === 2)
       assert.ok(Number(response.headers.get("x-retry-after")) > 0);
   }
 });
@@ -1103,9 +1116,9 @@ test("native member removal works after the member has signed out", async () => 
   );
   assert.equal((await request("/auth/sign-out", {}, memberCookie)).status, 200);
   assert.deepEqual(
-    await (await runtime.auth.$context).internalAdapter.listSessions(
-      member.userId,
-    ),
+    await (
+      await runtime.auth.$context
+    ).internalAdapter.listSessions(member.userId),
     [],
   );
   const removal = await request(
@@ -1115,8 +1128,10 @@ test("native member removal works after the member has signed out", async () => 
   );
   assert.equal(removal.status, 200, await removal.clone().text());
   assert.ok(
-    !(await (
-      await request("/auth/organization/list-members", undefined, admin)
-    ).json()).members.some((current: { id: string }) => current.id === member.id),
+    !(
+      await (
+        await request("/auth/organization/list-members", undefined, admin)
+      ).json()
+    ).members.some((current: { id: string }) => current.id === member.id),
   );
 });

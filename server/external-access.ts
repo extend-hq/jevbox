@@ -25,6 +25,7 @@ import {
 import { flatten, withLayoutSections, type ParsedDocument } from "./indexing";
 import type { createProviders } from "./providers";
 import { uploadInput, decodeUpload, type createUploads } from "./uploads";
+import { searchRateLimits } from "./rate-limits";
 
 type Auth = ReturnType<typeof createAuthentication>["auth"];
 export type Principal = {
@@ -77,6 +78,7 @@ export function createExternalAccess(
   const verifiedRequests = new WeakSet<Request>();
   const keyRequests = new WeakMap<Request, Principal>();
   const searchLimits = new MemoryStore();
+  const searchAllowances = searchRateLimits();
   searchLimits.init({ windowMs: 60000 } as Parameters<MemoryStore["init"]>[0]);
   async function authenticate(
     req: Request,
@@ -270,13 +272,15 @@ export function createExternalAccess(
   async function limitSearch(principal: Principal, orgId: string) {
     if (!rateLimits) return;
     for (const [key, max] of [
-      [`search:key:${principal.credentialId}`, 20],
-      [`search:org:${orgId}`, 100],
+      [`search:user:${principal.userId}`, searchAllowances.user],
+      [`search:key:${principal.credentialId}`, searchAllowances.credential],
+      [`search:org:${orgId}`, searchAllowances.organization],
     ] as const) {
       if ((await searchLimits.increment(key)).totalHits > max)
         throw new HttpError(
           429,
           "Search limit reached. Try again in a minute.",
+          60,
         );
     }
   }
@@ -577,7 +581,7 @@ export function createExternalAccess(
         if (header) res.set("WWW-Authenticate", header);
       }
       if (error instanceof HttpError && error.status === 429)
-        res.set("Retry-After", "60");
+        res.set("Retry-After", String(error.retryAfter ?? 60));
       next(error);
     },
   );

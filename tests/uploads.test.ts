@@ -2,73 +2,49 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
-import { zipSync, strToU8 } from "fflate";
 import type { Request, Response } from "express";
 import { createUploads, decodeUpload, validateUpload } from "../server/uploads";
 import { uploadLimits } from "../shared/uploads";
-import { HttpError, type Store } from "../server/db";
+import { HttpError, type Store, type Resource } from "../server/db";
+import { uploadAdmissionLimits } from "../server/upload-limits";
 
 const status = (code: number) => (error: unknown) =>
   error instanceof HttpError && error.status === code;
 
-test("upload limits reject empty, oversized, unsupported, disguised, and invalid text content", async () => {
-  await assert.rejects(
-    validateUpload("note.txt", Buffer.alloc(0)),
-    status(400),
+test("file uploads accept content without format validation and enforce the 250 MB boundary", async () => {
+  for (const filename of [
+    "document.pdf",
+    "image.png",
+    "image.bmp",
+    "image.svg",
+    "note.txt",
+    "attachment.bin",
+  ]) {
+    assert.ok(await validateUpload(filename, Buffer.from([0xff, 0, 1])));
+    assert.ok(await validateUpload(filename, Buffer.alloc(0)));
+  }
+  assert.equal(
+    await validateUpload("attachment.bin", Buffer.from("binary")),
+    "application/octet-stream",
   );
-  await assert.rejects(
-    validateUpload("note.txt", Buffer.alloc(uploadLimits.textBytes + 1)),
-    status(413),
-  );
-  await assert.rejects(
-    validateUpload("document.pdf", Buffer.alloc(uploadLimits.fileBytes + 1)),
-    status(413),
-  );
-  await assert.rejects(
-    validateUpload("program.exe", Buffer.from("binary")),
-    status(415),
-  );
-  await assert.rejects(
-    validateUpload("document.pdf", Buffer.from("text")),
-    status(400),
-  );
-  await assert.rejects(
-    validateUpload("image.png", Buffer.from("text")),
-    status(400),
-  );
-  await assert.rejects(
-    validateUpload(
-      "image.svg",
-      Buffer.from('<!DOCTYPE svg [<!ENTITY x "expanded">]><svg/>'),
+  assert.equal(
+    await validateUpload(
+      "note.txt",
+      Buffer.allocUnsafe(uploadLimits.fileBytes),
     ),
-    status(400),
+    "text/plain",
   );
   await assert.rejects(
-    validateUpload(
-      "image.svg",
-      Buffer.from('<svg><image href="https://remote.test/image.png"/></svg>'),
-    ),
-    status(400),
-  );
-  await assert.rejects(
-    validateUpload("note.txt", Buffer.from([0xff])),
-    status(400),
-  );
-  await assert.rejects(
-    validateUpload("note.txt", Buffer.from([0])),
-    status(400),
+    validateUpload("note.txt", Buffer.allocUnsafe(uploadLimits.fileBytes + 1)),
+    (error: unknown) =>
+      status(413)(error) && (error as Error).message.includes("250 MB"),
   );
   await assert.rejects(validateUpload("../note.txt", Buffer.from("text")));
   await assert.rejects(validateUpload("note:stream.txt", Buffer.from("text")));
-  assert.equal(
-    await validateUpload("note.md", Buffer.from("# Note\nHello")),
-    "text/markdown",
-  );
 });
 
-test("base64 decoding is canonical, bounded, and handles the maximum inline upload", () => {
+test("base64 uploads use the same file cap and accept files above the former inline limit", () => {
   for (const value of [
-    "",
     "SGVsbG8",
     "SGVsbG8=\n",
     "data:text/plain;base64,SGk=",
@@ -77,43 +53,83 @@ test("base64 decoding is canonical, bounded, and handles the maximum inline uplo
   ])
     assert.throws(() => decodeUpload(value), status(400));
   assert.equal(decodeUpload("SGVsbG8K").toString(), "Hello\n");
-  const content = Buffer.alloc(uploadLimits.mcpBytes, 65);
+  assert.deepEqual(decodeUpload(""), Buffer.alloc(0));
+  const content = Buffer.alloc(3 * 1024 * 1024, 65);
   assert.deepEqual(decodeUpload(content.toString("base64")), content);
   assert.throws(
     () =>
-      decodeUpload(Buffer.alloc(uploadLimits.mcpBytes + 2).toString("base64")),
+      decodeUpload("A".repeat(4 * Math.ceil(uploadLimits.fileBytes / 3) + 4)),
     status(413),
   );
 });
 
-test("Office validation accepts normal containers and rejects expansion, traversal, and forged lengths", async () => {
+test("Office uploads defer content validation to document processing", async () => {
   for (const ext of ["docx", "xlsx", "pptx"]) {
-    assert.ok(
-      await validateUpload(
-        `document.${ext}`,
-        readFileSync(new URL(`./fixtures/Workspace.${ext}`, import.meta.url)),
-      ),
+    const filename = `document.${ext}`;
+    const mime = await validateUpload(
+      filename,
+      readFileSync(new URL(`./fixtures/Workspace.${ext}`, import.meta.url)),
+    );
+    assert.ok(mime);
+    assert.equal(
+      await validateUpload(filename, Buffer.from("Unparsed document content")),
+      mime,
+    );
+    assert.equal(await validateUpload(filename, Buffer.alloc(0)), mime);
+    await assert.rejects(
+      validateUpload(filename, Buffer.alloc(uploadLimits.fileBytes + 1)),
+      status(413),
     );
   }
-  const main = {
-    "[Content_Types].xml": strToU8("<Types/>"),
-    "word/document.xml": strToU8("<document/>"),
-  };
-  await assert.rejects(
-    validateUpload(
-      "document.docx",
-      Buffer.from(zipSync({ ...main, "../escape": strToU8("x") })),
-    ),
-    status(400),
-  );
-  const bomb = Buffer.from(
-    zipSync({ ...main, "word/large.xml": new Uint8Array(9 * 1024 * 1024) }),
-  );
-  await assert.rejects(validateUpload("document.docx", bomb), status(400));
-  const forged = Buffer.from(zipSync(main));
-  const central = forged.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
-  forged.writeUInt32LE(1, central + 24);
-  await assert.rejects(validateUpload("document.docx", forged), status(400));
+});
+
+test("text that cannot index locally and unfamiliar file types are passed unchanged to Extend", async () => {
+  const { createProviders } = await import("../server/providers");
+  let body = Buffer.from([0xff, 0, 1]);
+  const uploaded: Buffer[] = [];
+  const store = {
+    one: async () => ({ settings: JSON.stringify({ extendKey: "test-key" }) }),
+    decrypt: (value: string) => value,
+    files: { read: async () => ({ body }) },
+    run: async () => {},
+  } as unknown as Store;
+  const providers = createProviders(store, async (input, init) => {
+    if (String(input).endsWith("/files/upload")) {
+      const file = (init?.body as FormData).get("file") as File;
+      uploaded.push(Buffer.from(await file.arrayBuffer()));
+      return Response.json({ id: "uploaded" });
+    }
+    if (String(input).endsWith("/parse_runs"))
+      return Response.json({ id: "run" });
+    return Response.json({
+      status: "PROCESSED",
+      output: { chunks: [{ content: "Parsed text" }] },
+    });
+  });
+  for (const mime of [
+    "text/plain",
+    "application/octet-stream",
+    "image/svg+xml",
+  ]) {
+    const parsed = await providers.processDocument({
+      id: "document",
+      org_id: "organization",
+      name: "document",
+      mime,
+    } as Resource);
+    assert.equal(parsed?.source, "extend");
+    assert.equal(parsed?.markdown, "Parsed text");
+    assert.deepEqual(uploaded.at(-1), body);
+  }
+  body = Buffer.alloc(3 * 1024 * 1024, 65);
+  const parsed = await providers.processDocument({
+    id: "document",
+    org_id: "organization",
+    mime: "text/plain",
+  } as Resource);
+  assert.equal(parsed?.source, "text");
+  assert.equal(parsed?.markdown.length, body.length);
+  assert.equal(uploaded.length, 3);
 });
 
 function request(length = "1", encoding?: string) {
@@ -144,7 +160,9 @@ function response() {
 }
 
 test("upload admission bounds concurrent bodies and holds cancelled work until it exits", () => {
-  const uploads = createUploads({} as Store);
+  const uploads = createUploads({} as Store, {
+    limits: { ...uploadAdmissionLimits(), active: 2, activePerUser: 1 },
+  });
   const a = uploads.reserve(request(), response(), "user-a", 10);
   assert.throws(
     () => uploads.reserve(request(), response(), "user-a", 10),
@@ -176,7 +194,13 @@ test("upload admission bounds concurrent bodies and holds cancelled work until i
 
 test("upload deadline cancels work without allowing replacement bodies before cleanup", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const uploads = createUploads({} as Store),
+  const uploads = createUploads({} as Store, {
+      limits: {
+        ...uploadAdmissionLimits(),
+        activePerUser: 1,
+        receiveMs: uploadLimits.receiveMs,
+      },
+    }),
     req = request(),
     res = response();
   const lease = uploads.reserve(req, res, "user-a", 10);
@@ -192,109 +216,141 @@ test("upload deadline cancels work without allowing replacement bodies before cl
   uploads.reserve(request(), response(), "user-a", 10).release();
 });
 
-test("tiny text files cannot create unbounded pages or sections during indexing", async () => {
-  await assert.rejects(
-    validateUpload(
-      "note.txt",
-      Buffer.from("\f".repeat(uploadLimits.textPages)),
-    ),
-    status(413),
+test("upload admission supports many concurrent users and multiple uploads per user", () => {
+  const uploads = createUploads({} as Store);
+  const leases = Array.from({ length: 64 }, (_, i) =>
+    uploads.reserve(request("1024"), response(), `user-${i}`, 2048),
   );
-  await assert.rejects(
-    validateUpload(
-      "note.txt",
-      Buffer.from("# Heading\n".repeat(uploadLimits.textHeadings + 1)),
-    ),
-    status(413),
+  try {
+    assert.throws(
+      () => uploads.reserve(request(), response(), "overflow", 10),
+      status(429),
+    );
+    leases[0].release();
+    leases[0].release();
+    const replacement = uploads.reserve(
+      request(),
+      response(),
+      "replacement",
+      10,
+    );
+    assert.throws(
+      () => uploads.reserve(request(), response(), "overflow", 10),
+      status(429),
+    );
+    replacement.release();
+  } finally {
+    leases.forEach((lease) => lease.release());
+  }
+  const sameUser = Array.from({ length: 4 }, () =>
+    uploads.reserve(request(), response(), "shared-user", 10),
   );
-  await assert.rejects(
-    validateUpload(
-      "note.txt",
-      Buffer.from("\n".repeat(uploadLimits.textLines)),
-    ),
-    status(413),
+  try {
+    assert.throws(
+      () => uploads.reserve(request(), response(), "shared-user", 10),
+      status(429),
+    );
+    uploads.reserve(request(), response(), "independent-user", 10).release();
+    sameUser[0].release();
+    const replacement = uploads.reserve(
+      request(),
+      response(),
+      "shared-user",
+      10,
+    );
+    assert.throws(
+      () => uploads.reserve(request(), response(), "shared-user", 10),
+      status(429),
+    );
+    replacement.release();
+  } finally {
+    sameUser.forEach((lease) => lease.release());
+  }
+});
+
+test("upload admission enforces a byte budget for declared and chunked bodies", () => {
+  const uploads = createUploads({} as Store, {
+    limits: { ...uploadAdmissionLimits(), activeBytes: 10 },
+  });
+  const first = uploads.reserve(request("6"), response(), "first", 10);
+  assert.throws(
+    () => uploads.reserve(request("5"), response(), "second", 10),
+    status(429),
   );
+  const second = uploads.reserve(request("4"), response(), "second", 10);
+  first.release();
+  assert.throws(
+    () => uploads.reserve(request(""), response(), "chunked", 10),
+    status(429),
+  );
+  second.release();
+  uploads.reserve(request(""), response(), "chunked", 10).release();
+  const finished = response();
+  uploads.reserve(request("10"), finished, "finished", 10);
+  finished.emit("finish");
+  uploads.reserve(request("10"), response(), "next", 10).release();
+});
+
+test("text and parsed documents index beyond the former page, section, text, and block caps", async () => {
   const { buildIndex } = await import("../server/indexing");
-  assert.throws(
-    () =>
-      buildIndex(
-        Array.from({ length: uploadLimits.indexChunks + 1 }, () => ({
-          content: "x",
+  const text =
+    "\n".repeat(50001) + "\f".repeat(1001) + "# Heading\n".repeat(5001);
+  assert.ok(await validateUpload("note.txt", Buffer.from(text)));
+  const pages = buildIndex(
+    Array.from({ length: 10001 }, () => ({ content: "Page text" })),
+    "extend",
+  );
+  assert.equal(pages.pages, 10001);
+  const sections = buildIndex(
+    [{ content: "# Heading\nText\n".repeat(5001) }],
+    "text",
+  );
+  assert.equal(sections.nodes.length, 5001);
+  const blocks = buildIndex(
+    [
+      {
+        content: "Text",
+        blocks: Array.from({ length: 10001 }, (_, i) => ({
+          id: String(i),
+          type: "text",
+          content: "",
         })),
-        "text",
-      ),
-    status(413),
+      },
+    ],
+    "extend",
   );
-  assert.throws(
-    () =>
-      buildIndex(
-        [{ content: "x", blocks: new Array(uploadLimits.indexBlocks + 1) }],
-        "text",
-      ),
-    status(413),
-  );
-  assert.throws(
-    () =>
-      buildIndex(
-        [
-          {
-            content: "# Heading x\n\nx\n".repeat(300),
-            blocks: Array.from({ length: 200 }, (_, i) => ({
-              id: String(i),
-              type: "text",
-              content: "x",
-            })),
-          },
-        ],
-        "extend",
-      ),
-    status(413),
+  assert.equal(blocks.blocks.length, 10001);
+  const largeText = "x".repeat(4 * 1024 * 1024 + 1);
+  assert.equal(
+    buildIndex([{ content: largeText }], "extend").markdown,
+    largeText,
   );
 });
 
-test("parser responses are bounded for both declared and chunked oversized payloads", async () => {
-  const { jsonRequest, ProviderResponseError } =
-    await import("../server/provider-http");
-  const tooLarge = uploadLimits.parserResponseBytes + 1;
-  const reject = (error: unknown) =>
-    error instanceof ProviderResponseError && error.retryable === false;
-  await assert.rejects(
-    jsonRequest(
-      async () =>
-        new Response("{}", { headers: { "Content-Length": String(tooLarge) } }),
-      "https://provider.test",
-      {},
-    ),
-    reject,
-  );
-  let cancelled = false;
-  await assert.rejects(
-    jsonRequest(
+test("parser responses above the former 16 MiB cap are accepted for declared and streamed bodies", async () => {
+  const { jsonRequest } = await import("../server/provider-http");
+  const payload = JSON.stringify({ content: "x".repeat(16 * 1024 * 1024 + 1) });
+  const bytes = Buffer.from(payload);
+  for (const declared of [true, false]) {
+    const result = await jsonRequest(
       async () =>
         new Response(
           new ReadableStream({
             start(controller) {
-              controller.enqueue(new Uint8Array(tooLarge));
-            },
-            cancel() {
-              cancelled = true;
+              controller.enqueue(bytes.subarray(0, 1024));
+              controller.enqueue(bytes.subarray(1024));
+              controller.close();
             },
           }),
+          {
+            headers: declared ? { "Content-Length": String(bytes.length) } : {},
+          },
         ),
       "https://provider.test",
       {},
-    ),
-    reject,
-  );
-  assert.equal(cancelled, true);
-  assert.deepEqual(
-    await jsonRequest(
-      async () => Response.json({ ok: true }),
-      "https://provider.test",
-      {},
-    ),
-    { ok: true },
-  );
+    );
+    assert.equal(result.content.length, 16 * 1024 * 1024 + 1);
+  }
 });
 
 test("document quotas include a count cap so tiny stored files cannot exhaust metadata storage", async () => {

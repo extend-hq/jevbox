@@ -1,22 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { inflateRaw } from "node:zlib";
-import { promisify } from "node:util";
 import type { Request, Response, RequestHandler } from "express";
 import multer from "multer";
 import { z } from "zod";
-import sharp from "sharp";
-import {
-  extension,
-  fileMime,
-  mimeTypes,
-  textExtensions,
-  supportsIndex,
-} from "../shared/file-types";
-import { uploadLimits, textWithinProcessingLimits } from "../shared/uploads";
+import { fileMime } from "../shared/file-types";
+import { uploadLimits } from "../shared/uploads";
 import { HttpError, requireResource, type Actor, type Store } from "./db";
 import { enqueueIndex } from "./indexing-jobs";
 import { enqueueThumbnail } from "./thumbnails";
 import { checkStoredDocumentQuota } from "./upload-quotas";
+import { createLimiter } from "./async";
+import {
+  uploadAdmissionLimits,
+  type UploadAdmissionLimits,
+} from "./upload-limits";
 
 export const uploadName = z
   .string()
@@ -31,123 +27,10 @@ export const uploadInput = z
   .object({
     organizationId: z.string().uuid(),
     filename: uploadName,
-    contentBase64: z
-      .string()
-      .min(4)
-      .max(4 * Math.ceil(uploadLimits.mcpBytes / 3)),
+    contentBase64: z.string().max(4 * Math.ceil(uploadLimits.fileBytes / 3)),
     parentId: z.string().uuid().optional(),
   })
   .strict();
-const inflate = promisify(inflateRaw);
-
-async function validateOffice(body: Buffer, ext: string, signal?: AbortSignal) {
-  const fail = () => {
-    throw new HttpError(400, "Invalid or excessively expanded Office document");
-  };
-  let end = -1;
-  for (let i = body.length - 22; i >= Math.max(0, body.length - 65557); i--)
-    if (
-      body.readUInt32LE(i) === 0x06054b50 &&
-      i + 22 + body.readUInt16LE(i + 20) === body.length
-    ) {
-      end = i;
-      break;
-    }
-  if (end < 0 || body.readUInt16LE(end + 4) || body.readUInt16LE(end + 6))
-    return fail();
-  const count = body.readUInt16LE(end + 10);
-  const directorySize = body.readUInt32LE(end + 12);
-  let offset = body.readUInt32LE(end + 16);
-  const directoryEnd = offset + directorySize;
-  if (!count || count > 2000 || directoryEnd !== end) return fail();
-  const names = new Set<string>();
-  let expanded = 0;
-  for (let i = 0; i < count; i++) {
-    signal?.throwIfAborted();
-    if (offset + 46 > end || body.readUInt32LE(offset) !== 0x02014b50)
-      return fail();
-    const flags = body.readUInt16LE(offset + 8),
-      method = body.readUInt16LE(offset + 10);
-    const compressed = body.readUInt32LE(offset + 20),
-      size = body.readUInt32LE(offset + 24);
-    const length = body.readUInt16LE(offset + 28);
-    const next =
-      offset +
-      46 +
-      length +
-      body.readUInt16LE(offset + 30) +
-      body.readUInt16LE(offset + 32);
-    const local = body.readUInt32LE(offset + 42);
-    if (
-      next > end ||
-      local + 30 > body.readUInt32LE(end + 16) ||
-      flags & 1 ||
-      ![0, 8].includes(method) ||
-      size > 8 * 1024 * 1024 ||
-      size > Math.max(1024 * 1024, compressed * 200)
-    )
-      return fail();
-    const filename = body
-      .subarray(offset + 46, offset + 46 + length)
-      .toString("utf8");
-    if (
-      names.has(filename) ||
-      filename.startsWith("/") ||
-      filename.includes("\\") ||
-      filename.split("/").includes("..") ||
-      /[\x00-\x1f]/.test(filename)
-    )
-      return fail();
-    names.add(filename);
-    expanded += size;
-    if (
-      expanded > 32 * 1024 * 1024 ||
-      body.readUInt32LE(local) !== 0x04034b50 ||
-      body.readUInt16LE(local + 6) !== flags ||
-      body.readUInt16LE(local + 8) !== method
-    )
-      return fail();
-    if (
-      !(flags & 8) &&
-      (body.readUInt32LE(local + 18) !== compressed ||
-        body.readUInt32LE(local + 22) !== size)
-    )
-      return fail();
-    const localLength = body.readUInt16LE(local + 26);
-    const start = local + 30 + localLength + body.readUInt16LE(local + 28);
-    if (
-      start + compressed > body.readUInt32LE(end + 16) ||
-      body.subarray(local + 30, local + 30 + localLength).toString("utf8") !==
-        filename
-    )
-      return fail();
-    try {
-      const decoded =
-        method === 0
-          ? body.subarray(start, start + compressed)
-          : await inflate(body.subarray(start, start + compressed), {
-              maxOutputLength: Math.max(1, size),
-            });
-      if (decoded.length !== size) return fail();
-    } catch {
-      return fail();
-    }
-    offset = next;
-  }
-  const main = {
-    docx: "word/document.xml",
-    xlsx: "xl/workbook.xml",
-    pptx: "ppt/presentation.xml",
-  }[ext];
-  if (
-    offset !== directoryEnd ||
-    !names.has("[Content_Types].xml") ||
-    !main ||
-    !names.has(main)
-  )
-    return fail();
-}
-
 export async function validateUpload(
   filename: string,
   body: Buffer,
@@ -155,114 +38,41 @@ export async function validateUpload(
 ) {
   signal?.throwIfAborted();
   uploadName.parse(filename);
-  if (!body.length) throw new HttpError(400, "The document is empty");
   if (body.length > uploadLimits.fileBytes)
-    throw new HttpError(413, "Files must be at most 30 MiB");
-  const ext = extension(filename);
-  if (!textExtensions.includes(ext) && !mimeTypes[ext])
-    throw new HttpError(415, "This file type is not supported");
-  if (textExtensions.includes(ext) || ext === "svg") {
-    if (body.length > uploadLimits.textBytes)
-      throw new HttpError(413, "Text documents must be at most 2 MiB");
-    try {
-      const text = new TextDecoder("utf-8", { fatal: true }).decode(body);
-      if (!textWithinProcessingLimits(text))
-        throw new HttpError(
-          413,
-          "Text document exceeds its line, page, or section limit",
-        );
-    } catch (error) {
-      if (error instanceof HttpError) throw error;
-      throw new HttpError(400, "Text documents must contain valid UTF-8");
-    }
-    if (body.includes(0))
-      throw new HttpError(400, "Text documents cannot contain null bytes");
-  }
-  if (ext === "pdf" && !body.subarray(0, 1024).includes(Buffer.from("%PDF-")))
-    throw new HttpError(400, "Invalid PDF document");
-  if (ext === "svg") {
-    const source = body.toString("utf8");
-    if (
-      !/<svg\b/i.test(source) ||
-      /<!DOCTYPE|<!ENTITY|<script\b|\bon\w+\s*=|(?:href|url)\s*=?\s*["'(\s]*(?:https?:|file:|\/\/)/i.test(
-        source,
-      )
-    )
-      throw new HttpError(
-        400,
-        "SVG documents cannot contain active content or external references",
-      );
-  }
-  if (["docx", "xlsx", "pptx"].includes(ext))
-    await validateOffice(body, ext, signal);
-  if (ext === "bmp") {
-    if (body.length < 26 || body.toString("ascii", 0, 2) !== "BM")
-      throw new HttpError(400, "Invalid bitmap image");
-    const header = body.readUInt32LE(14);
-    const width = header === 12 ? body.readUInt16LE(18) : body.readInt32LE(18);
-    const height =
-      header === 12 ? body.readUInt16LE(20) : Math.abs(body.readInt32LE(22));
-    if (
-      ![12, 40, 52, 56, 108, 124].includes(header) ||
-      width <= 0 ||
-      height <= 0 ||
-      width * height > 40_000_000
-    )
-      throw new HttpError(
-        400,
-        "Invalid image or image exceeds 40 million pixels",
-      );
-  }
-  if (["png", "jpg", "jpeg", "webp", "gif", "avif"].includes(ext)) {
-    try {
-      const metadata = await sharp(body, {
-        limitInputPixels: 40_000_000,
-        pages: 1,
-      }).metadata();
-      const expected = ext === "jpg" ? "jpeg" : ext === "avif" ? "heif" : ext;
-      if (
-        metadata.format !== expected ||
-        !metadata.width ||
-        !metadata.height ||
-        metadata.width * metadata.height > 40_000_000
-      )
-        throw new Error();
-    } catch {
-      throw new HttpError(
-        400,
-        "Invalid image or image exceeds 40 million pixels",
-      );
-    }
-  }
+    throw new HttpError(413, "Files must be at most 250 MB");
   return fileMime(filename);
 }
 
 export function decodeUpload(content: string) {
-  if (content.length > 4 * Math.ceil(uploadLimits.mcpBytes / 3))
-    throw new HttpError(
-      413,
-      "MCP uploads must be at most 2 MiB; use the REST API for larger files",
-    );
+  if (content.length > 4 * Math.ceil(uploadLimits.fileBytes / 3))
+    throw new HttpError(413, "Files must be at most 250 MB");
   if (content.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(content))
     throw new HttpError(
       400,
       "Provide standard padded base64 without a data URL prefix",
     );
   const body = Buffer.from(content, "base64");
-  if (
-    !body.length ||
-    body.length > uploadLimits.mcpBytes ||
-    body.toString("base64") !== content
-  )
-    throw new HttpError(400, "Invalid base64 or decoded file size");
+  if (body.length > uploadLimits.fileBytes)
+    throw new HttpError(413, "Files must be at most 250 MB");
+  if (body.toString("base64") !== content)
+    throw new HttpError(400, "Invalid base64");
   return body;
 }
 
 export function createUploads(
   store: Store,
-  { rateLimits = true }: { rateLimits?: boolean } = {},
+  {
+    rateLimits = true,
+    limits = uploadAdmissionLimits(),
+  }: {
+    rateLimits?: boolean;
+    limits?: UploadAdmissionLimits;
+  } = {},
 ) {
-  const active = new Set<string>();
+  const active = new Map<string, number>();
+  let activeRequests = 0;
+  let activeBytes = 0;
+  const validate = createLimiter(limits.validation);
   const leases = new WeakMap<
     Request,
     { retain: () => void; release: () => void; signal: AbortSignal }
@@ -273,8 +83,6 @@ export function createUploads(
     userId: string,
     maxBytes: number,
   ) {
-    if (active.has(userId) || active.size >= uploadLimits.active)
-      throw new HttpError(429, "Uploads are busy. Retry shortly.");
     const length = req.get("Content-Length");
     if (length && (!/^\d+$/.test(length) || Number(length) > maxBytes))
       throw new HttpError(413, "Upload request exceeds its size limit");
@@ -283,14 +91,28 @@ export function createUploads(
       req.get("Content-Encoding") !== "identity"
     )
       throw new HttpError(415, "Compressed request bodies are not supported");
-    active.add(userId);
+    const bytes = length ? Number(length) : maxBytes;
+    const userActive = active.get(userId) ?? 0;
+    if (
+      userActive >= limits.activePerUser ||
+      activeRequests >= limits.active ||
+      activeBytes + bytes > limits.activeBytes
+    )
+      throw new HttpError(429, "Uploads are busy. Retry shortly.", 2);
+    active.set(userId, userActive + 1);
+    activeRequests++;
+    activeBytes += bytes;
     let released = false;
     let retained = false;
     const controller = new AbortController();
     const release = () => {
       if (released) return;
       released = true;
-      active.delete(userId);
+      const remaining = (active.get(userId) ?? 1) - 1;
+      if (remaining) active.set(userId, remaining);
+      else active.delete(userId);
+      activeRequests--;
+      activeBytes -= bytes;
       clearTimeout(timer);
     };
     const timer = setTimeout(() => {
@@ -298,7 +120,7 @@ export function createUploads(
       if (!res.headersSent) res.status(408).json({ error: "Upload timed out" });
       req.destroy();
       if (!retained) release();
-    }, uploadLimits.receiveMs);
+    }, limits.receiveMs);
     timer.unref();
     res.once("finish", () => {
       if (!retained) release();
@@ -332,7 +154,7 @@ export function createUploads(
     "deployment",
   ];
   async function capacity(a: Actor, bytes: number) {
-    await checkStoredDocumentQuota(store, a.userId, a.orgId, bytes, 1);
+    await checkStoredDocumentQuota(store, a.userId, a.orgId, bytes, 1, limits);
     const rows = await store.all<{
       subject: string;
       size: string;
@@ -343,11 +165,12 @@ export function createUploads(
       a.orgId,
     );
     for (const row of rows) {
-      const scope = row.subject as keyof typeof uploadLimits.pending;
-      if (Number(row.pending) >= uploadLimits.pending[scope])
+      const scope = row.subject as keyof typeof limits.pending;
+      if (Number(row.pending) >= limits.pending[scope])
         throw new HttpError(
           429,
           "Document processing queue is full. Wait for existing uploads to finish.",
+          10,
         );
     }
   }
@@ -357,9 +180,9 @@ export function createUploads(
       if (!rateLimits) return;
       const time = Date.now();
       await store.run("DELETE FROM upload_usage WHERE expires_at<now()");
-      for (const [period, limits] of [
-        [60_000, [5, 20, 60]],
-        [3_600_000, [20, 100, 300]],
+      for (const [period, allowances] of [
+        [60_000, Object.values(limits.attemptsPerMinute)],
+        [3_600_000, Object.values(limits.attemptsPerHour)],
       ] as const) {
         const bucket = Math.floor(time / period);
         const current = subjects(a);
@@ -370,8 +193,12 @@ export function createUploads(
             bucket,
             period,
           );
-          if ((row?.attempts ?? 0) >= limits[i])
-            throw new HttpError(429, "Upload rate limit reached. Retry later.");
+          if ((row?.attempts ?? 0) >= allowances[i])
+            throw new HttpError(
+              429,
+              "Upload rate limit reached. Retry later.",
+              Math.ceil(((bucket + 1) * period - time) / 1000),
+            );
         }
         for (const subject of current)
           await store.run(
@@ -438,7 +265,10 @@ export function createUploads(
   ) {
     await checkParent(a, parentId);
     filename = uploadName.parse(filename);
-    const mime = await validateUpload(filename, body, signal);
+    const mime = await validate(
+      () => validateUpload(filename, body, signal),
+      signal,
+    );
     return store.transaction(async () => {
       signal?.throwIfAborted();
       const current = await revalidate();
@@ -448,7 +278,7 @@ export function createUploads(
       await capacity(current, body.length);
       const period = 86_400_000,
         bucket = Math.floor(Date.now() / period);
-      const limits = Object.values(uploadLimits.dailyBytes);
+      const allowances = Object.values(limits.dailyBytes);
       const currentSubjects = subjects(current);
       for (let i = 0; i < currentSubjects.length; i++) {
         const row = await store.one<{ bytes: string }>(
@@ -457,8 +287,12 @@ export function createUploads(
           bucket,
           period,
         );
-        if (Number(row?.bytes ?? 0) + body.length > limits[i])
-          throw new HttpError(429, "Daily upload byte quota reached");
+        if (Number(row?.bytes ?? 0) + body.length > allowances[i])
+          throw new HttpError(
+            429,
+            "Daily upload byte quota reached",
+            Math.ceil(((bucket + 1) * period - Date.now()) / 1000),
+          );
       }
       for (const subject of currentSubjects)
         await store.run(
@@ -470,7 +304,7 @@ export function createUploads(
           new Date((bucket + 2) * period).toISOString(),
         );
       const id = randomUUID(),
-        status = supportsIndex(filename) ? "queued" : "stored";
+        status = "queued";
       await store.run(
         "INSERT INTO resources(id,org_id,owner_id,parent_id,kind,name,mime,size,status,access,created) VALUES(?,?,?,?,'document',?,?,?,?,'restricted',?)",
         id,
@@ -486,14 +320,12 @@ export function createUploads(
       await store.files.write("document", id, body, mime);
       signal?.throwIfAborted();
       await enqueueThumbnail(store, id);
-      if (supportsIndex(filename)) {
-        await store.run(
-          "INSERT INTO document_filing(resource_id,scope_id) VALUES(?,?)",
-          id,
-          parentId,
-        );
-        await enqueueIndex(store, id);
-      }
+      await store.run(
+        "INSERT INTO document_filing(resource_id,scope_id) VALUES(?,?)",
+        id,
+        parentId,
+      );
+      await enqueueIndex(store, id);
       await store.run(
         "INSERT INTO audit(org_id,user_id,action,resource_id,created) VALUES(?,?,'document.upload',?,?)",
         current.orgId,

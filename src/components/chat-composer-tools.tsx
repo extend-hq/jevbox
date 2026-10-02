@@ -1,4 +1,4 @@
-import { notifyUploads } from "@/lib/notifications";
+import { uploadBatch } from "@/lib/upload-batch";
 import { SearchInput } from "@/components/search-input";
 import { ScrollArea } from "@/components/coss/scroll-area";
 import { ProviderLogo } from "./provider-logo";
@@ -218,27 +218,25 @@ export function ChatComposerTools({
       setError("Attach up to eight documents.");
       return;
     }
-    let completed = 0;
     setUploading(true);
     onBusyChange(true);
     setError("");
     try {
-      for (const file of Array.from(files)) {
+      const { errors } = await uploadBatch(files, async (file) => {
         const body = new FormData();
         body.append("file", file);
         const uploaded = await api<{ id: string }>("/documents", {
           method: "POST",
           body,
         });
-        completed++;
         const document = await api<Resource>(`/resources/${uploaded.id}`);
         setAttachments((current) => [...current, document]);
-      }
-      setOpen(false);
+      });
+      if (errors.length) setError(errors.join("\n"));
+      else setOpen(false);
     } catch (err) {
       setError((err as Error).message);
     } finally {
-      notifyUploads(completed);
       setUploading(false);
       onBusyChange(false);
       if (fileInput.current) fileInput.current.value = "";

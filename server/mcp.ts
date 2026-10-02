@@ -5,6 +5,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { HttpError } from "./db";
 import { uploadInput, type createUploads } from "./uploads";
+import { uploadLimits } from "../shared/uploads";
 import {
   answerInput,
   runSearchInput,
@@ -189,7 +190,7 @@ export function createMcpRouter(
                   "upload_document",
                   {
                     description:
-                      "Upload one file as a Private document in an organization you belong to. Provide the filename and standard padded base64 file bytes, up to 2 MiB decoded. Optional parentId must be a writable folder. Processing is asynchronous; queued documents are not searchable until ready. Use POST /api/v1/documents multipart uploads for files up to 30 MiB. Never fetch a URL or send local file contents without the user's authorization.",
+                      "Upload one file as a Private document in an organization you belong to. Provide the filename and standard padded base64 file bytes, up to 250 MB decoded. Optional parentId must be a writable folder. Processing is asynchronous; queued documents are not searchable until ready. Use POST /api/v1/documents multipart uploads for files up to 250 MB. Never fetch a URL or send local file contents without the user's authorization.",
                     inputSchema: uploadInput,
                     annotations: {
                       readOnlyHint: false,
@@ -210,7 +211,10 @@ export function createMcpRouter(
                 );
               return server;
             },
-            { legacy: "stateless" },
+            {
+              legacy: "stateless",
+              maxRequestBodySize: uploadLimits.mcpRequestBytes,
+            },
           );
           return protocol.fetch(request);
         };

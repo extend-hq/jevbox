@@ -94,11 +94,3 @@ export function fileMime(filename: string) {
     (textExtensions.includes(ext) ? "text/plain" : "application/octet-stream")
   );
 }
-export function supportsIndex(filename: string) {
-  return (
-    textExtensions.includes(extension(filename)) ||
-    ["pdf", "docx", "xlsx", "pptx", "png", "jpg", "jpeg", "webp"].includes(
-      extension(filename),
-    )
-  );
-}

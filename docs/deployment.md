@@ -36,6 +36,35 @@ Required runtime settings:
 
 Generate secrets with `openssl rand -hex 32`. Store them in your cloud secret manager or Kubernetes Secret, not Git or image build arguments. Provider keys are configured afterward through the application. The image runs as UID/GID 1000; its scratch directory must be writable by that user. PostgreSQL and SpiceDB are required; startup fails when either is unavailable.
 
+## Request and upload limits
+
+The defaults support concurrent users on one web instance. Authenticated browser, REST, and MCP requests share per-user buckets across tabs and credentials. Anonymous requests and native authentication endpoints use trusted client IPs. These admission ceilings do not change Render service sizes or background-worker concurrency.
+
+| Variable                                                              | Default                        |
+| --------------------------------------------------------------------- | ------------------------------ |
+| `API_READ_LIMIT_PER_MINUTE` / `API_WRITE_LIMIT_PER_MINUTE`            | 6,000 / 1,200 per user         |
+| `API_KEY_LIMIT_PER_MINUTE`                                            | 6,000 per key                  |
+| `ANONYMOUS_LIMIT_PER_MINUTE`                                          | 3,000 per IP and request kind  |
+| `AUTH_LIMIT_PER_MINUTE`                                               | 3,000 per IP and endpoint      |
+| `AUTH_SIGN_IN_LIMIT_PER_15_MINUTES`                                   | 300 per IP                     |
+| `AUTH_SIGN_UP_LIMIT_PER_MINUTE`                                       | 120 per IP                     |
+| `AUTH_RECOVERY_LIMIT_PER_15_MINUTES`                                  | 60 per IP                      |
+| `AUTH_VERIFICATION_LIMIT_PER_15_MINUTES`                              | 120 per IP                     |
+| `AUTH_KEY_CREATION_LIMIT_PER_HOUR`                                    | 300 per IP                     |
+| `AUTH_OAUTH_LIMIT_PER_MINUTE`                                         | 1,000 per IP and endpoint      |
+| `AUTH_OAUTH_REGISTRATION_LIMIT_PER_MINUTE`                            | 120 per IP                     |
+| `SEARCH_USER_LIMIT_PER_MINUTE` / `SEARCH_CREDENTIAL_LIMIT_PER_MINUTE` | 120 / 120                      |
+| `SEARCH_ORGANIZATION_LIMIT_PER_MINUTE`                                | 3,000                          |
+| `RUN_USER_CONCURRENCY`                                                | 25 per user in an organization |
+| `UPLOAD_CONCURRENCY` / `UPLOAD_USER_CONCURRENCY`                      | 64 / 4                         |
+| `UPLOAD_IN_FLIGHT_BYTES`                                              | 536,870,912 (512 MiB)          |
+| `UPLOAD_VALIDATION_CONCURRENCY`                                       | 4                              |
+| `UPLOAD_TIMEOUT_MS`                                                   | 120,000                        |
+
+Upload attempts, daily bytes, stored bytes, document counts, and pending-document quotas use the [upload quota defaults](api-access.md#upload-safeguards). Override any scope with `UPLOAD_{USER,ORGANIZATION,DEPLOYMENT}_{ATTEMPTS_PER_MINUTE,ATTEMPTS_PER_HOUR,DAILY_BYTES,STORED_BYTES,DOCUMENTS,PENDING_DOCUMENTS}`. Every setting requires a positive integer; byte settings use bytes. Configure upload storage quotas on both the web service and worker so indexing uses the same allowance. Higher request-body and validation concurrency settings need matching memory capacity.
+
+The normal migration raises existing API keys that still have the previous default of 180 requests per minute to 6,000. Custom key limits are preserved. `API_KEY_LIMIT_PER_MINUTE` configures newly created keys; existing keys store their own limits. Render environment overrides take precedence over code defaults, so remove or update an old override to adopt a raised limit.
+
 ## Web and background services
 
 Run two processes from the same image: `node --import tsx server/index.ts` for the public web service and `node --import tsx server/worker.ts` for the background service. Production web processes enqueue jobs without running consumers. Both processes need the same `DATABASE_URL`, `SPICEDB_*`, `ENCRYPTION_KEY`, `APP_ORIGIN`, and SMTP configuration. The worker needs no public port; disable the image's HTTP health check when running it with Docker (`--no-healthcheck`). Compose does this automatically.
@@ -54,7 +83,7 @@ Set `authEmail.host`, `authEmail.port`, `authEmail.secure`, and `authEmail.from`
 
 Set `trustProxyCidrs` to the actual ingress proxy source ranges and ensure the controller replaces incoming forwarding headers. Never use `0.0.0.0/0` or `::/0`. Without this configuration, clients behind the same proxy share rate limits. Keep direct app access restricted by NetworkPolicy.
 
-1. Copy `infra/k8s/values/portable.yaml` to an untracked values file. Set image repository/tag, HTTPS origin, ingress host/class/TLS secret, and the controller's namespace. The portable settings use Traefik; configure its request/idle timeouts to at least 300 seconds and allow 32 MiB uploads. Use a maintained ingress controller. Set `postgres.allowedCidrs` to the private PostgreSQL endpoint subnet ranges and `postgres.port` if different from 5432. The chart rejects missing database and ingress network ranges when NetworkPolicy is enabled. Set `networkPolicy.ingressCidrs` instead of the namespace selector when a load balancer connects directly to pod IPs.
+1. Copy `infra/k8s/values/portable.yaml` to an untracked values file. Set image repository/tag, HTTPS origin, ingress host/class/TLS secret, and the controller's namespace. The portable settings use Traefik; configure its request/idle timeouts to at least 300 seconds and allow at least 335 MB request bodies to accommodate 250 MB files sent as base64 through MCP. Use a maintained ingress controller. Set `postgres.allowedCidrs` to the private PostgreSQL endpoint subnet ranges and `postgres.port` if different from 5432. The chart rejects missing database and ingress network ranges when NetworkPolicy is enabled. Set `networkPolicy.ingressCidrs` instead of the namespace selector when a load balancer connects directly to pod IPs.
 2. Create the namespace and an existing secret named `jevbox-secrets` containing `ENCRYPTION_KEY`, `BETTER_AUTH_SECRET`, `BOOTSTRAP_TOKEN`, `DATABASE_URL`, `SPICEDB_DATABASE_URL`, and `SPICEDB_PRESHARED_KEY`, plus `SMTP_USER` and `SMTP_PASSWORD` when the relay requires authentication. The two database URLs must use different databases/roles. Require verified TLS (`sslmode=verify-full`) and configure the PostgreSQL server certificate chain for your platform. For a private or cloud database CA, create a separate Secret containing `ca.crt`, set `postgres.caSecret` to its name, and append `sslrootcert=/etc/postgres-ca/ca.crt` to both database URLs. The chart mounts this certificate for the app, SpiceDB, and its migration container. Never reuse the Compose development passwords. Use your secret manager integration or a mode-0600 temporary env file with `kubectl create secret generic ... --from-env-file=...`; do not paste secrets into shell history. Create/import the TLS secret separately.
 3. Preview and lint before applying:
 

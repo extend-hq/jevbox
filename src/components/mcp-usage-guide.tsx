@@ -104,28 +104,32 @@ export function McpUsageGuide({ onCopy }: { onCopy: (value: string) => void }) {
       <article className="api-docs-section">
         <h3>Upload limits</h3>
         <p>
-          API, MCP, and browser uploads share quotas across your keys.
-          Organization and deployment caps also apply.
+          API, MCP, and browser uploads share these default quotas across your
+          keys. Organization and deployment caps also apply.
         </p>
         <DocumentationTable
           nameLabel="Limit"
           detailLabel="Allowance"
           codeNames={false}
           rows={[
-            { name: "Inline MCP file size", detail: "2 MiB decoded" },
-            { name: "Multipart API file size", detail: "30 MiB" },
-            { name: "Upload attempts", detail: "5 per minute · 20 per hour" },
-            { name: "Uploaded bytes", detail: "150 MiB per UTC day" },
-            { name: "Stored bytes", detail: "512 MiB" },
+            { name: "Inline MCP file size", detail: "250 MB decoded" },
+            { name: "Multipart API file size", detail: "250 MB" },
+            {
+              name: "Upload attempts",
+              detail: "120 per minute · 2,000 per hour",
+            },
+            { name: "Uploaded bytes", detail: "2 GiB per UTC day" },
+            { name: "Stored bytes", detail: "10 GiB" },
             {
               name: "Processing queue",
-              detail: "10 documents awaiting processing",
+              detail: "500 documents awaiting processing",
             },
-            { name: "Document count", detail: "1,000 documents per user" },
+            { name: "Document count", detail: "10,000 documents per user" },
           ]}
         />
         <p>
-          For files larger than 2 MiB, use the multipart upload documented under{" "}
+          To upload file bytes directly, use the multipart endpoint documented
+          under{" "}
           <RouteLink
             href={paths.settings("api-keys")}
             className="underline underline-offset-2"
@@ -138,9 +142,9 @@ export function McpUsageGuide({ onCopy }: { onCopy: (value: string) => void }) {
       <article className="api-docs-section">
         <h3>Errors and retries</h3>
         <p>
-          Oversized or malformed documents are rejected. MCP reports tool
-          failures with <code>isError</code>. Wait before retrying a quota
-          error.
+          Files larger than 250 MB are rejected. Parsing failures appear in the
+          document’s processing status. MCP reports tool failures with{" "}
+          <code>isError</code>. Wait before retrying a quota error.
         </p>
       </article>
     </section>

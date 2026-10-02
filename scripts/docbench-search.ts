@@ -4,9 +4,9 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createStore, type Actor } from "../server/db";
-import { createProviders, getSettings, type Fetch } from "../server/providers";
+import { getSettings, type Fetch } from "../server/providers";
 import { generateAnswer, availableChatModels } from "../server/ai";
-import type { RetrievedSource } from "../server/retrieval";
+import { retrieveDocuments, type RetrievedSource } from "../server/retrieval";
 import type { RetrievalStep } from "../shared/retrieval";
 
 const { values } = parseArgs({
@@ -22,11 +22,17 @@ const { values } = parseArgs({
     follow: { type: "boolean", default: false },
     "judge-model": { type: "string", default: "gpt-6-luna" },
     "report-only": { type: "boolean", default: false },
+    preview: { type: "string", default: "outline" },
+    sample: { type: "string" },
+    seed: { type: "string", default: "routing-preview-2026-10-02" },
+    "reuse-from": { type: "string" },
   },
 });
 if (!/^[a-z0-9-]+$/.test(values.label!)) throw new Error("Invalid run label");
 if (!["document", "library"].includes(values.scope!))
   throw new Error("Invalid scope");
+if (!["outline", "sampled"].includes(values.preview!))
+  throw new Error("Invalid preview strategy");
 const concurrency = Number(values.concurrency);
 if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8)
   throw new Error("Concurrency must be between one and eight");
@@ -90,6 +96,7 @@ type Result = Question & {
   assessmentMs?: number;
   assessmentError?: string;
   assessmentDraft?: Assessment;
+  assessmentReusedFrom?: string;
 };
 const manifest = JSON.parse(
   await readFile(resolve(directory, "manifest.json"), "utf8"),
@@ -133,11 +140,13 @@ const implementation = await Promise.all(
     "server/indexing.ts",
     "server/search-metadata.ts",
     "server/search-candidates.ts",
+    "server/routing-preview.ts",
     "server/providers.ts",
   ].map((path) => readFile(resolve(path))),
 );
 let implementationHash = createHash("sha256")
   .update(Buffer.concat(implementation))
+  .update(values.preview!)
   .digest("hex");
 let previousConfig:
   | {
@@ -147,6 +156,7 @@ let previousConfig:
       concurrency: number;
       searchConcurrency?: number;
       evaluatorConcurrency?: number;
+      preview?: string;
     }
   | undefined;
 if (values.evaluate || values["report-only"]) {
@@ -187,6 +197,39 @@ let selected = questions.filter(
     (!requested || requested.has(q.id)) &&
     (!values["ready-only"] || ready.has(`document-${q.benchmarkId}`)),
 );
+if (values.sample) {
+  const size = Number(values.sample);
+  if (!Number.isInteger(size) || size < 1 || size > selected.length)
+    throw new Error("Invalid sample size");
+  const strata = new Map<string, Question[]>();
+  for (const question of selected) {
+    const key = `${question.domain}:${question.type}`;
+    const members = strata.get(key) ?? [];
+    members.push(question);
+    strata.set(key, members);
+  }
+  const allocations = [...strata.values()].map((members) => {
+    const exact = (members.length * size) / selected.length;
+    return { members, count: Math.floor(exact), remainder: exact % 1 };
+  });
+  let remaining =
+    size - allocations.reduce((sum, group) => sum + group.count, 0);
+  for (const group of allocations.toSorted(
+    (a, b) => b.remainder - a.remainder,
+  )) {
+    if (remaining-- <= 0) break;
+    group.count++;
+  }
+  const hash = (id: string) =>
+    createHash("sha256").update(`${values.seed}:${id}`).digest("hex");
+  selected = allocations
+    .flatMap(({ members, count }) =>
+      members
+        .toSorted((a, b) => hash(a.id).localeCompare(hash(b.id)))
+        .slice(0, count),
+    )
+    .toSorted((a, b) => hash(a.id).localeCompare(hash(b.id)));
+}
 if (values.limit) selected = selected.slice(0, Number(values.limit));
 const runSettings = {
   corpusDocuments: manifest.length,
@@ -205,6 +248,9 @@ const runSettings = {
   sourceHash,
   questionHash,
   implementationHash,
+  preview: previousConfig?.preview ?? values.preview,
+  sampleSeed: values.sample ? values.seed : undefined,
+  selectedIds: selected.map((question) => question.id),
   judgeSelection,
   method:
     "Original questions sent directly to production retrieval, with real database authorization and retrieval provider. Document scope selects the paired document; library scope uses the original question across the corpus. Reference answers are used only after retrieval. Application chat/answer orchestration, query rewriting, and document inspection are not exercised. Search latency excludes evaluator time and HTTP/chat queues. Evidence sufficiency uses a separate evaluator with validated verbatim supporting excerpts and manual spot review. Unanswerable and external-web questions are reported separately; empty results cannot prove global absence.",
@@ -239,7 +285,12 @@ const fetcher: Fetch = async (input, init) => {
       metrics.requestCharacters += init.body.length;
       if (String(input).includes("api.typesafe.ai/")) {
         const body = JSON.parse(init.body);
-        if (body.questions?.usefulness) metrics.scoringRequests++;
+        if (
+          Object.values(body.questions ?? {}).some(
+            (question: any) => question.type === "score",
+          )
+        )
+          metrics.scoringRequests++;
         else metrics.routingRequests++;
       }
     }
@@ -250,7 +301,6 @@ const fetcher: Fetch = async (input, init) => {
     if (metrics) metrics.providerMs += performance.now() - started;
   }
 };
-const providers = createProviders(store, fetcher);
 const normalize = (text: string) =>
   text
     .normalize("NFKC")
@@ -264,6 +314,58 @@ const assessmentPrompt =
 const assessmentVersion = createHash("sha256")
   .update(assessmentPrompt + normalize.toString())
   .digest("hex");
+const evidenceIdentity = (row: Result) =>
+  JSON.stringify({
+    id: row.id,
+    question: row.question,
+    answer: row.answer,
+    evidence: row.evidence,
+    type: row.type,
+    excerpts: (row.sources ?? []).map((source) => ({
+      section: source.title,
+      page: source.page,
+      endPage: source.endPage,
+      text: source.content,
+    })),
+  });
+const reusableAssessments = new Map<string, { row: Result; run: string }>();
+if (values["reuse-from"]) {
+  if (!values.evaluate)
+    throw new Error("Assessment reuse requires evaluation mode");
+  for (const run of values["reuse-from"].split(",")) {
+    if (!/^[a-z0-9-]+$/.test(run)) throw new Error("Invalid reuse run");
+    const saved = JSON.parse(
+      await readFile(resolve(directory, "runs", run, "config.json"), "utf8"),
+    );
+    if (
+      saved.sourceHash !== sourceHash ||
+      saved.questionHash !== questionHash ||
+      saved.judgeSelection?.model !== judgeSelection.model ||
+      saved.judgeSelection?.provider !== judgeSelection.provider
+    )
+      throw new Error(
+        "Assessment reuse requires the same corpus, questions, and evaluator",
+      );
+    const lines = (
+      await readFile(resolve(directory, "runs", run, "results.jsonl"), "utf8")
+    )
+      .split("\n")
+      .filter(Boolean);
+    const latest = new Map<string, Result>();
+    for (const line of lines) {
+      const row = JSON.parse(line) as Result;
+      latest.set(row.id, row);
+    }
+    for (const row of latest.values())
+      if (
+        row.status === "completed" &&
+        row.assessment &&
+        !row.assessmentError &&
+        row.assessmentVersion === assessmentVersion
+      )
+        reusableAssessments.set(evidenceIdentity(row), { row, run });
+  }
+}
 async function search(question: Question): Promise<Result> {
   const metrics: Metrics = {
     requests: 0,
@@ -283,11 +385,15 @@ async function search(question: Question): Promise<Result> {
     if (!ready.has(`document-${question.benchmarkId}`))
       throw new Error("The paired document is not ready");
     const found = await context.run(metrics, () =>
-      providers.retrieve(
+      retrieveDocuments(
+        store,
         actor,
         question.question,
+        settings.jevKey,
+        fetcher,
         values.scope === "document" ? [`document-${question.benchmarkId}`] : [],
         AbortSignal.timeout(120000),
+        { sectionPreview: values.preview as "outline" | "sampled" },
       ),
     );
     row.sources = found.results;
@@ -306,11 +412,20 @@ async function evaluate(row: Result): Promise<Result> {
   const next = { ...row };
   delete next.assessmentError;
   delete next.assessment;
+  delete next.assessmentReusedFrom;
   next.assessmentAttempts =
     row.assessmentVersion === assessmentVersion
       ? (row.assessmentAttempts ?? 0) + 1
       : 1;
   next.assessmentVersion = assessmentVersion;
+  const reusable = reusableAssessments.get(evidenceIdentity(row));
+  if (reusable) {
+    next.assessment = reusable.row.assessment;
+    next.assessmentReusedFrom = reusable.run;
+    next.assessmentMs = 0;
+    delete next.assessmentDraft;
+    return next;
+  }
   try {
     const output = await generateAnswer(
       { ...settings, ...judgeSelection },
@@ -402,6 +517,7 @@ function summarize(rows: Result[]) {
         assessed.length
       : null,
     assessmentErrors: completed.filter((r) => r.assessmentError).length,
+    reusedAssessments: completed.filter((r) => r.assessmentReusedFrom).length,
     unanswerable: completed.filter((r) => r.type === "unanswerable").length,
     externalWeb: completed.filter((r) => r.type === "una-web").length,
     unanswerableConflicts: completed.filter(
@@ -423,6 +539,18 @@ function summarize(rows: Result[]) {
       ),
     },
     providerRequests: completed.reduce((n, r) => n + r.metrics.requests, 0),
+    routingRequests: completed.reduce(
+      (n, r) => n + r.metrics.routingRequests,
+      0,
+    ),
+    scoringRequests: completed.reduce(
+      (n, r) => n + r.metrics.scoringRequests,
+      0,
+    ),
+    requestCharacters: completed.reduce(
+      (n, r) => n + r.metrics.requestCharacters,
+      0,
+    ),
   };
 }
 async function report() {

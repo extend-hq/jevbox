@@ -1932,7 +1932,7 @@ label textarea {
   text-align: left;
   border-left: 2px solid transparent;
 }
-.index-node > span:nth-child(2) {
+.index-node > .outline-tree-title {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -5079,23 +5079,30 @@ label textarea {
 .viewer-index .index-tree {
   padding-block: 6px;
 }
-.index-tree-item {
+.outline-tree-item {
   outline: none;
 }
-.index-tree-item:focus-visible > .index-node {
+.outline-tree-item:focus-visible > .index-node,
+.outline-tree-item:focus-visible > .retrieval-node {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
 .index-node {
   cursor: pointer;
 }
-.index-node .node-glyph {
+.index-node .node-glyph,
+.retrieval-node .node-glyph {
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   width: 16px;
   min-height: 20px;
+}
+.index-node-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 .viewer-index .index-node {
   width: 100%;
@@ -5216,12 +5223,12 @@ label textarea {
   opacity: 0;
 }
 .retrieval-tree,
-.retrieval-tree ul {
+.retrieval-tree [role="group"] {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.retrieval-tree ul {
+.retrieval-tree [role="group"] {
   margin-left: 12.5px;
   padding-left: 12px;
   border-left: 1px solid var(--border);
@@ -5235,6 +5242,7 @@ label textarea {
   text-align: left;
   border-radius: 5px;
   font-size: 12px;
+  cursor: pointer;
 }
 .retrieval-node > svg {
   width: 14px;
@@ -5242,10 +5250,11 @@ label textarea {
   flex-shrink: 0;
   color: var(--muted-foreground);
 }
-.retrieval-node > svg[data-tone] {
+.retrieval-node > svg[data-tone],
+.index-node-icon[data-tone] {
   color: var(--block-badge-foreground, var(--muted-foreground));
 }
-.retrieval-node > span {
+.retrieval-node > .outline-tree-title {
   min-width: 0;
   flex: 1;
   overflow: hidden;
@@ -5263,7 +5272,7 @@ label textarea {
   flex-shrink: 0;
   font-size: 10px;
 }
-button.retrieval-node:hover,
+.retrieval-node:hover,
 .retrieval-node[data-active] {
   background: var(--accent);
   color: var(--accent-foreground);

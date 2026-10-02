@@ -2108,11 +2108,9 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
   };
   const row = (scope: Element, label: string) => {
     const element = [
-      ...scope.querySelectorAll<HTMLButtonElement>("button.retrieval-node"),
+      ...scope.querySelectorAll<HTMLDivElement>(".retrieval-node"),
     ].find(
-      (e) =>
-        e.querySelector("span:not([data-resource-thumbnail])")?.textContent ===
-        label,
+      (e) => e.querySelector(".outline-tree-title")?.textContent === label,
     );
     assert.ok(element);
     return element;
@@ -2185,7 +2183,7 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
         `/library/documents/source?node=${label.toLowerCase()}&tab=index`,
       );
     }
-    await act(async () => row(sidebarTree, "Document").focus());
+    await act(async () => row(sidebarTree, "Document").parentElement?.focus());
     assert.ok(button("Source blocks 4", sidebar));
     await click(sidebarTree.querySelector(".retrieval-trigger"));
     assert.equal(
@@ -2236,6 +2234,200 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
   } finally {
     globalThis.EventSource = previousEventSource;
   }
+});
+
+test("retrieval trees nest folders and support keyboard navigation, disclosure, and previews", async () => {
+  const trace: import("../shared/retrieval").RetrievalStep[] = [
+    { stage: "category", resourceId: "root", label: "Library" },
+    {
+      stage: "category",
+      resourceId: "folder",
+      parentId: "root",
+      label: "Guides",
+    },
+    {
+      stage: "document",
+      resourceId: "doc",
+      parentId: "folder",
+      label: "Document",
+    },
+    {
+      stage: "section",
+      resourceId: "doc",
+      nodeId: "overview",
+      label: "Overview",
+      page: 1,
+    },
+    {
+      stage: "section",
+      resourceId: "doc",
+      nodeId: "details",
+      parentNodeId: "overview",
+      label: "Details",
+      page: 2,
+    },
+    {
+      stage: "section",
+      resourceId: "doc",
+      nodeId: "table",
+      parentNodeId: "overview",
+      label: "Table",
+      blockType: "table",
+      page: 3,
+    },
+    { stage: "document", resourceId: "other", label: "Other document" },
+  ];
+  const previews: [string, string | undefined][] = [];
+  const selected: [string, string | undefined][] = [];
+  const render = (activeNodeId?: string) =>
+    root.render(
+      <RetrievalTree
+        trace={trace}
+        defaultOpen
+        activeDocumentId={activeNodeId ? "doc" : undefined}
+        activeNodeId={activeNodeId}
+        onPreview={(documentId, nodeId) => previews.push([documentId, nodeId])}
+        onSelect={(documentId, nodeId) => selected.push([documentId, nodeId])}
+      />,
+    );
+  await act(async () => render());
+  const item = (label: string) =>
+    host.querySelector<HTMLElement>(
+      `[role="treeitem"][aria-label="${label}"]`,
+    )!;
+  const press = async (key: string) =>
+    act(async () => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+      );
+    });
+  const library = item("Library");
+  assert.equal(
+    host.querySelector('[role="tree"]')?.getAttribute("aria-label"),
+    "Retrieval path",
+  );
+  assert.equal(item("Guides").parentElement?.parentElement, library);
+  assert.equal(item("Document").getAttribute("aria-level"), "3");
+  assert.equal(item("Table, page 3").getAttribute("aria-level"), "5");
+  assert.equal(
+    item("Table, page 3")
+      .querySelector(".retrieval-node > svg")
+      ?.getAttribute("data-tone"),
+    "green",
+  );
+  assert.equal(
+    host.querySelectorAll('[role="treeitem"][tabindex="0"]').length,
+    1,
+  );
+  await act(async () => library.focus());
+  await press("ArrowRight");
+  assert.equal(document.activeElement, item("Guides"));
+  await press("Enter");
+  assert.equal(item("Guides").getAttribute("aria-expanded"), "false");
+  assert.equal(item("Document"), null);
+  await press(" ");
+  await press("ArrowRight");
+  assert.equal(document.activeElement, item("Document"));
+  assert.deepEqual(previews.at(-1), ["doc", undefined]);
+  await press("ArrowRight");
+  await press("ArrowRight");
+  assert.equal(document.activeElement, item("Details, page 2"));
+  assert.deepEqual(previews.at(-1), ["doc", "details"]);
+  await press("ArrowDown");
+  assert.equal(document.activeElement, item("Table, page 3"));
+  await press("ArrowUp");
+  await press("ArrowLeft");
+  assert.equal(document.activeElement, item("Overview, page 1"));
+  await press("ArrowLeft");
+  assert.equal(item("Overview, page 1").getAttribute("aria-expanded"), "false");
+  await press("ArrowDown");
+  assert.equal(document.activeElement, item("Other document"));
+  await press("Home");
+  assert.equal(document.activeElement, library);
+  await press("End");
+  assert.equal(document.activeElement, item("Other document"));
+  assert.deepEqual(selected, []);
+  await press("Enter");
+  assert.deepEqual(selected, [["other", undefined]]);
+  await click(item("Overview, page 1").querySelector(".node-glyph"));
+  assert.equal(item("Overview, page 1").getAttribute("aria-expanded"), "true");
+  assert.equal(selected.length, 1);
+  await press("t");
+  assert.equal(document.activeElement, item("Table, page 3"));
+  await press(" ");
+  assert.deepEqual(selected.at(-1), ["doc", "table"]);
+  await press("Home");
+  await press("ArrowLeft");
+  assert.equal(host.querySelectorAll('[role="treeitem"]').length, 2);
+  await act(async () => render("table"));
+  assert.equal(library.getAttribute("aria-expanded"), "true");
+  assert.equal(item("Table, page 3").getAttribute("aria-selected"), "true");
+  assert.equal(item("Table, page 3").tabIndex, 0);
+});
+
+test("partial retrieval trees keep section nesting per document and remain navigable without selection", async () => {
+  await act(async () =>
+    root.render(
+      <RetrievalTree
+        defaultOpen
+        trace={[
+          {
+            stage: "section",
+            resourceId: "a",
+            nodeId: "root",
+            label: "First section",
+          },
+          {
+            stage: "section",
+            resourceId: "b",
+            nodeId: "root",
+            label: "Second section",
+          },
+          {
+            stage: "section",
+            resourceId: "a",
+            nodeId: "child",
+            parentNodeId: "root",
+            label: "First child",
+          },
+          {
+            stage: "section",
+            resourceId: "b",
+            nodeId: "child",
+            parentNodeId: "root",
+            label: "Second child",
+          },
+        ]}
+      />,
+    ),
+  );
+  const item = (label: string) =>
+    host.querySelector<HTMLElement>(
+      `[role="treeitem"][aria-label="${label}"]`,
+    )!;
+  assert.equal(
+    item("First child").parentElement?.parentElement,
+    item("First section"),
+  );
+  assert.equal(
+    item("Second child").parentElement?.parentElement,
+    item("Second section"),
+  );
+  await act(async () => item("First section").focus());
+  const press = async (key: string) =>
+    act(async () => {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+      );
+    });
+  await press("ArrowLeft");
+  await press("ArrowDown");
+  assert.equal(document.activeElement, item("Second section"));
+  await press("ArrowLeft");
+  assert.equal(host.querySelectorAll('[role="treeitem"]').length, 2);
+  await press("Enter");
+  await press("ArrowRight");
+  assert.equal(document.activeElement, item("Second child"));
 });
 
 test("index tree supports roving focus, expansion, selection, and typeahead", async () => {
@@ -2317,21 +2509,115 @@ test("index tree supports roving focus, expansion, selection, and typeahead", as
   assert.equal(document.activeElement, item("Alpha"));
 });
 
-test("upload notifications are summarized once for a completed batch", async () => {
-  const { mutationSuccessMessage, notifyUploads } =
-    await import("../src/lib/notifications");
-  const messages: string[] = [];
-  const listener = (event: Event) =>
-    messages.push((event as CustomEvent<string>).detail);
-  window.addEventListener("app-success", listener);
-  try {
-    assert.equal(mutationSuccessMessage("/documents", "POST"), undefined);
-    notifyUploads(0);
-    notifyUploads(3);
-    assert.deepEqual(messages, ["3 documents uploaded"]);
-  } finally {
-    window.removeEventListener("app-success", listener);
-  }
+test("upload batches keep one loading toast through sequential uploads and finish with success", async () => {
+  const { uploadBatch } = await import("../src/lib/upload-batch");
+  const { toastManager } = await import("../src/components/coss/toast");
+  await act(async () => root.render(<ToastProvider>{null}</ToastProvider>));
+  const files = [
+    new dom.window.File(["a"], "one.txt"),
+    new dom.window.File(["b"], "two.txt"),
+  ];
+  const finish: (() => void)[] = [];
+  const uploaded: string[] = [];
+  let result!: ReturnType<typeof uploadBatch>;
+  await act(async () => {
+    result = uploadBatch(files, async (file) => {
+      uploaded.push(file.name);
+      await new Promise<void>((resolve) => finish.push(resolve));
+    });
+  });
+  const toast = document.querySelector('[data-slot="toast-root"]')!;
+  assert.equal(document.querySelectorAll('[data-slot="toast-root"]').length, 1);
+  assert.equal(toast.getAttribute("data-type"), "loading");
+  assert.ok(toast.textContent?.includes("Uploading 2 documents…"));
+  assert.ok(!toast.textContent?.includes("one.txt"));
+  assert.equal(toast.querySelector('[data-slot="toast-description"]'), null);
+  assert.deepEqual(uploaded, ["one.txt"]);
+  await act(async () => finish[0]());
+  assert.equal(document.querySelector('[data-slot="toast-root"]'), toast);
+  assert.ok(toast.textContent?.includes("Uploading 2 documents…"));
+  assert.ok(!toast.textContent?.includes("two.txt"));
+  assert.equal(toast.getAttribute("data-type"), "loading");
+  await act(async () => {
+    finish[1]();
+    assert.deepEqual(await result, { completed: 2, errors: [] });
+  });
+  assert.equal(document.querySelector('[data-slot="toast-root"]'), toast);
+  assert.equal(document.querySelectorAll('[data-slot="toast-root"]').length, 1);
+  assert.equal(toast.getAttribute("data-type"), "success");
+  assert.ok(toast.textContent?.includes("2 documents uploaded"));
+  assert.ok(!toast.textContent?.includes("two.txt"));
+  await act(async () => toastManager.close());
+});
+
+test("upload batches report partial failure in one toast and continue uploading remaining documents", async () => {
+  const { uploadBatch } = await import("../src/lib/upload-batch");
+  const { toastManager } = await import("../src/components/coss/toast");
+  await act(async () => root.render(<ToastProvider>{null}</ToastProvider>));
+  const files = ["one.txt", "two.txt", "three.txt"].map(
+    (name) => new dom.window.File(["text"], name),
+  );
+  const uploaded: string[] = [];
+  await act(async () => {
+    const result = await uploadBatch(files, async (file) => {
+      uploaded.push(file.name);
+      if (file.name === "two.txt") throw new Error("Request failed");
+    });
+    assert.equal(result.completed, 2);
+    assert.deepEqual(result.errors, ["two.txt: Request failed"]);
+  });
+  assert.deepEqual(
+    uploaded,
+    files.map((file) => file.name),
+  );
+  const toasts = document.querySelectorAll('[data-slot="toast-root"]');
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].getAttribute("data-type"), "error");
+  assert.ok(toasts[0].textContent?.includes("2 of 3 documents uploaded"));
+  assert.ok(toasts[0].textContent?.includes("two.txt: Request failed"));
+  await act(async () => toastManager.close());
+});
+
+test("single uploads and simultaneous batches keep separate toast identities and empty selections are silent", async () => {
+  const { uploadBatch } = await import("../src/lib/upload-batch");
+  const { toastManager } = await import("../src/components/coss/toast");
+  await act(async () => root.render(<ToastProvider>{null}</ToastProvider>));
+  const file = new dom.window.File(["text"], "one.txt");
+  let finish!: () => void;
+  let pending!: ReturnType<typeof uploadBatch>;
+  await act(async () => {
+    await uploadBatch([], async () => assert.fail("No upload should start"));
+  });
+  assert.equal(document.querySelectorAll('[data-slot="toast-root"]').length, 0);
+  await act(async () => {
+    pending = uploadBatch(
+      [file],
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await uploadBatch([file], async () => {
+      throw new Error("Invalid content");
+    });
+  });
+  const toasts = document.querySelectorAll('[data-slot="toast-root"]');
+  assert.equal(toasts.length, 2);
+  const loading = [...toasts].find(
+    (toast) => toast.getAttribute("data-type") === "loading",
+  )!;
+  const failure = [...toasts].find(
+    (toast) => toast.getAttribute("data-type") === "error",
+  )!;
+  assert.ok(failure.textContent?.includes("Upload failed"));
+  await act(async () => {
+    finish();
+    await pending;
+  });
+  assert.equal(loading.getAttribute("data-type"), "success");
+  assert.ok(loading.textContent?.includes("Document uploaded"));
+  assert.equal(failure.getAttribute("data-type"), "error");
+  await act(async () => toastManager.close());
 });
 
 test("Finder grid marquee selects intersecting files, adds to selection, and restores selection on cancellation", async () => {

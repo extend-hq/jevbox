@@ -550,7 +550,7 @@ test("heading hierarchy and link provenance survive indexing", () => {
   assert.equal(parsed.nodes[0].page, 3);
   assert.equal(parsed.nodes[0].endPage, 4);
 });
-test("additional text formats index and unsupported uploads are rejected", async () => {
+test("additional text formats index and unfamiliar uploads are queued for parsing", async () => {
   const code = await upload(
     owner,
     "export const enabled = true;",
@@ -562,7 +562,7 @@ test("additional text formats index and unsupported uploads are rejected", async
   unsupported.append("file", new Blob(["binary-data"]), "attachment.bin");
   assert.equal(
     (await req("/documents", owner, "POST", unsupported)).status,
-    415,
+    201,
   );
   const html = await upload(
     owner,

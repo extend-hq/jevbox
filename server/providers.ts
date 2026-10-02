@@ -10,7 +10,6 @@ import { PermanentJobError } from "./jobs";
 import { buildIndex } from "./indexing";
 import { retrieveDocuments } from "./retrieval";
 import { jsonRequest } from "./provider-http";
-import { uploadLimits, textWithinProcessingLimits } from "../shared/uploads";
 import type { SearchFilters } from "../shared/search-filters";
 import { documentAnswerPolicy } from "./answer-policy";
 export type Settings = {
@@ -79,28 +78,18 @@ export function createProviders(store: Store, fetcher: Fetch = fetch) {
       document.mime.startsWith("text/") ||
       document.mime === "application/json"
     ) {
-      let text: string;
+      let text: string | undefined;
       try {
         text = new TextDecoder("utf-8", { fatal: true }).decode(body);
-      } catch {
-        throw new PermanentJobError(
-          "The document does not contain valid UTF-8 text.",
+      } catch {}
+      if (text !== undefined)
+        return buildIndex(
+          text.split("\f").map((content, i) => ({
+            content,
+            metadata: { pageRange: { start: i + 1, end: i + 1 } },
+          })),
+          "text",
         );
-      }
-      if (
-        body.length > uploadLimits.textBytes ||
-        !textWithinProcessingLimits(text)
-      )
-        throw new PermanentJobError(
-          "Text document exceeds its processing limits",
-        );
-      return buildIndex(
-        text.split("\f").map((content, i) => ({
-          content,
-          metadata: { pageRange: { start: i + 1, end: i + 1 } },
-        })),
-        "text",
-      );
     }
     if (!settings.extendKey) {
       await checkpoint(

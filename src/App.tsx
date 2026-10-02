@@ -1,6 +1,6 @@
 import { toastManager } from "./components/coss/toast";
 import { authClient } from "./lib/auth-client";
-import { notifyUploads } from "./lib/notifications";
+import { uploadBatch } from "./lib/upload-batch";
 import { FinderDropZone } from "./components/finder-drop-zone";
 import { downloadLibraryItems } from "./lib/library-download";
 import {
@@ -433,14 +433,12 @@ export default function App() {
     setSelected(null);
   }, [page, directory, documentId, settingsSection]);
   async function upload(files: FileList | File[]) {
-    const errors: string[] = [];
-    let completed = 0;
     const destinations = new Map<string, string | null>([
       ["", currentFolder?.id ?? null],
     ]);
-    for (const file of Array.from(files)) {
-      setUploading(file.name);
-      try {
+    try {
+      await uploadBatch(files, async (file) => {
+        setUploading(file.name);
         const segments = file.webkitRelativePath?.split("/").slice(0, -1) ?? [];
         let path = "";
         let parentId = currentFolder?.id ?? null;
@@ -458,6 +456,7 @@ export default function App() {
               (await api<{ id: string }>("/folders", {
                 method: "POST",
                 body: JSON.stringify({ name, parentId }),
+                notify: false,
               }));
             destinations.set(path, folder.id);
           }
@@ -467,15 +466,11 @@ export default function App() {
         body.append("file", file);
         if (parentId) body.append("parentId", parentId);
         await api("/documents", { method: "POST", body });
-        completed++;
-      } catch (error) {
-        errors.push(`${file.name}: ${(error as Error).message}`);
-      }
+      });
+    } finally {
+      setUploading("");
     }
-    setUploading("");
-    notifyUploads(completed);
     await refresh();
-    if (errors.length) throw new Error(errors.join("\n"));
   }
   if (navigation.route.shareToken)
     return <SharedResourceView route={navigation.route} />;

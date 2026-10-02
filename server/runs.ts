@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { configuredLimit } from "./rate-limits";
 import { z } from "zod";
 import { HttpError, requireResource, resourceAccess, type Store } from "./db";
 import {
@@ -64,6 +65,7 @@ export function createRuns(
   origin: string,
 ) {
   const running = new Map<string, AbortController>();
+  const activeLimit = configuredLimit("RUN_USER_CONCURRENCY", 25);
   async function find(principal: Principal, orgId: string, runId: string) {
     await access.actor(principal, orgId);
     const run = await store.one<Run>(
@@ -119,7 +121,7 @@ export function createRuns(
       orgId,
       principal.userId,
     );
-    if ((pending?.count ?? 0) >= 10)
+    if ((pending?.count ?? 0) >= activeLimit)
       throw new HttpError(
         429,
         "Too many active runs. Wait for a result or cancel a run.",
