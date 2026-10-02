@@ -4,18 +4,92 @@ import {
   textExtensions,
 } from "../../shared/file-types";
 
-export type SpatialThumbnail = { url: string; release: () => void };
+export type SpatialThumbnail = {
+  url: string;
+  release: () => void;
+  rotation?: number;
+};
+
+export async function renderSpatialPages(
+  source: string,
+  fileName: string,
+  pages: number[],
+  signal: AbortSignal,
+) {
+  const previews = new Map<number, SpatialThumbnail>();
+  const uniquePages = [...new Set(pages)].filter(
+    (page) => Number.isInteger(page) && page >= 1,
+  );
+  try {
+    if (extension(fileName) === "pdf") {
+      const { loadSharedPdfEngine } = await import("./pdf-thumbnail-utils");
+      const engine = await loadSharedPdfEngine();
+      signal.throwIfAborted();
+      const document = await engine
+        .openDocumentUrl(
+          {
+            id: `blocks-${crypto.randomUUID()}`,
+            url: new URL(source, location.href).href,
+          },
+          { mode: "auto" },
+        )
+        .toPromise();
+      try {
+        for (const number of uniquePages) {
+          signal.throwIfAborted();
+          const page = document.pages[number - 1];
+          if (!page) continue;
+          const blob = await engine
+            .renderThumbnail(document, page, {
+              dpr: 1,
+              imageType: "image/webp",
+              scaleFactor: 1800 / Math.max(page.size.width, page.size.height),
+              withAnnotations: true,
+            })
+            .toPromise();
+          const url = URL.createObjectURL(blob);
+          previews.set(number, {
+            url,
+            rotation: page.rotation * 90,
+            release: () => URL.revokeObjectURL(url),
+          });
+        }
+      } finally {
+        await engine.closeDocument(document).toPromise();
+      }
+    } else {
+      for (const page of uniquePages) {
+        signal.throwIfAborted();
+        const thumbnail = await renderSpatialThumbnail(
+          source,
+          fileName,
+          signal,
+          page - 1,
+          1800,
+        );
+        if (thumbnail) previews.set(page, thumbnail);
+      }
+    }
+    signal.throwIfAborted();
+    return previews;
+  } catch (error) {
+    previews.forEach((preview) => preview.release());
+    throw error;
+  }
+}
 
 export async function renderSpatialThumbnail(
   source: string,
   fileName: string,
   signal: AbortSignal,
+  pageIndex = 0,
+  size = 1024,
 ): Promise<SpatialThumbnail | null> {
   const url = new URL(source, location.href).href;
-  const size = 1024;
   const format = extension(fileName);
   signal.throwIfAborted();
   let blob: Blob | undefined;
+  let rotation = 0;
   if (format === "pdf") {
     const { loadSharedPdfEngine } = await import("./pdf-thumbnail-utils");
     const engine = await loadSharedPdfEngine();
@@ -27,8 +101,9 @@ export async function renderSpatialThumbnail(
     const document = await task.toPromise();
     try {
       signal.throwIfAborted();
-      const page = document.pages[0];
+      const page = document.pages[pageIndex];
       if (!page) return null;
+      rotation = page.rotation * 90;
       blob = await engine
         .renderThumbnail(document, page, {
           dpr: 1,
@@ -58,7 +133,7 @@ export async function renderSpatialThumbnail(
     });
     try {
       blob = (
-        await renderer.renderPage(0, {
+        await renderer.renderPage(pageIndex, {
           maxWidth: size,
           maxHeight: size,
           pixelRatio: 1,
@@ -89,7 +164,7 @@ export async function renderSpatialThumbnail(
     });
     try {
       blob = (
-        await renderer.renderSlide(0, {
+        await renderer.renderSlide(pageIndex, {
           maxWidth: size,
           maxHeight: size,
           pixelRatio: 1,
@@ -101,6 +176,7 @@ export async function renderSpatialThumbnail(
       renderer.destroy();
     }
   } else if (imageExtensions.includes(format)) {
+    if (pageIndex !== 0) return null;
     const response = await fetch(url, {
       signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
     });
@@ -128,12 +204,21 @@ export async function renderSpatialThumbnail(
   } else if (format === "xlsx" || textExtensions.includes(format)) {
     const { renderDocumentThumbnail } =
       await import("./document-thumbnail-utils");
-    const result = await renderDocumentThumbnail(url, fileName, 0, size);
+    const result = await renderDocumentThumbnail(
+      url,
+      fileName,
+      pageIndex,
+      size,
+    );
     signal.throwIfAborted();
     return result ? { url: result.url, release: () => {} } : null;
   }
   signal.throwIfAborted();
   if (!blob) return null;
   const preview = URL.createObjectURL(blob);
-  return { url: preview, release: () => URL.revokeObjectURL(preview) };
+  return {
+    url: preview,
+    rotation,
+    release: () => URL.revokeObjectURL(preview),
+  };
 }

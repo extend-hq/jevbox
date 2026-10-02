@@ -22,12 +22,18 @@ export async function testDatabase() {
           );
           for (const { version } of snapshots)
             await store.authorization.removeSnapshot(version);
-          await store.close();
         }
-        await admin.query(`DROP SCHEMA IF EXISTS "${schema}_jobs" CASCADE`);
-        await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
       } finally {
-        await admin.end();
+        try {
+          await store?.close();
+        } finally {
+          try {
+            await admin.query(`DROP SCHEMA IF EXISTS "${schema}_jobs" CASCADE`);
+            await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+          } finally {
+            await admin.end();
+          }
+        }
       }
     },
   };

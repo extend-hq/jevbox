@@ -22,6 +22,25 @@
   display: block;
   touch-action: none;
 }
+.library-space-block-badges {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.library-space-block-badge {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transform-origin: 0 0;
+  will-change: transform;
+}
 .library-space-tools {
   position: absolute;
   top: 14px;
@@ -68,6 +87,35 @@
   color: var(--muted-foreground);
   font-size: 10px;
   pointer-events: none;
+}
+.library-space-block-controls {
+  position: absolute;
+  bottom: 40px;
+  left: 16px;
+  right: 16px;
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  max-width: calc(100% - 32px);
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--background) 90%, transparent);
+  backdrop-filter: blur(8px);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.library-space-block-controls button {
+  padding: 3px 6px;
+  border-radius: 5px;
+  color: var(--foreground);
+  cursor: pointer;
+}
+.library-space-block-controls button:hover {
+  background: var(--accent);
 }
 .library-space-unavailable {
   position: absolute;

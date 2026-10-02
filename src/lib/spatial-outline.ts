@@ -36,7 +36,7 @@ export function outlineConnectorRoutes(
   const routes: [number, number][][] = [
     [
       [-gap, railY],
-      [lastRootColumn * columnWidth + spine, railY],
+      [lastRootColumn * columnWidth + spine - 0.07, railY],
     ],
   ];
   rows.forEach((row, index) => {
@@ -45,6 +45,7 @@ export function outlineConnectorRoutes(
     if (row.parent < 0) {
       const fromX = column * columnWidth + spine;
       routes.push([
+        [-gap, railY],
         [fromX, railY],
         [fromX, y],
         [x + 0.02, y],
@@ -129,15 +130,10 @@ export function roundedOutlineSegments(
   return segments;
 }
 
-export function outlineFlowGeometry(
-  rows: readonly { depth: number; parent: number }[],
-  layout: Parameters<typeof outlineConnectorRoutes>[1],
-) {
-  const routes = outlineConnectorRoutes(rows, layout);
+function createOutlineFlowGeometry() {
   const positions: number[] = [];
   const starts: number[] = [];
   const ends: number[] = [];
-  const rowDistances: number[] = [];
   const coverage = new Map<string, [number, number][]>();
   const curves = new Set<string>();
   const addSegment = (
@@ -228,13 +224,32 @@ export function outlineFlowGeometry(
     }
     return distance;
   };
+  return { positions, starts, ends, append };
+}
+
+export function outlineRouteFlowGeometry(
+  routes: readonly (readonly (readonly [number, number])[])[],
+  start = 0,
+) {
+  const { positions, starts, ends, append } = createOutlineFlowGeometry();
+  routes.forEach((route) => append(route, start));
+  return { positions, starts, ends };
+}
+
+export function outlineFlowGeometry(
+  rows: readonly { depth: number; parent: number }[],
+  layout: Parameters<typeof outlineConnectorRoutes>[1],
+) {
+  const routes = outlineConnectorRoutes(rows, layout);
+  const { positions, starts, ends, append } = createOutlineFlowGeometry();
+  const rowDistances: number[] = [];
   if (routes.length) append(routes[0], 0);
   rows.forEach((row, index) => {
     const column = Math.floor(index / layout.rowsPerColumn);
     const parentColumn = Math.floor(row.parent / layout.rowsPerColumn);
     const start =
       row.parent < 0
-        ? layout.gap + column * layout.columnWidth + 0.12
+        ? 0
         : rowDistances[row.parent] +
           (parentColumn === column
             ? 0.08

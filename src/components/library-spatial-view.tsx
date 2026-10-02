@@ -6,14 +6,24 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { Maximize, Minus, Plus } from "./icons";
+import { BlockTypeBadge, BlockPageBadge } from "./block-type-badge";
 import type { IndexNode } from "@/lib/api";
 import type { ParsedBlock } from "../../shared/parsed-blocks";
 import type { FileSystemEntry, FileSystemFileItem } from "./extend/file-system";
 import { FOLDER_GLYPH_SVG } from "./extend/folder-glyph";
 import { layoutSpatialTree, type SpatialNode } from "../lib/spatial-tree";
 import { occludesSpatialFocus } from "../lib/spatial-focus";
-import { outlineFlowGeometry } from "../lib/spatial-outline";
+import {
+  outlineFlowGeometry,
+  outlineRouteFlowGeometry,
+} from "../lib/spatial-outline";
 import { OUTLINE_METAL_SHADER } from "../lib/spatial-metal";
+import {
+  spatialOutlineRows,
+  spatialBlockCrop,
+  SPATIAL_BLOCK_BATCH,
+  type SpatialOutlineRow,
+} from "../lib/spatial-blocks";
 import {
   createDetailThumbnailQueue,
   detailThumbnailCandidates,
@@ -49,6 +59,8 @@ type SceneHandle = {
   focus: (path?: string) => void;
   fly: (amount: number) => void;
   invalidate: () => void;
+  selectRow: (path: string, index: number, offset?: number) => void;
+  collapseRow: () => void;
 };
 
 const SHEET_WIDTH = 2.25;
@@ -86,6 +98,10 @@ const TREE_ROWS_PER_COLUMN = 24;
 const TREE_MAX_ROWS = TREE_ROWS_PER_COLUMN * 3;
 const TREE_MAX_DEPTH = 3;
 const TREE_GAP = 0.6;
+const PREVIEW_CARD_WIDTH = 2.8;
+const PREVIEW_PADDING = 0.14;
+const PREVIEW_FOOTER_HEIGHT = 0.32;
+const PREVIEW_FOOTER_GAP = 0.08;
 const BLOCK_CHIPS = 12;
 const CHIP_WIDTH = 0.028;
 const CHIP_STEP = 0.05;
@@ -395,47 +411,81 @@ function labelTexture(
   return { texture, aspect: canvas.width / canvas.height };
 }
 
-type TreeRow = {
-  title: string;
-  page: number;
-  depth: number;
-  parent: number;
-  blocks: string[];
-};
-function flattenStructure(structure: SpatialDocumentStructure | null) {
-  const rows: TreeRow[] = [];
-  const pages = new Map<number, ParsedBlock[]>();
-  for (const block of structure?.blocks ?? [])
-    pages.set(block.page, [...(pages.get(block.page) ?? []), block]);
-  const sections = structure?.sections.length
-    ? structure.sections
-    : [...pages].map(([page, blocks]): IndexNode => ({
-        id: `page-${page}`,
-        title: `Page ${page}`,
-        summary: "",
-        page,
-        endPage: page,
-        content: "",
-        links: [],
-        blocks,
-        children: [],
-      }));
-  const visit = (nodes: IndexNode[], depth: number, parent: number) => {
-    for (const node of nodes) {
-      if (rows.length >= TREE_MAX_ROWS) return;
-      rows.push({
-        title: node.title || "Untitled section",
-        page: node.page,
-        depth,
-        parent,
-        blocks: node.blocks.map((block) => block.type),
-      });
-      if (depth < TREE_MAX_DEPTH)
-        visit(node.children, depth + 1, rows.length - 1);
-    }
-  };
-  visit(sections, 0, -1);
-  return rows;
+function roundedRectPath<T extends THREE.Path>(
+  path: T,
+  width: number,
+  height: number,
+  radius: number,
+): T {
+  const x = width / 2,
+    y = height / 2,
+    r = Math.min(radius, x, y);
+  path.moveTo(-x + r, -y);
+  path.lineTo(x - r, -y);
+  path.quadraticCurveTo(x, -y, x, -y + r);
+  path.lineTo(x, y - r);
+  path.quadraticCurveTo(x, y, x - r, y);
+  path.lineTo(-x + r, y);
+  path.quadraticCurveTo(-x, y, -x, y - r);
+  path.lineTo(-x, -y + r);
+  path.quadraticCurveTo(-x, -y, -x + r, -y);
+  path.closePath();
+  return path;
+}
+
+function roundedRing(width: number, height: number, thickness = 0.018) {
+  const ring = roundedRectPath(
+    new THREE.Shape(),
+    width + thickness * 2,
+    height + thickness * 2,
+    0.07,
+  );
+  ring.holes.push(roundedRectPath(new THREE.Path(), width, height, 0.05));
+  return new THREE.ShapeGeometry(ring, 12);
+}
+
+function blockCardTexture(dark: boolean) {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 2;
+  const context = canvas.getContext("2d")!;
+  context.fillStyle = dark ? "hsl(225 3% 9%)" : "#ffffff";
+  context.fillRect(0, 0, 2, 2);
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  return map;
+}
+
+function ocrTextTexture(block: ParsedBlock) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 960;
+  canvas.height = 540;
+  const context = canvas.getContext("2d")!;
+  context.fillStyle = "#fbfaf6";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#20283b";
+  context.font = "24px Inter, system-ui, sans-serif";
+  const words = (block.content || "No OCR text available").split(/\s+/);
+  const lines: string[] = [];
+  let line = "";
+  for (const word of words) {
+    if (line && context.measureText(`${line} ${word}`).width > 892) {
+      lines.push(line);
+      line = word;
+    } else line = line ? `${line} ${word}` : word;
+  }
+  if (line) lines.push(line);
+  lines
+    .slice(0, 14)
+    .forEach((text, i) =>
+      context.fillText(
+        i === 13 && lines.length > 14 ? `${text}…` : text,
+        34,
+        48 + i * 34,
+      ),
+    );
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  return map;
 }
 
 export function LibrarySpatialView(props: Props) {
@@ -445,6 +495,22 @@ export function LibrarySpatialView(props: Props) {
   const handle = useRef<SceneHandle | null>(null);
   const thumbnailCache = useRef(new Map<string, string | null>());
   const [unavailable, setUnavailable] = useState(false);
+  const [previewBadges, setPreviewBadges] = useState<
+    { id: string; type: string; page: number }[]
+  >([]);
+  const badgeElements = useRef(new Map<string, HTMLSpanElement>());
+  const [outlineRows, setOutlineRows] = useState<{
+    path: string;
+    rows: SpatialOutlineRow[];
+  } | null>(null);
+  const [expandedRow, setExpandedRow] = useState<{
+    path: string;
+    index: number;
+    title: string;
+    offset: number;
+    total: number;
+    loading: boolean;
+  } | null>(null);
   const themeTarget = useRef(
     document.documentElement.classList.contains("dark"),
   );
@@ -476,6 +542,7 @@ export function LibrarySpatialView(props: Props) {
   useEffect(() => {
     const container = host.current;
     if (!container) return;
+    setPreviewBadges([]);
     const dark = themeTarget.current;
     let renderer: THREE.WebGLRenderer;
     try {
@@ -771,25 +838,24 @@ export function LibrarySpatialView(props: Props) {
     const sheetShade = (slot: number) =>
       new THREE.Color().copy(paperColor).multiplyScalar(1 - slot * 0.075);
     const outline = material(
-      new THREE.MeshBasicMaterial({ color: "#3265ed", toneMapped: false }),
+      new THREE.MeshBasicMaterial({ color: "#ffffff", toneMapped: false }),
     );
-    // A flat ring around the sheet, coplanar with it, so the selection edge
-    // never peeks out from behind at an angle.
-    const ring = new THREE.Shape();
-    const outer = { x: SHEET_WIDTH / 2 + 0.014, y: SHEET_HEIGHT / 2 + 0.014 };
-    ring.moveTo(-outer.x, -outer.y);
-    ring.lineTo(outer.x, -outer.y);
-    ring.lineTo(outer.x, outer.y);
-    ring.lineTo(-outer.x, outer.y);
-    ring.closePath();
-    const hole = new THREE.Path();
-    hole.moveTo(-SHEET_WIDTH / 2, -SHEET_HEIGHT / 2);
-    hole.lineTo(-SHEET_WIDTH / 2, SHEET_HEIGHT / 2);
-    hole.lineTo(SHEET_WIDTH / 2, SHEET_HEIGHT / 2);
-    hole.lineTo(SHEET_WIDTH / 2, -SHEET_HEIGHT / 2);
-    hole.closePath();
-    ring.holes.push(hole);
-    const outlineGeometry = geometry(new THREE.ShapeGeometry(ring));
+    outline.onBeforeCompile = (shader) => {
+      shader.uniforms.outlineTime = outlineTime;
+      shader.vertexShader =
+        "varying vec2 vMetalPosition;\n" +
+        shader.vertexShader.replace(
+          "void main() {",
+          "void main() { vMetalPosition = position.xy;",
+        );
+      shader.fragmentShader =
+        `${OUTLINE_METAL_SHADER}\nvarying vec2 vMetalPosition;\n` +
+        shader.fragmentShader.replace(
+          "vec4 diffuseColor = vec4( diffuse, opacity );",
+          "vec4 diffuseColor = vec4(outlineMetalColor(vMetalPosition.x + vMetalPosition.y * 1.3, 0.5, vec3(0.47, 0.7, 1.0)), opacity);",
+        );
+    };
+    const outlineGeometry = geometry(roundedRing(SHEET_WIDTH, SHEET_HEIGHT));
     const folderArt = folderTexture();
     texture(folderArt.texture);
     const folderMaterial = material(
@@ -1062,10 +1128,36 @@ export function LibrarySpatialView(props: Props) {
       height: number;
       reveal: number;
       state: "loading" | "ready";
+      rows: SpatialOutlineRow[];
+      cards: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[];
+      chips: THREE.InstancedMesh | null;
+      chipMatrices: { index: number; matrix: THREE.Matrix4 }[][];
+      baseWidth: number;
+      baseHeight: number;
+      flowStarts: number[];
     };
     const trees = new Map<string, Tree>();
     const structures = new Map<string, SpatialDocumentStructure | null>();
     const requested = new Set<string>();
+    let activePreview: {
+      path: string;
+      index: number;
+      offset: number;
+      group: THREE.Group;
+      controller: AbortController;
+      pages: SpatialThumbnail[];
+      maps: THREE.Texture[];
+      reveal: number;
+      origin: THREE.Vector3;
+      badges: {
+        id: string;
+        type: string;
+        page: number;
+        label: THREE.Object3D;
+        width: number;
+      }[];
+    } | null = null;
+    let cropLoad = Promise.resolve();
     // Outline connectors: world-width so they read clearly up close.
     const lineMaterial = fatLineMaterial({
       color: new THREE.Color(dark ? "#8ba4d4" : "#8295b8").getHex(),
@@ -1089,8 +1181,8 @@ export function LibrarySpatialView(props: Props) {
         shader.fragmentShader.replace(
           "gl_FragColor = vec4( diffuseColor.rgb, alpha );",
           `
-        vec3 metal = outlineMetalColor(vOutlineFlow, vOutlineAcross, vec3(0.6, 0.78, 1.0));
-        vec3 steel = diffuseColor.rgb * 0.28 + metal * mix(0.42, 0.82, outlineNight);
+        vec3 metal = outlineMetalColor(vOutlineFlow, vOutlineAcross, vec3(0.47, 0.7, 1.0));
+        vec3 steel = metal * mix(0.86, 1.12, outlineNight);
         gl_FragColor = vec4(steel, alpha);`,
         );
     };
@@ -1140,9 +1232,16 @@ export function LibrarySpatialView(props: Props) {
       const floater = floaters.get(path);
       if (!floater) return;
       const previous = trees.get(path);
+      const restore =
+        activePreview?.path === path
+          ? { index: activePreview.index, offset: activePreview.offset }
+          : null;
+      if (restore) collapseRow();
       if (previous) {
         floater.body.remove(previous.group);
         previous.group.traverse((object) => {
+          const pickIndex = pickables.indexOf(object);
+          if (pickIndex >= 0) pickables.splice(pickIndex, 1);
           if (
             object instanceof THREE.Mesh ||
             object instanceof THREE.LineSegments
@@ -1169,11 +1268,17 @@ export function LibrarySpatialView(props: Props) {
       }
       const group = new THREE.Group();
       const structure = structures.get(path) ?? null;
-      const parsedRows = flattenStructure(structure);
-      const rows: TreeRow[] = parsedRows.length
+      group.userData = { path, treePart: true };
+      const parsedRows = spatialOutlineRows(
+        structure,
+        TREE_MAX_ROWS,
+        TREE_MAX_DEPTH,
+      );
+      const rows: SpatialOutlineRow[] = parsedRows.length
         ? parsedRows
         : [
             {
+              id: "empty",
               title:
                 state === "loading"
                   ? "Reading structure…"
@@ -1211,19 +1316,23 @@ export function LibrarySpatialView(props: Props) {
         gap: TREE_GAP,
       });
       const chips: {
+        row: number;
         x: number;
         y: number;
         color: string;
         metal: boolean;
         flow: number;
       }[] = [];
+      const cards: Tree["cards"] = [];
       rows.forEach((row, index) => {
         const { x, y } = place(index);
         const width = TREE_CARD_WIDTH - row.depth * TREE_INDENT;
         const meta = row.page
           ? `p.${row.page}${row.blocks.length ? ` · ${row.blocks.length}` : ""}`
           : "";
-        const accent = row.blocks[0] ? blockColor(row.blocks[0]) : undefined;
+        const accent = row.blocks[0]
+          ? blockColor(row.blocks[0].type)
+          : undefined;
         const card = new THREE.Mesh(
           geometry(new THREE.PlaneGeometry(width, TREE_CARD_HEIGHT)),
           cardMaterial(
@@ -1235,6 +1344,9 @@ export function LibrarySpatialView(props: Props) {
         );
         card.position.set(x + width / 2, y, 0);
         card.renderOrder = 10;
+        card.userData = { path, rowIndex: index };
+        cards.push(card);
+        if (row.page) pickables.push(card);
         group.add(card);
         const sampled =
           row.blocks.length <= BLOCK_CHIPS
@@ -1244,11 +1356,12 @@ export function LibrarySpatialView(props: Props) {
                 (_, i) =>
                   row.blocks[Math.floor((i / BLOCK_CHIPS) * row.blocks.length)],
               );
-        sampled.forEach((type, i) =>
+        sampled.forEach((block, i) =>
           chips.push({
+            row: index,
             x: x + width + 0.1 + i * CHIP_STEP,
             y,
-            color: blockColor(type),
+            color: blockColor(block.type),
             metal: i === 0,
             flow:
               flowGeometry.rowDistances[index] +
@@ -1277,9 +1390,13 @@ export function LibrarySpatialView(props: Props) {
         ),
       );
       const connectors = new LineSegments2(connectorGeometry, lineMaterial);
+      connectors.userData = { path, treePart: true };
+      pickables.push(connectors);
       connectors.frustumCulled = false;
       connectors.renderOrder = 9;
       group.add(connectors);
+      let chipMesh: THREE.InstancedMesh | null = null;
+      const chipMatrices: Tree["chipMatrices"] = rows.map(() => []);
       if (chips.length) {
         const chipGeometry = geometry(
           new THREE.PlaneGeometry(CHIP_WIDTH, 0.15),
@@ -1298,7 +1415,7 @@ export function LibrarySpatialView(props: Props) {
             1,
           ),
         );
-        const chipMesh = new THREE.InstancedMesh(
+        chipMesh = new THREE.InstancedMesh(
           chipGeometry,
           material(
             new THREE.ShaderMaterial({
@@ -1323,6 +1440,8 @@ export function LibrarySpatialView(props: Props) {
               varying float vMetal;
               varying float vFlow;
               void main() {
+                vec2 p = abs(vUv - 0.5) * vec2(${CHIP_WIDTH.toFixed(3)}, 0.15) - vec2(${(CHIP_WIDTH / 2 - 0.012).toFixed(3)}, 0.063);
+                if (length(max(p, 0.0)) + min(max(p.x, p.y), 0.0) > 0.012) discard;
                 vec3 metal = vTint * 0.72 + outlineMetalColor(
                   vFlow + vUv.x * ${CHIP_WIDTH.toFixed(3)}, vUv.y,
                   vec3(0.85, 0.9, 1.0)
@@ -1337,9 +1456,16 @@ export function LibrarySpatialView(props: Props) {
         const matrix = new THREE.Matrix4();
         const color = new THREE.Color();
         chips.forEach((chip, i) => {
-          chipMesh.setMatrixAt(i, matrix.makeTranslation(chip.x, chip.y, 0));
-          chipMesh.setColorAt(i, color.set(chip.color));
+          chipMesh!.setMatrixAt(i, matrix.makeTranslation(chip.x, chip.y, 0));
+          chipMatrices[chip.row].push({ index: i, matrix: matrix.clone() });
+          chipMesh!.setColorAt(i, color.set(chip.color));
         });
+        chipMesh.userData = {
+          path,
+          treePart: true,
+          rowIndices: chips.map((chip) => chip.row),
+        };
+        pickables.push(chipMesh);
         group.add(chipMesh);
         const glowMesh = new THREE.InstancedMesh(
           geometry(new THREE.PlaneGeometry(0.1, 0.22)),
@@ -1393,7 +1519,384 @@ export function LibrarySpatialView(props: Props) {
         height,
         reveal: previous?.reveal ?? 0,
         state,
+        rows,
+        cards,
+        chips: chipMesh,
+        chipMatrices,
+        baseWidth: width,
+        baseHeight: height,
+        flowStarts: flowGeometry.rowDistances,
       });
+      if (latest.current.selectedPath === path)
+        setOutlineRows({ path, rows: parsedRows });
+      if (restore) selectRow(path, restore.index, restore.offset);
+    }
+
+    function disposePreviewGroup(group: THREE.Group) {
+      group.removeFromParent();
+      group.traverse((object) => {
+        const pickIndex = pickables.indexOf(object);
+        if (pickIndex >= 0) pickables.splice(pickIndex, 1);
+        if (!(object instanceof THREE.Mesh)) return;
+        if (geometries.delete(object.geometry)) object.geometry.dispose();
+        const owned = object.material as THREE.Material & {
+          map?: THREE.Texture | null;
+        };
+        if (owned === outline || owned === lineMaterial) return;
+        if (owned.map && textures.delete(owned.map)) owned.map.dispose();
+        const nightMap = nightMaps.get(owned);
+        if (nightMap && textures.delete(nightMap)) nightMap.dispose();
+        if (materials.delete(owned)) owned.dispose();
+      });
+    }
+
+    function collapseRow() {
+      const preview = activePreview;
+      activePreview = null;
+      if (preview) {
+        preview.controller.abort();
+        disposePreviewGroup(preview.group);
+        for (const map of preview.maps) if (textures.delete(map)) map.dispose();
+        preview.pages.forEach((page) => page.release());
+        const tree = trees.get(preview.path);
+        if (tree) {
+          tree.width = tree.baseWidth;
+          tree.height = tree.baseHeight;
+          tree.cards[preview.index]?.material.color.set("#ffffff");
+          for (const chip of tree.chipMatrices[preview.index] ?? [])
+            tree.chips?.setMatrixAt(chip.index, chip.matrix);
+          if (tree.chips) tree.chips.instanceMatrix.needsUpdate = true;
+        }
+      }
+      setExpandedRow(null);
+      badgeElements.current.forEach((element) => {
+        element.style.visibility = "hidden";
+      });
+      setPreviewBadges([]);
+      invalidate();
+    }
+
+    function selectRow(path: string, index: number, batchOffset?: number) {
+      const offset = batchOffset ?? 0;
+      const tree = trees.get(path);
+      const row = tree?.rows[index];
+      const entry = latest.current.items.find((item) => item.path === path);
+      if (
+        !tree ||
+        !row ||
+        !row.page ||
+        entry?.kind !== "file" ||
+        latest.current.selectedPath !== path
+      )
+        return;
+      flight = null;
+      interacted = true;
+      window.clearTimeout(reframeTimer);
+      const toggle =
+        activePreview?.path === path &&
+        activePreview.index === index &&
+        batchOffset === undefined;
+      collapseRow();
+      if (toggle) return;
+      const group = new THREE.Group();
+      group.userData.path = path;
+      tree.group.add(group);
+      const origin = tree.cards[index].position.clone();
+      group.position.copy(origin);
+      group.scale.setScalar(0.001);
+      const controller = new AbortController();
+      const preview = {
+        path,
+        index,
+        offset,
+        group,
+        controller,
+        pages: [] as SpatialThumbnail[],
+        maps: [] as THREE.Texture[],
+        reveal: 0,
+        origin,
+        badges: [] as {
+          id: string;
+          type: string;
+          page: number;
+          label: THREE.Object3D;
+          width: number;
+        }[],
+      };
+      activePreview = preview;
+      tree.cards[index].material.color.set("#a4c7ff");
+      for (const chip of tree.chipMatrices[index])
+        tree.chips?.setMatrixAt(
+          chip.index,
+          new THREE.Matrix4().makeScale(0, 0, 0),
+        );
+      if (tree.chips) tree.chips.instanceMatrix.needsUpdate = true;
+      const blocks = row.blocks.slice(offset, offset + SPATIAL_BLOCK_BATCH);
+      setExpandedRow({
+        path,
+        index,
+        title: row.title,
+        offset,
+        total: row.blocks.length,
+        loading: true,
+      });
+
+      async function loadCrops() {
+        if (controller.signal.aborted || disposed) return;
+        let pages = new Map<number, SpatialThumbnail>();
+        if (
+          entry?.kind === "file" &&
+          entry.url &&
+          blocks.some((block) => spatialBlockCrop(block))
+        ) {
+          try {
+            const { renderSpatialPages } =
+              await import("../lib/spatial-thumbnail-renderer");
+            pages = await renderSpatialPages(
+              entry.url,
+              entry.path,
+              blocks
+                .filter((block) => spatialBlockCrop(block))
+                .map((block) => block.page),
+              controller.signal,
+            );
+          } catch {
+            if (controller.signal.aborted) return;
+          }
+        }
+        if (
+          disposed ||
+          activePreview !== preview ||
+          controller.signal.aborted
+        ) {
+          pages.forEach((page) => page.release());
+          return;
+        }
+        preview.pages = [...pages.values()];
+        const pageMaps = new Map<number, THREE.Texture>();
+        for (const [page, asset] of pages) {
+          try {
+            const map = await textureLoader.loadAsync(asset.url);
+            if (
+              disposed ||
+              activePreview !== preview ||
+              controller.signal.aborted
+            ) {
+              map.dispose();
+              pageMaps.forEach((value) => {
+                textures.delete(value);
+                value.dispose();
+              });
+              return;
+            }
+            map.colorSpace = THREE.SRGBColorSpace;
+            pageMaps.set(page, texture(map));
+            preview.maps.push(map);
+          } catch {
+            /* OCR text remains available when a page image cannot load. */
+          }
+        }
+        if (disposed || activePreview !== preview || controller.signal.aborted)
+          return;
+        const branchX = tree!.baseWidth + 0.5;
+        const blockWidth = PREVIEW_CARD_WIDTH;
+        const top = origin.y + 0.35;
+        const columnY = [top, top];
+        const routes: [number, number][][] = [];
+        const cardDayMap = texture(blockCardTexture(false));
+        const cardNightMap = texture(blockCardTexture(true));
+        preview.maps.push(cardDayMap, cardNightMap);
+        let maxRight = branchX;
+        let bottom = top;
+        const addBlock = (block: ParsedBlock, i: number) => {
+          const pageMap = pageMaps.get(block.page);
+          const crop = pageMap
+            ? spatialBlockCrop(block, pages.get(block.page)?.rotation)
+            : null;
+          const image = pageMap?.image as
+            { width: number; height: number } | undefined;
+          const map = crop ? pageMap! : texture(ocrTextTexture(block));
+          const aspect =
+            crop && image
+              ? (image.width * crop.width) / (image.height * crop.height)
+              : 960 / 540;
+          const contentWidth = blockWidth - PREVIEW_PADDING * 2;
+          const imageHeight = Math.min(contentWidth / aspect, 2.25);
+          const imageWidth = Math.min(contentWidth, imageHeight * aspect);
+          const cardHeight =
+            imageHeight +
+            PREVIEW_PADDING * 2 +
+            PREVIEW_FOOTER_HEIGHT +
+            PREVIEW_FOOTER_GAP;
+          const column = i % 2;
+          const x = branchX + column * (blockWidth + 0.42);
+          const y = columnY[column] - cardHeight / 2;
+          const card = new THREE.Mesh(
+            geometry(
+              new THREE.ShapeGeometry(
+                roundedRectPath(
+                  new THREE.Shape(),
+                  blockWidth,
+                  cardHeight,
+                  0.07,
+                ),
+                12,
+              ),
+            ),
+            themeMap(
+              material(
+                new THREE.MeshBasicMaterial({
+                  map: cardDayMap,
+                  toneMapped: false,
+                  fog: false,
+                }),
+              ),
+              cardNightMap,
+            ),
+          );
+          card.position.set(x + blockWidth / 2, y, 0.18 + i * 0.008);
+          card.userData = { path, previewBlock: true };
+          pickables.push(card);
+          group.add(card);
+          const shape = geometry(
+            new THREE.ShapeGeometry(
+              roundedRectPath(new THREE.Shape(), imageWidth, imageHeight, 0.04),
+              12,
+            ),
+          );
+          const positions = shape.getAttribute("position");
+          const uv = shape.getAttribute("uv");
+          for (let vertex = 0; vertex < uv.count; vertex++) {
+            const u = positions.getX(vertex) / imageWidth + 0.5;
+            const v = positions.getY(vertex) / imageHeight + 0.5;
+            uv.setXY(
+              vertex,
+              crop ? crop.left + u * crop.width : u,
+              crop ? 1 - crop.top - crop.height + v * crop.height : v,
+            );
+          }
+          const content = new THREE.Mesh(
+            shape,
+            material(
+              new THREE.MeshBasicMaterial({
+                map,
+                toneMapped: false,
+                side: THREE.DoubleSide,
+              }),
+            ),
+          );
+          content.position.set(
+            0,
+            cardHeight / 2 - PREVIEW_PADDING - imageHeight / 2,
+            0.006,
+          );
+          card.add(content);
+          const frame = new THREE.Mesh(
+            geometry(roundedRing(blockWidth, cardHeight)),
+            outline,
+          );
+          frame.position.z = 0.01;
+          card.add(frame);
+          const label = new THREE.Object3D();
+          label.position.set(
+            -blockWidth / 2 + PREVIEW_PADDING,
+            -cardHeight / 2 + PREVIEW_PADDING + PREVIEW_FOOTER_HEIGHT / 2,
+            0.012,
+          );
+          card.add(label);
+          preview.badges.push({
+            id: `${path}:${index}:${offset + i}`,
+            type: block.type,
+            page: block.page,
+            label,
+            width: contentWidth,
+          });
+          const start: [number, number] = [
+            origin.x + tree!.cards[index].geometry.parameters.width / 2,
+            origin.y,
+          ];
+          const spine = branchX - 0.22;
+          const route: [number, number][] = [start, [spine, origin.y]];
+          if (column)
+            route.push(
+              [spine, top + 0.22],
+              [x - 0.21, top + 0.22],
+              [x - 0.21, y],
+            );
+          else route.push([spine, y]);
+          route.push([x - 0.009, y]);
+          routes.push(route);
+          columnY[column] = y - cardHeight / 2 - 0.3;
+          maxRight = Math.max(maxRight, x + blockWidth);
+          bottom = Math.min(bottom, columnY[column]);
+        };
+        blocks.forEach(addBlock);
+        setPreviewBadges(
+          preview.badges.map(({ id, type, page }) => ({ id, type, page })),
+        );
+        if (!blocks.length) {
+          const empty = new THREE.Mesh(
+            geometry(new THREE.PlaneGeometry(2.9, 0.25)),
+            cardMaterial(
+              cardTexture("No OCR blocks in this section", "", { dark: false }),
+              cardTexture("No OCR blocks in this section", "", { dark: true }),
+              0,
+              2.9,
+            ),
+          );
+          empty.position.set(branchX + 1.45, origin.y, 0.18);
+          group.add(empty);
+          routes.push([
+            [
+              origin.x + tree!.cards[index].geometry.parameters.width / 2,
+              origin.y,
+            ],
+            [branchX, origin.y],
+          ]);
+          maxRight = branchX + 2.9;
+        }
+        const flow = outlineRouteFlowGeometry(
+          routes,
+          tree!.flowStarts[index] +
+            tree!.cards[index].geometry.parameters.width -
+            0.02,
+        );
+        const connectorGeometry = geometry(
+          new LineSegmentsGeometry().setPositions(flow.positions),
+        );
+        connectorGeometry.setAttribute(
+          "instanceFlowStart",
+          new THREE.InstancedBufferAttribute(new Float32Array(flow.starts), 1),
+        );
+        connectorGeometry.setAttribute(
+          "instanceFlowEnd",
+          new THREE.InstancedBufferAttribute(new Float32Array(flow.ends), 1),
+        );
+        const connector = new LineSegments2(connectorGeometry, lineMaterial);
+        connector.frustumCulled = false;
+        connector.userData = { path, treePart: true };
+        pickables.push(connector);
+        group.add(connector);
+        tree!.width = maxRight;
+        tree!.height = Math.max(
+          tree!.baseHeight,
+          floaters.get(path)!.height / 2 - bottom,
+        );
+        setExpandedRow({
+          path,
+          index,
+          title: row!.title,
+          offset,
+          total: row!.blocks.length,
+          loading: false,
+        });
+        invalidate();
+        focus(path);
+      }
+      cropLoad = cropLoad.then(loadCrops).catch(() => {
+        if (!disposed && activePreview === preview) collapseRow();
+      });
+      invalidate();
     }
     function requestStructure(path: string) {
       if (requested.has(path)) return;
@@ -1440,6 +1943,9 @@ export function LibrarySpatialView(props: Props) {
       "(prefers-reduced-motion: reduce)",
     ).matches;
     const projected = new THREE.Vector3();
+    const badgeCenter = new THREE.Vector3();
+    const badgeTop = new THREE.Vector3();
+    const badgeRight = new THREE.Vector3();
     const worldPoint = new THREE.Vector3();
     const cameraUp = new THREE.Vector3();
     const cameraRight = new THREE.Vector3();
@@ -1978,8 +2484,33 @@ export function LibrarySpatialView(props: Props) {
       const selectedPath = latest.current.selectedPath;
       const nextTree = pickTreeDocument();
       if (nextTree !== treePath) {
+        collapseRow();
         treePath = nextTree;
+        setOutlineRows(
+          treePath
+            ? {
+                path: treePath,
+                rows: spatialOutlineRows(
+                  structures.get(treePath) ?? null,
+                  TREE_MAX_ROWS,
+                  TREE_MAX_DEPTH,
+                ),
+              }
+            : null,
+        );
         if (treePath) requestStructure(treePath);
+      }
+      if (activePreview) {
+        activePreview.reveal = reducedMotion
+          ? 1
+          : activePreview.reveal +
+            (1 - activePreview.reveal) * Math.min(1, delta * 8);
+        if (1 - activePreview.reveal < 0.002) activePreview.reveal = 1;
+        const reveal = Math.max(0.001, activePreview.reveal);
+        activePreview.group.scale.setScalar(reveal);
+        activePreview.group.position
+          .copy(activePreview.origin)
+          .multiplyScalar(1 - reveal);
       }
       if (now >= nextDetailCheck) {
         nextDetailCheck = now + 250;
@@ -2147,6 +2678,47 @@ export function LibrarySpatialView(props: Props) {
       renderer.render(scene, camera);
       renderer.setRenderTarget(null);
       quad.render(renderer);
+      if (activePreview) {
+        for (const badge of activePreview.badges) {
+          const element = badgeElements.current.get(badge.id);
+          if (!element) continue;
+          const center = badge.label
+            .localToWorld(badgeCenter.set(0, 0, 0.002))
+            .project(camera);
+          const top = badge.label
+            .localToWorld(badgeTop.set(0, PREVIEW_FOOTER_HEIGHT / 2, 0.002))
+            .project(camera);
+          const right = badge.label
+            .localToWorld(badgeRight.set(badge.width, 0, 0.002))
+            .project(camera);
+          const visible =
+            activePreview.group.visible &&
+            center.z >= -1 &&
+            center.z <= 1 &&
+            Math.abs(center.x) < 1.2 &&
+            Math.abs(center.y) < 1.2;
+          element.style.visibility = visible ? "visible" : "hidden";
+          if (!visible) continue;
+          const x = (center.x * 0.5 + 0.5) * width();
+          const y = (-center.y * 0.5 + 0.5) * height();
+          const rowHeight = Math.hypot(
+            (top.x - center.x) * width(),
+            (top.y - center.y) * height(),
+          );
+          const scale = (rowHeight * 0.62) / Math.max(1, element.offsetHeight);
+          const rowWidth =
+            Math.hypot(
+              (right.x - center.x) * width(),
+              (right.y - center.y) * height(),
+            ) / 2;
+          element.style.width = `${rowWidth / Math.max(0.0001, scale)}px`;
+          const angle = Math.atan2(
+            -(right.y - center.y) * height(),
+            (right.x - center.x) * width(),
+          );
+          element.style.transform = `translate(${x}px, ${y}px) rotate(${angle}rad) scale(${scale}) translateY(-50%)`;
+        }
+      }
       if (!reducedMotion || flight || keys.size || moving) invalidate();
     }
     function invalidate() {
@@ -2185,7 +2757,7 @@ export function LibrarySpatialView(props: Props) {
         (contentHeight / 2 / Math.tan(fov)) * 1.12,
         (contentWidth / 2 / (Math.tan(fov) * camera.aspect)) * 1.12,
       );
-      const direction = camera.position.clone().sub(floater.base).normalize();
+      const direction = camera.getWorldDirection(new THREE.Vector3()).negate();
       if (!Number.isFinite(direction.x) || direction.lengthSq() < 0.5)
         direction.set(0, 0, 1);
       // Treat the view direction as the document's facing so its structure
@@ -2329,6 +2901,7 @@ export function LibrarySpatialView(props: Props) {
     focusDistance = camera.position.distanceTo(controls.target);
 
     const raycaster = new THREE.Raycaster();
+    raycaster.params.Line2 = { threshold: 6 };
     const pointer = new THREE.Vector2();
     let down: { x: number; y: number } | null = null;
     function pointerRay(event: PointerEvent | MouseEvent | WheelEvent) {
@@ -2346,17 +2919,40 @@ export function LibrarySpatialView(props: Props) {
     const hoverPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
     const hoverPoint = new THREE.Vector3();
     function rayHit() {
-      let object: THREE.Object3D | null =
-        raycaster
-          .intersectObjects(pickables, false)
-          .find((hit) => isPickable(hit.object))?.object ?? null;
+      return rayPick().path;
+    }
+    function rayPick() {
+      const hits = raycaster
+        .intersectObjects(pickables, false)
+        .filter((hit) => isPickable(hit.object));
+      const picked =
+        hits.find(
+          (hit) =>
+            typeof hit.object.userData.rowIndex === "number" &&
+            hit.object.userData.path === latest.current.selectedPath,
+        ) ??
+        hits.find(
+          (hit) =>
+            hit.object.userData.path === latest.current.selectedPath &&
+            (hit.object.userData.treePart || hit.object.userData.previewBlock),
+        ) ??
+        hits[0];
+      let object: THREE.Object3D | null = picked?.object ?? null;
       while (object && object.userData.path === undefined)
         object = object.parent;
-      return object?.userData.path as string | undefined;
+      return {
+        path: object?.userData.path as string | undefined,
+        rowIndex:
+          picked?.instanceId === undefined
+            ? object?.userData.rowIndex
+            : object?.userData.rowIndices?.[picked.instanceId],
+        treePart: Boolean(object?.userData.treePart),
+        previewBlock: Boolean(object?.userData.previewBlock),
+      };
     }
     function hit(event: PointerEvent | MouseEvent) {
       pointerRay(event);
-      return rayHit();
+      return rayPick();
     }
     function hoverHit() {
       const next = rayHit();
@@ -2412,10 +3008,14 @@ export function LibrarySpatialView(props: Props) {
         event.button !== 0
       )
         return;
-      const path = hit(event);
+      const target = hit(event);
+      const path = target.path;
+      if (path && typeof target.rowIndex === "number") {
+        selectRow(path, target.rowIndex);
+        return;
+      }
+      if (target.treePart || target.previewBlock) return;
       const entry = latest.current.items.find((item) => item.path === path);
-      if (entry && entry.path === latest.current.selectedPath)
-        focus(entry.path);
       latest.current.onSelect(entry ?? null);
       invalidate();
     }
@@ -2431,7 +3031,9 @@ export function LibrarySpatialView(props: Props) {
       invalidate();
     }
     function doubleClick(event: MouseEvent) {
-      const path = hit(event);
+      const target = hit(event);
+      const path = target.path;
+      if (target.treePart || typeof target.rowIndex === "number") return;
       const entry = latest.current.items.find((item) => item.path === path);
       if (entry) latest.current.onOpen(entry);
     }
@@ -2483,6 +3085,8 @@ export function LibrarySpatialView(props: Props) {
       focus,
       fly: (amount) => fly(amount),
       invalidate,
+      selectRow,
+      collapseRow,
     };
     void folderArt.ready.then(invalidate);
     if (
@@ -2499,6 +3103,8 @@ export function LibrarySpatialView(props: Props) {
       window.clearTimeout(thumbTimer);
       window.clearTimeout(reframeTimer);
       detailQueue.dispose();
+      activePreview?.controller.abort();
+      activePreview?.pages.forEach((page) => page.release());
       resize.disconnect();
       controls.dispose();
       renderer.domElement.removeEventListener("pointerdown", pointerDown);
@@ -2544,8 +3150,10 @@ export function LibrarySpatialView(props: Props) {
           (event.target.closest("input, a") || event.target.isContentEditable)
         )
           return;
-        if (event.key === "Escape") props.onSelect(null);
-        else if (event.key === "Home" || event.key.toLowerCase() === "r")
+        if (event.key === "Escape") {
+          if (expandedRow) handle.current?.collapseRow();
+          else props.onSelect(null);
+        } else if (event.key === "Home" || event.key.toLowerCase() === "r")
           handle.current?.focus();
         else if (event.key === "+" || event.key === "=")
           handle.current?.fly(0.35);
@@ -2588,7 +3196,27 @@ export function LibrarySpatialView(props: Props) {
         role="group"
         aria-label="Interactive library space"
         aria-describedby="spatial-controls-help"
-      />
+      >
+        <div
+          className="library-space-block-badges"
+          aria-label="OCR block types"
+        >
+          {previewBadges.map((badge) => (
+            <span
+              key={badge.id}
+              className="library-space-block-badge"
+              ref={(element) => {
+                if (element) badgeElements.current.set(badge.id, element);
+                else badgeElements.current.delete(badge.id);
+                handle.current?.invalidate();
+              }}
+            >
+              <BlockTypeBadge type={badge.type} />
+              <BlockPageBadge page={badge.page} />
+            </span>
+          ))}
+        </div>
+      </div>
       <ul className="sr-only" aria-label="Library items">
         {visibleNodes.map((node) => (
           <li key={node.path}>
@@ -2610,6 +3238,71 @@ export function LibrarySpatialView(props: Props) {
           </li>
         ))}
       </ul>
+      {outlineRows?.path === props.selectedPath && (
+        <ul className="sr-only" aria-label="Document outline">
+          {outlineRows.rows.map((row, index) => (
+            <li key={`${row.id}-${index}`}>
+              <button
+                type="button"
+                aria-expanded={
+                  expandedRow?.path === outlineRows.path &&
+                  expandedRow.index === index
+                }
+                onClick={() =>
+                  handle.current?.selectRow(outlineRows.path, index)
+                }
+              >
+                Preview blocks: {row.title}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {expandedRow?.path === props.selectedPath && (
+        <div
+          className="library-space-block-controls"
+          aria-label="OCR block previews"
+        >
+          <span role="status">
+            {expandedRow.loading
+              ? "Loading blocks…"
+              : expandedRow.total
+                ? `${expandedRow.title} · ${expandedRow.offset + 1}–${Math.min(expandedRow.total, expandedRow.offset + SPATIAL_BLOCK_BATCH)} of ${expandedRow.total} blocks`
+                : "No OCR blocks in this section"}
+          </span>
+          {expandedRow.offset > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                handle.current?.selectRow(
+                  expandedRow.path,
+                  expandedRow.index,
+                  Math.max(0, expandedRow.offset - SPATIAL_BLOCK_BATCH),
+                )
+              }
+            >
+              Previous blocks
+            </button>
+          )}
+          {expandedRow.offset + SPATIAL_BLOCK_BATCH < expandedRow.total && (
+            <button
+              type="button"
+              onClick={() =>
+                handle.current?.selectRow(
+                  expandedRow.path,
+                  expandedRow.index,
+                  expandedRow.offset + SPATIAL_BLOCK_BATCH,
+                )
+              }
+            >
+              Next blocks
+            </button>
+          )}
+          <button type="button" onClick={() => handle.current?.collapseRow()}>
+            Collapse
+          </button>
+        </div>
+      )}
       <div className="library-space-tools" aria-label="Camera controls">
         <button
           type="button"
@@ -2640,7 +3333,7 @@ export function LibrarySpatialView(props: Props) {
       <div className="library-space-guide" id="spatial-controls-help">
         <span>Drag to look around</span>
         <span>Scroll or WASD to float</span>
-        <span>Click a document to see its structure</span>
+        <span>Click a document, then a row to preview its blocks</span>
       </div>
       {unavailable && (
         <div className="library-space-unavailable" role="status">

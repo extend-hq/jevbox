@@ -4985,7 +4985,7 @@ label textarea {
   border-radius: 4px;
   outline-offset: 4px;
 }
-.parsed-block .parsed-block-type {
+.status-chip.parsed-block-type {
   --badge-border-tone: var(--block-badge-tone);
   border: var(--hairline) solid --alpha(var(--badge-border-tone) / 5%);
   background: color-mix(in oklch, var(--block-badge-tone) 15%, transparent);
@@ -4993,7 +4993,7 @@ label textarea {
   font-weight: inherit;
   text-transform: capitalize;
 }
-.parsed-block .page-pill {
+.parsed-block-page {
   font-size: 11px;
   padding: 2px 6px;
 }

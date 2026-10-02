@@ -87,7 +87,7 @@ test("wrapped child columns have no unused document rail and every branch meets 
   const routes = outlineConnectorRoutes(rows, layout);
   assert.deepEqual(routes[0], [
     [-0.6, 0],
-    [0.12, 0],
+    [0.12 - 0.07, 0],
   ]);
   routes.slice(1).forEach((route, index) => {
     const column = Math.floor(index / 24);
@@ -99,7 +99,7 @@ test("wrapped child columns have no unused document rail and every branch meets 
   });
   rows[48] = { depth: 0, parent: -1 };
   const roots = outlineConnectorRoutes(rows, layout);
-  assert.deepEqual(roots[0].at(-1), roots[49][0]);
+  assert.deepEqual(roots[0].at(-1), [roots[49][1][0] - 0.07, 0]);
   assert.deepEqual(outlineConnectorRoutes([], layout), []);
 });
 
@@ -134,6 +134,28 @@ test("metal flow distances continue from the document through nested and wrapped
       assert.ok(flow.rowDistances[i] > flow.rowDistances[row.parent]);
   });
   assert.ok(flow.rowDistances[4] > flow.rowDistances[0]);
+});
+
+test("root branches round the rail junction as well as the row junction", () => {
+  const routes = outlineConnectorRoutes([{ depth: 0, parent: -1 }], {
+    railY: 0,
+    rowTop: -0.24,
+    rowHeight: 0.32,
+    rowsPerColumn: 24,
+    columnWidth: 4.5,
+    indent: 0.26,
+    cardWidth: 2.9,
+    gap: 0.6,
+  });
+  const segments = roundedOutlineSegments(routes[1]);
+  const vertices = Array.from({ length: segments.length / 3 }, (_, i) =>
+    segments.slice(i * 3, i * 3 + 2),
+  );
+  assert.ok(!vertices.some(([x, y]) => x === 0.12 && y === 0));
+  assert.ok(
+    vertices.some(([x, y]) => x > 0.05 && x < 0.12 && y < 0 && y > -0.07),
+  );
+  assert.deepEqual(vertices.at(-1), [0.32, -0.24]);
 });
 
 test("shared outline trunks are drawn once and every segment belongs to the document tree", () => {
