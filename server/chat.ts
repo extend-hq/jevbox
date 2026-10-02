@@ -14,6 +14,7 @@ import { availableChatModels } from "./ai";
 import { getSettings, type createProviders } from "./providers";
 import { isChatWorking, type ChatModel, type ChatTurn } from "../shared/chat";
 import { inspectDocument } from "./document-inspection";
+import { chatTitle, chatTitleLabel } from "../shared/chat-title";
 import {
   createDocumentVisuals,
   type DocumentPageImage,
@@ -190,7 +191,7 @@ export function createChatRuntime(
       .reverse();
     return {
       id: chat.id,
-      title: saved.title,
+      title: chatTitleLabel(saved.title),
       messages: page.map(({ position, payload }) => ({ ...payload, position })),
       nextCursor:
         window.start !== undefined
@@ -713,7 +714,9 @@ export function createChatRuntime(
         ];
         await store.run(
           "UPDATE chats SET title=?,messages=?,dependencies=?,updated=? WHERE id=?",
-          history.length ? chat.title : turn.content.slice(0, 80),
+          history.length
+            ? chat.title
+            : chatTitle(turn.content, turn.attachments),
           JSON.stringify(messages),
           JSON.stringify(deps),
           new Date().toISOString(),
@@ -810,7 +813,9 @@ export function createChatRuntime(
           const blocked = !(await readable(a, JSON.parse(chat.dependencies)));
           return {
             id: chat.id,
-            title: blocked ? "Sources no longer available" : chat.title,
+            title: blocked
+              ? "Sources no longer available"
+              : chatTitleLabel(chat.title),
             updated: chat.updated,
             blocked,
             working: !blocked && isChatWorking(chat.activity),
@@ -1016,7 +1021,7 @@ export function createChatRuntime(
         id,
         a.orgId,
         a.userId,
-        `${chat.title.slice(0, 70)} · branch`,
+        `${chatTitleLabel(chat.title).slice(0, 70)} · branch`,
         JSON.stringify(messages),
         JSON.stringify(deps),
         new Date().toISOString(),

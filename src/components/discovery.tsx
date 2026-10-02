@@ -4,6 +4,7 @@ import { ChatRegenerateMenu } from "./chat-regenerate-menu";
 import { ChatQueue } from "./chat-queue";
 import { ComposerSendEffect } from "./composer-send-effect";
 import { JevboxIcon } from "./jevbox-icon";
+import { chatTitleLabel } from "../../shared/chat-title";
 import {
   isChatWorking,
   type ChatTurn,
@@ -45,7 +46,6 @@ import {
   AttachmentActions,
   AttachmentAction,
   AttachmentTrigger,
-  AttachmentGroup,
 } from "./ui/attachment";
 import {
   MessageScrollerProvider,
@@ -833,7 +833,7 @@ export function ChatView({
   };
   useEffect(() => {
     onTitleChange(
-      plainTextPreview(chats.find((chat) => chat.id === chatId)?.title ?? ""),
+      chatTitleLabel(chats.find((chat) => chat.id === chatId)?.title ?? ""),
     );
   }, [chats, chatId, onTitleChange]);
   useEffect(() => {
@@ -1005,12 +1005,12 @@ export function ChatView({
                 className={`chat-history-row ${chatId === c.id ? "active" : ""}`}
                 key={c.id}
               >
-                <CursorTooltip label={plainTextPreview(c.title)}>
+                <CursorTooltip label={chatTitleLabel(c.title)}>
                   <RouteLink
                     href={paths.chat(c.id)}
-                    aria-label={plainTextPreview(c.title)}
+                    aria-label={chatTitleLabel(c.title)}
                   >
-                    <span>{plainTextPreview(c.title)}</span>
+                    <span>{chatTitleLabel(c.title)}</span>
                   </RouteLink>
                 </CursorTooltip>
                 {!c.blocked &&
@@ -1070,7 +1070,7 @@ export function ChatView({
           <div className="chat-toolbar">
             <span>
               {chatId
-                ? plainTextPreview(
+                ? chatTitleLabel(
                     chats.find((c) => c.id === chatId)?.title ?? "New chat",
                   )
                 : "New chat"}
@@ -1227,6 +1227,12 @@ export function ChatView({
                                           />
                                         )}
                                       <Markdown
+                                        attachments={
+                                          message.role === "user"
+                                            ? message.attachments
+                                            : undefined
+                                        }
+                                        onDocumentOpen={onOpen}
                                         sources={
                                           message.role === "assistant"
                                             ? message.sources
@@ -1257,42 +1263,6 @@ export function ChatView({
                                       </Markdown>
                                     </BubbleContent>
                                   </Bubble>
-                                  {message.attachments?.length ? (
-                                    <AttachmentGroup>
-                                      {message.attachments.map((attachment) => (
-                                        <Attachment
-                                          key={attachment.id}
-                                          size="xs"
-                                          className="chat-message-attachment"
-                                        >
-                                          <AttachmentMedia
-                                            variant="image"
-                                            className="chat-message-thumbnail"
-                                          >
-                                            <ResourceThumbnail
-                                              name={attachment.name}
-                                              mime=""
-                                              src={`/api/documents/${attachment.id}/content`}
-                                              inline
-                                              square
-                                              className="block size-full"
-                                            />
-                                          </AttachmentMedia>
-                                          <AttachmentContent>
-                                            <AttachmentTitle>
-                                              {attachment.name}
-                                            </AttachmentTitle>
-                                          </AttachmentContent>
-                                          <AttachmentTrigger
-                                            aria-label={`Open ${attachment.name}`}
-                                            onClick={() =>
-                                              onOpen(attachment.id)
-                                            }
-                                          />
-                                        </Attachment>
-                                      ))}
-                                    </AttachmentGroup>
-                                  ) : null}
                                   {message.role === "assistant" && (
                                     <div
                                       className="chat-answer-details"

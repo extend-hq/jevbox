@@ -36,7 +36,7 @@ import {
 import { Bold, Italic, Link2, X, Check } from "./icons";
 import { promptDocumentExtension } from "@/lib/chat-document-extension";
 import type { Resource } from "@/lib/api";
-import { ResourceThumbnail } from "./resource-thumbnail";
+import { DocumentPillContent } from "./document-pill-content";
 import { IndexStatusBadge } from "./index-status-badge";
 
 function PromptDocumentPill({
@@ -53,17 +53,11 @@ function PromptDocumentPill({
       data-document-id={node.attrs.id}
       data-selected={selected || undefined}
     >
-      <ResourceThumbnail
+      <DocumentPillContent
+        id={node.attrs.id}
         name={node.attrs.name}
         mime={node.attrs.mime}
-        src={`/api/documents/${node.attrs.id}/content`}
-        inline
-        square
-        className="prompt-document-thumbnail"
       />
-      <span className="prompt-document-name" title={node.attrs.name}>
-        {node.attrs.name}
-      </span>
       {node.attrs.status !== "ready" && (
         <IndexStatusBadge status={node.attrs.status} error={node.attrs.error} />
       )}

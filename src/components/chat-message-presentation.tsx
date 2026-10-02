@@ -68,6 +68,34 @@ type TreeNode = {
   properties?: Record<string, unknown>;
 };
 
+export function inlineAttachments(attachments: { id: string; name: string }[]) {
+  return () => (tree: TreeNode) => {
+    const referenced = new Set<string>();
+    const visit = (node: TreeNode) => {
+      if (node.tagName === "a") referenced.add(String(node.properties?.href));
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+    const missing = attachments.filter(
+      ({ id }) => !referenced.has(`/library/documents/${id}`),
+    );
+    if (!missing.length) return;
+    const pills: TreeNode[] = missing.flatMap(({ id, name }) => [
+      { type: "text", value: " " },
+      {
+        type: "element",
+        tagName: "a",
+        properties: { href: `/library/documents/${id}` },
+        children: [{ type: "text", value: name }],
+      },
+    ]);
+    const last = tree.children?.at(-1);
+    if (last?.tagName === "p") last.children?.push(...pills);
+    else
+      tree.children?.push({ type: "element", tagName: "p", children: pills });
+  };
+}
+
 export function inlineCitations(count: number) {
   return () => (tree: TreeNode) => {
     const visit = (node: TreeNode) => {

@@ -223,6 +223,100 @@ test("chat citations use document previews without changing code or unknown refe
   assert.equal(selected, source);
 });
 
+test("user messages preserve clickable attachment pills in their original prompt positions", async () => {
+  const previousEventSource = globalThis.EventSource;
+  globalThis.EventSource = class {
+    addEventListener() {}
+    close() {}
+  } as unknown as typeof EventSource;
+  const attachments = [
+    {
+      id: "b0af9e03-b9b5-4bfc-97e1-ed7a0d18449b",
+      name: "Budget [draft]*_2026.pdf",
+    },
+    { id: "268c83f6-f7a1-4e03-87b0-6c9f853ce181", name: "Prior_year.pdf" },
+  ];
+  const title = `Compare ${attachments[0].name}`;
+  const content = `Compare **this** [Budget \\[draft\\]\\*\\_2026.pdf](/library/documents/${attachments[0].id}) with [Prior\\_year.pdf](/library/documents/${attachments[1].id}) please. [Website](https://example.org)`;
+  const snapshot = {
+    id: "chat",
+    title,
+    blocked: false,
+    turns: [],
+    messages: [{ role: "user", content, attachments }],
+  };
+  let opened = "";
+  let displayedTitle = "";
+  globalThis.fetch = async (input) =>
+    Response.json(
+      String(input) === "/api/chats" ? [{ id: "chat", title }] : snapshot,
+    );
+  try {
+    await act(async () =>
+      root.render(
+        <ChatView
+          me={{ chatEnabled: true } as Me}
+          chatId="chat"
+          onTitleChange={(value) => {
+            displayedTitle = value;
+          }}
+          onChatChange={() => {}}
+          onOpen={(id) => {
+            opened = id;
+          }}
+          onSettings={() => {}}
+        />,
+      ),
+    );
+    const paragraph = host.querySelector(".user-bubble-content .markdown > p")!;
+    const pills = paragraph.querySelectorAll<HTMLAnchorElement>(
+      "a.prompt-document-pill",
+    );
+    assert.equal(pills.length, 2);
+    assert.equal(
+      paragraph.textContent,
+      `Compare this ${attachments[0].name} with ${attachments[1].name} please. Website`,
+    );
+    assert.equal(
+      pills[0].getAttribute("href"),
+      `/library/documents/${attachments[0].id}`,
+    );
+    assert.ok(pills[0].querySelector("[data-resource-thumbnail]"));
+    assert.equal(host.querySelector('[data-slot="attachment-group"]'), null);
+    assert.equal(
+      host.querySelector(".chat-history-row a")?.getAttribute("aria-label"),
+      title,
+    );
+    assert.equal(displayedTitle, title);
+    await click(pills[0]);
+    assert.equal(opened, attachments[0].id);
+    assert.equal(
+      paragraph
+        .querySelector('a[href="https://example.org"]')
+        ?.getAttribute("target"),
+      "_blank",
+    );
+  } finally {
+    globalThis.EventSource = previousEventSource;
+  }
+});
+
+test("older attachments without document links remain inline inside the user prompt", async () => {
+  const attachment = {
+    id: "b0af9e03-b9b5-4bfc-97e1-ed7a0d18449b",
+    name: "Notes.pdf",
+  };
+  await act(async () =>
+    root.render(
+      <Markdown attachments={[attachment]}>Read these notes.</Markdown>,
+    ),
+  );
+  const paragraph = host.querySelector(".markdown > p")!;
+  assert.equal(paragraph.textContent, "Read these notes. Notes.pdf");
+  assert.equal(paragraph.querySelectorAll("a.prompt-document-pill").length, 1);
+  assert.equal(host.querySelectorAll(".markdown > p").length, 1);
+});
+
 test("citation thumbnails stay mounted when preview callbacks and source snapshots change", async () => {
   const source = {
     documentId: "doc",

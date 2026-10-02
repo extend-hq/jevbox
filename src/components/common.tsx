@@ -13,10 +13,13 @@ import {
 import ReactMarkdown, { type Components } from "react-markdown";
 import {
   inlineCitations,
+  inlineAttachments,
   revealMarkdown,
   streamingCursor,
 } from "./chat-message-presentation";
 import { ChatSourceChip } from "./chat-source-chip";
+import { DocumentPillContent } from "./document-pill-content";
+import { RouteLink } from "./route-link";
 import type { Source } from "@/lib/api";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -102,7 +105,9 @@ export function Choice({
 const MarkdownSourceContext = createContext<{
   sources: Source[];
   onSourcePreview?: (source: Source) => void;
-}>({ sources: [] });
+  attachments: { id: string; name: string }[];
+  onDocumentOpen?: (id: string) => void;
+}>({ sources: [], attachments: [] });
 
 function MarkdownLink({
   href,
@@ -111,7 +116,36 @@ function MarkdownLink({
   href?: string;
   children?: ReactNode;
 }) {
-  const { sources, onSourcePreview } = useContext(MarkdownSourceContext);
+  const { sources, onSourcePreview, attachments, onDocumentOpen } = useContext(
+    MarkdownSourceContext,
+  );
+  const attachment = attachments.find(
+    ({ id }) => href === `/library/documents/${id}`,
+  );
+  if (attachment)
+    return (
+      <RouteLink
+        href={href}
+        className="prompt-document-pill"
+        data-document-id={attachment.id}
+        aria-label={`Open ${attachment.name}`}
+        onClick={(event) => {
+          if (
+            !onDocumentOpen ||
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+          )
+            return;
+          event.preventDefault();
+          onDocumentOpen(attachment.id);
+        }}
+      >
+        <DocumentPillContent {...attachment} />
+      </RouteLink>
+    );
   const match = href?.match(/^#chat-source-(\d+)$/);
   const number = match ? Number(match[1]) : 0;
   const source = sources[number - 1];
@@ -153,6 +187,8 @@ export function Markdown({
   animate = false,
   sources = [],
   onSourcePreview,
+  attachments = [],
+  onDocumentOpen,
   streaming = false,
 }: {
   children: string;
@@ -160,10 +196,14 @@ export function Markdown({
   animate?: boolean;
   sources?: Source[];
   onSourcePreview?: (source: Source) => void;
+  attachments?: { id: string; name: string }[];
+  onDocumentOpen?: (id: string) => void;
   streaming?: boolean;
 }) {
   return (
-    <MarkdownSourceContext.Provider value={{ sources, onSourcePreview }}>
+    <MarkdownSourceContext.Provider
+      value={{ sources, onSourcePreview, attachments, onDocumentOpen }}
+    >
       <div className="markdown">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
@@ -171,6 +211,9 @@ export function Markdown({
             allowHtml
               ? [rehypeRaw, [rehypeSanitize, documentHtmlSchema]]
               : [
+                  ...(attachments.length
+                    ? [inlineAttachments(attachments)]
+                    : []),
                   inlineCitations(sources.length),
                   ...(animate ? [revealMarkdown] : []),
                   ...(streaming ? [streamingCursor] : []),

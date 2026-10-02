@@ -919,6 +919,7 @@ test("inline references preserve the request and constrain evidence to attached 
     (snapshot) => snapshot.messages.length === 2,
   );
   assert.equal(saved.messages[0].content, content);
+  assert.equal(saved.title, "How is the process reviewed in notes.md?");
   assert.deepEqual(saved.messages[0].attachments, [
     { id: documentId, name: "notes.md" },
   ]);

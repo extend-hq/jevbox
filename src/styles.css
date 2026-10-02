@@ -3972,7 +3972,7 @@ label textarea {
 .chat-attachment svg {
   flex-shrink: 0;
 }
-.chat-prompt-content .prompt-document-pill {
+.prompt-document-pill {
   display: inline-flex;
   align-items: center;
   vertical-align: middle;
@@ -3986,6 +3986,17 @@ label textarea {
   line-height: 18px;
   white-space: nowrap;
   color: var(--foreground);
+}
+.markdown a.prompt-document-pill {
+  color: var(--foreground);
+  text-decoration: none;
+}
+.markdown a.prompt-document-pill:hover {
+  background: var(--muted);
+}
+.markdown a.prompt-document-pill:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 .prompt-document-pill[data-selected] {
   outline: 2px solid var(--ring);
@@ -4022,17 +4033,6 @@ label textarea {
 .prompt-document-pill > button:hover {
   background: var(--muted);
   color: var(--foreground);
-}
-.chat-message-attachment {
-  min-width: 0;
-  max-width: 240px;
-  border-radius: 6px;
-}
-.chat-message-attachment .chat-message-thumbnail {
-  width: 20px;
-  height: 20px;
-  border-radius: 2px;
-  background: transparent;
 }
 .composer-error {
   color: var(--destructive-foreground);
