@@ -5,6 +5,7 @@ export type RetrievalStep = {
   parentId?: string | null;
   nodeId?: string;
   parentNodeId?: string;
+  blockType?: string;
   page?: number;
   probability?: number;
   routeScore?: number;

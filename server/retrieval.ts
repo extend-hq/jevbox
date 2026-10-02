@@ -46,6 +46,20 @@ const authorizationSlot = createLimiter(
   retrievalLimits.authorizationConcurrency,
 );
 
+function sectionBlockType(node: IndexNode) {
+  const content = node.content.trimStart();
+  const block = node.blocks.find(
+    (block) => block.content.trim() && content.startsWith(block.content.trim()),
+  );
+  const type = block?.type;
+  const normalized = type?.toLowerCase().replace(/[ -]+/g, "_");
+  if (type && normalized !== "heading" && normalized !== "section_heading")
+    return type;
+  const heading = content.match(/^(#{1,6})[\t ]+/);
+  if (heading) return heading[1].length === 1 ? "heading" : "section_heading";
+  return type ?? "section";
+}
+
 export async function retrieveDocuments(
   store: Store,
   actor: Actor,
@@ -238,6 +252,7 @@ export async function retrieveDocuments(
           resourceId: doc.id,
           nodeId: node.id,
           parentNodeId,
+          blockType: sectionBlockType(node),
           page: node.page,
         },
         sources: (node.passages ?? []).map((passage) => ({

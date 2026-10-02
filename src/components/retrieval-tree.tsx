@@ -3,6 +3,15 @@ import { Collapsible } from "@base-ui/react/collapsible";
 import { ScrollArea } from "./coss/scroll-area";
 import type { RetrievalStep } from "../../shared/retrieval";
 import { FileText, Folder, IndexTreeIcon, ShapeTriangle } from "./icons";
+import { blockStyle } from "./block-type-badge";
+import { ResourceThumbnail } from "./resource-thumbnail";
+
+function SectionIcon({ step }: { step: RetrievalStep }) {
+  const type =
+    step.blockType ?? (step.parentNodeId ? "section_heading" : "heading");
+  const { icon: Icon, tone } = blockStyle(type);
+  return <Icon size={13} data-tone={tone} />;
+}
 
 function formatLatency(durationMs: number | undefined) {
   if (
@@ -72,7 +81,7 @@ export function RetrievalTree({
             onFocus={() => onPreview?.(documentId, step.nodeId)}
             disabled={!onSelect}
           >
-            <IndexTreeIcon size={13} />
+            <SectionIcon step={step} />
             <span>{step.label}</span>
             {step.page && <small>p. {step.page}</small>}
           </button>
@@ -97,7 +106,18 @@ export function RetrievalTree({
           onFocus={() => step.resourceId && onPreview?.(step.resourceId)}
           disabled={!onSelect || !step.resourceId}
         >
-          <FileText size={14} />
+          {step.resourceId ? (
+            <ResourceThumbnail
+              name={step.label}
+              mime=""
+              src={`/api/documents/${step.resourceId}/content`}
+              className="retrieval-file-thumbnail"
+              square
+              inline
+            />
+          ) : (
+            <FileText size={14} />
+          )}
           <span>{step.label}</span>
         </button>
         {step.resourceId &&
@@ -176,7 +196,11 @@ export function RetrievalTree({
                 .map((step, i) => (
                   <li key={i}>
                     <div className="retrieval-node">
-                      <FileText size={14} />
+                      {step.stage === "section" ? (
+                        <SectionIcon step={step} />
+                      ) : (
+                        <FileText size={14} />
+                      )}
                       <span>{step.label}</span>
                       <small>{step.stage}</small>
                     </div>

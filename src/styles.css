@@ -5242,12 +5242,21 @@ label textarea {
   flex-shrink: 0;
   color: var(--muted-foreground);
 }
+.retrieval-node > svg[data-tone] {
+  color: var(--block-badge-foreground, var(--muted-foreground));
+}
 .retrieval-node > span {
   min-width: 0;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.retrieval-node > [data-resource-thumbnail] {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  border-radius: 2.5px;
 }
 .retrieval-node small {
   color: var(--muted-foreground);
