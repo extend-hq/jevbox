@@ -15,13 +15,7 @@ function DropdownMenu({
 }: DropdownMenuPrimitive.Root.Props): React.ReactElement {
   return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />;
 }
-function DropdownMenuPortal({
-  ...props
-}: DropdownMenuPrimitive.Portal.Props): React.ReactElement {
-  return (
-    <DropdownMenuPrimitive.Portal data-slot="dropdown-menu-portal" {...props} />
-  );
-}
+
 function DropdownMenuTrigger({
   asChild,
   children,
@@ -247,21 +241,7 @@ function DropdownMenuSeparator({
     />
   );
 }
-function DropdownMenuShortcut({
-  className,
-  ...props
-}: React.ComponentProps<"span">): React.ReactElement {
-  return (
-    <span
-      className={cn(
-        "ms-auto text-xs font-medium text-muted-foreground",
-        className,
-      )}
-      data-slot="dropdown-menu-shortcut"
-      {...props}
-    />
-  );
-}
+
 function DropdownMenuSub({
   ...props
 }: DropdownMenuPrimitive.SubmenuRoot.Props): React.ReactElement {
@@ -302,7 +282,6 @@ function DropdownMenuSubContent(
 }
 export {
   DropdownMenu,
-  DropdownMenuPortal,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -312,7 +291,6 @@ export {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuShortcut,
   DropdownMenuSub,
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,

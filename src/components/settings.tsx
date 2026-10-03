@@ -27,7 +27,6 @@ import {
   parseModelList,
   validateEmail,
   validateLength,
-  validateRequiredText,
 } from "@/lib/form-validation";
 import { providerCatalog } from "../../shared/providers";
 import { Choice, Loading, useAction } from "./common";

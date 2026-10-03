@@ -108,7 +108,7 @@ export function inlineCitations(count: number) {
         }
         const parts: TreeNode[] = [];
         let offset = 0;
-        for (const match of child.value.matchAll(/\[(\d+)\]/g)) {
+        for (const match of child.value.matchAll(/\[(\d+)(?:\.(\d+))?\]/g)) {
           const number = Number(match[1]);
           if (number < 1 || number > count) continue;
           if (match.index > offset)
@@ -119,7 +119,9 @@ export function inlineCitations(count: number) {
           parts.push({
             type: "element",
             tagName: "a",
-            properties: { href: `#chat-source-${number}` },
+            properties: {
+              href: `#chat-source-${number}${match[2] ? `-${match[2]}` : ""}`,
+            },
             children: [{ type: "text", value: match[0] }],
           });
           offset = match.index + match[0].length;

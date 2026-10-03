@@ -3,7 +3,13 @@ import { cn } from "@/lib/utils";
 import { RefreshCw, TriangleWarningFilled } from "./icons";
 import { IndexStatusBadge, indexStatusDescription } from "./index-status-badge";
 import { Button } from "./ui/button";
-import { Popover, PopoverDescription, PopoverPopup, PopoverTitle, PopoverTrigger } from "./ui/popover";
+import {
+  Popover,
+  PopoverDescription,
+  PopoverPopup,
+  PopoverTitle,
+  PopoverTrigger,
+} from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export function needsIndexAttention(status?: string) {

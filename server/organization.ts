@@ -1,4 +1,4 @@
-import { queues, type BackgroundJob } from "./jobs";
+import { type BackgroundJob } from "./jobs";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ProviderResponseError } from "./provider-http";

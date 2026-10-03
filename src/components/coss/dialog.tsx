@@ -7,22 +7,11 @@ import type React from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/coss/button";
 import { ScrollArea } from "@/components/coss/scroll-area";
-export const DialogCreateHandle: typeof DialogPrimitive.createHandle =
-  DialogPrimitive.createHandle;
+
 export const Dialog: typeof DialogPrimitive.Root = DialogPrimitive.Root;
-export const DialogPortal: typeof DialogPrimitive.Portal =
-  DialogPrimitive.Portal;
-export function DialogTrigger(
-  props: DialogPrimitive.Trigger.Props,
-): React.ReactElement {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
-}
-export function DialogClose(
-  props: DialogPrimitive.Close.Props,
-): React.ReactElement {
-  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
-}
-export function DialogBackdrop({
+const DialogPortal: typeof DialogPrimitive.Portal = DialogPrimitive.Portal;
+
+function DialogBackdrop({
   className,
   ...props
 }: DialogPrimitive.Backdrop.Props): React.ReactElement {
@@ -37,7 +26,7 @@ export function DialogBackdrop({
     />
   );
 }
-export function DialogViewport({
+function DialogViewport({
   className,
   ...props
 }: DialogPrimitive.Viewport.Props): React.ReactElement {
@@ -195,8 +184,4 @@ export function DialogPanel({
     </ScrollArea>
   );
 }
-export {
-  DialogPrimitive,
-  DialogBackdrop as DialogOverlay,
-  DialogPopup as DialogContent,
-};
+export { DialogPrimitive, DialogPopup as DialogContent };

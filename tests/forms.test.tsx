@@ -103,6 +103,7 @@ beforeEach(() => {
       method: init?.method ?? "GET",
       body: typeof init?.body === "string" ? JSON.parse(init.body) : {},
     };
+    if (request.path === "/api/github/stars") return json({ stars: null });
     requests.push(request);
     return respond(request);
   };

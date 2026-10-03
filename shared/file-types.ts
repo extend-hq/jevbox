@@ -52,7 +52,7 @@ export const imageExtensions = [
   "bmp",
   "svg",
 ];
-export const mimeTypes: Record<string, string> = {
+const mimeTypes: Record<string, string> = {
   pdf: "application/pdf",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

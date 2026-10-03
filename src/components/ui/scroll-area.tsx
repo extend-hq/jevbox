@@ -1,6 +1,2 @@
 "use client";
-export {
-  ScrollArea,
-  ScrollBar,
-  ScrollAreaPrimitive,
-} from "@/components/coss/scroll-area";
+export { ScrollArea, ScrollAreaPrimitive } from "@/components/coss/scroll-area";

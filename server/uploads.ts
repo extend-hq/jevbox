@@ -14,7 +14,7 @@ import {
   type UploadAdmissionLimits,
 } from "./upload-limits";
 
-export const uploadName = z
+const uploadName = z
   .string()
   .trim()
   .min(1)

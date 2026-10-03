@@ -12,7 +12,7 @@ import { HttpError, resourceAccess, type Resource, type Store } from "./db";
 import { queues, PermanentJobError, type BackgroundJob } from "./jobs";
 import { createThumbnailRenderer } from "./thumbnail-renderer";
 
-export const supportsThumbnail = (name: string) =>
+const supportsThumbnail = (name: string) =>
   [
     ...imageExtensions,
     ...textExtensions,
@@ -180,7 +180,7 @@ function textPreview(body: Buffer, name: string) {
   );
 }
 
-export async function compressThumbnail(body: Buffer) {
+async function compressThumbnail(body: Buffer) {
   const { data, info } = await sharp(body, {
     limitInputPixels: 40_000_000,
     pages: 1,
@@ -286,7 +286,12 @@ export function createThumbnailJobs(store: Store) {
       );
       await store.jobs.complete(job, async () => {
         await check();
-        await store.files.write("thumbnail", resource.id, result.body, "image/webp");
+        await store.files.write(
+          "thumbnail",
+          resource.id,
+          result.body,
+          "image/webp",
+        );
         await store.run(
           "UPDATE resources SET thumbnail_status='ready',thumbnail_key=?,thumbnail_width=?,thumbnail_height=?,thumbnail_pages=? WHERE id=? AND thumbnail_job_id=?",
           createHash("sha256").update(result.body).digest("hex").slice(0, 24),

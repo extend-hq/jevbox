@@ -29,9 +29,7 @@ export async function loadPdfDocument(url: string) {
   }
   return documentPromise;
 }
-export async function getPdfPageCount(url: string) {
-  return (await loadPdfDocument(url)).pageCount;
-}
+
 export function renderPdfThumbnailUrl({
   dpr = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
   pageIndex,

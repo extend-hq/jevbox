@@ -1569,7 +1569,6 @@ test("search admission isolates users and prevents rotating credentials from res
 
 test("default upload admission isolates users and ignores prior shared counters", async (t) => {
   const { createUploads } = await import("../server/uploads");
-  const { uploadLimits } = await import("../shared/uploads");
   await runtime.store.run("DELETE FROM upload_usage");
   const clock = Date.now();
   t.mock.method(Date, "now", () => clock);
@@ -1609,7 +1608,6 @@ test("default upload admission isolates users and ignores prior shared counters"
 test("upload quotas persist across runtime replacement and credentials, and reject storage and queue overflow atomically", async (t) => {
   const { createUploads } = await import("../server/uploads");
   const { uploadAdmissionLimits } = await import("../server/upload-limits");
-  const { uploadLimits } = await import("../shared/uploads");
   const { HttpError } = await import("../server/db");
   await runtime.store.run("DELETE FROM upload_usage");
   const a = { userId, orgId, role: "member", token: "first" };

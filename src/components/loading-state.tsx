@@ -10,7 +10,7 @@ const delays = Array.from({ length: 9 }, (_, index) => {
   return ((index % 3) + Math.abs(row - 1)) * 90;
 });
 
-export function LoadingState({ label = "Working…" }: { label?: string }) {
+function LoadingState({ label = "Working…" }: { label?: string }) {
   const [started] = useState(Date.now);
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {

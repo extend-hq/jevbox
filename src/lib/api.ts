@@ -139,6 +139,8 @@ export type Source = {
   routeScore?: number;
   content?: string;
   blockIds?: string[];
+  sectionPath?: string[];
+  citationBlocks?: { id: string; page: number; type: string }[];
 };
 export type Message = {
   position?: number;

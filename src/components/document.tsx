@@ -10,7 +10,7 @@ import {
   AlertDialogClose,
 } from "./coss/alert-dialog";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
-import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
+
 import {
   ParsedBlocks,
   ParsedBlockOverlay,
@@ -41,11 +41,9 @@ import {
   ArrowLeft,
   ArrowUpRight,
   DownloadOutline,
-  ChevronDown,
   FileText,
   IndexTreeIcon,
   Link2,
-  LockKeyhole,
   FolderFilled,
   Share2,
   Trash2,
@@ -169,7 +167,11 @@ export function DocumentView({
   focusPage?: number;
   focusRequest?: number;
   embedded?: boolean;
-  onNavigate: (node: string | undefined, tab: string) => void;
+  onNavigate: (
+    node: string | undefined,
+    tab: string,
+    focus?: { page: number; blockIds?: string[] },
+  ) => void;
   onBack: () => void;
   onShare: (r: Resource) => void;
   onChange: () => void;
@@ -276,15 +278,19 @@ export function DocumentView({
     };
   }, [documentId, sharedToken]);
   useEffect(() => {
-    if (!doc?.parsed || (!initialNode && !embedded)) return;
+    if (
+      !doc?.parsed ||
+      (!initialNode && !embedded && !focusBlockIds?.length && !focusPage)
+    )
+      return;
     const target = flatten(doc.parsed.nodes).find((n) => n.id === initialNode);
     const allBlocks = documentBlocks(doc.parsed);
     const candidates = focusBlockIds?.length
       ? allBlocks.filter((block) => focusBlockIds.includes(block.id))
-      : initialNode
-        ? sectionBlocks(target, allBlocks)
-        : focusPage
-          ? allBlocks.filter((block) => block.page === focusPage)
+      : focusPage
+        ? allBlocks.filter((block) => block.page === focusPage)
+        : initialNode
+          ? sectionBlocks(target, allBlocks)
           : allBlocks;
     const block =
       candidates.find((block) => blockHighlightArea(block)) ?? candidates[0];
@@ -459,9 +465,11 @@ export function DocumentView({
   const blocks = documentBlocks(doc.parsed);
   const selectedBlocks = focusBlockIds?.length
     ? blocks.filter((block) => focusBlockIds.includes(block.id))
-    : selected
-      ? sectionBlocks(node, blocks)
-      : [];
+    : focusPage
+      ? blocks.filter((block) => block.page === focusPage)
+      : selected
+        ? sectionBlocks(node, blocks)
+        : [];
   const selectedBlockIds = selectedBlocks.map((block) => block.id);
   const selectBlock = (block: ParsedBlock) => {
     if (activeBlockId === block.id) return;
@@ -478,7 +486,7 @@ export function DocumentView({
     setActiveBlockId(firstBlock?.id);
     setSelectionVersion((version) => version + 1);
     setChildrenOpen(false);
-    onNavigate(n.id, tab);
+    onNavigate(n.id, tab, { page: n.page });
     const area =
       firstBlock &&
       blockHighlightArea(
@@ -564,18 +572,21 @@ export function DocumentView({
       );
     },
     target:
-      selected && node
+      (selected || focusPage || focusBlockIds?.length) && node
         ? {
-            key: `${doc.id}:${node.id}:${selectionVersion}`,
-            page: node.page,
+            key: `${doc.id}:${node.id}:${focusBlockIds?.join(":") ?? ""}:${focusPage ?? node.page}:${focusRequest ?? 0}:${selectionVersion}`,
+            page: focusPage ?? node.page,
             title: node.title,
-            content: node.content,
+            content:
+              focusBlockIds?.length && selectedBlocks.length
+                ? selectedBlocks.map((block) => block.content).join("\n\n")
+                : node.content,
           }
         : undefined,
   };
   if (embedded) {
     const sourceBlocks =
-      selected || focusBlockIds?.length ? selectedBlocks : blocks;
+      selected || focusBlockIds?.length || focusPage ? selectedBlocks : blocks;
     const sourceIds = sourceBlocks.map((block) => block.id);
     const focusPdf = () => {
       const block =
@@ -656,7 +667,7 @@ export function DocumentView({
                 <PptxViewer
                   src={src}
                   fileName={doc.name}
-                  initialSlide={node?.page}
+                  initialSlide={focusPage ?? node?.page}
                   showToolbar={false}
                   showUpload={false}
                   defaultZoom="fit-width"
@@ -863,7 +874,10 @@ export function DocumentView({
                     showDownload={false}
                     showUpload={false}
                     onDocumentLoadSuccess={() => {
-                      const block = selectedBlocks[0];
+                      const block =
+                        selectedBlocks.find((candidate) =>
+                          blockHighlightArea(candidate),
+                        ) ?? selectedBlocks[0];
                       const area =
                         block &&
                         blockHighlightArea(
@@ -872,6 +886,7 @@ export function DocumentView({
                         );
                       if (area && block)
                         pdf.current?.scrollToPageArea(block.page, area);
+                      else if (focusPage) pdf.current?.scrollToPage(focusPage);
                       else if (selected && node)
                         pdf.current?.scrollToPage(node.page);
                     }}
@@ -882,7 +897,10 @@ export function DocumentView({
                       pageHeight,
                       sourceRotation,
                     }) =>
-                      tab === "parsed" || tab === "index" ? (
+                      tab === "parsed" ||
+                      tab === "index" ||
+                      focusBlockIds?.length ||
+                      focusPage ? (
                         <ParsedBlockOverlay
                           blocks={blocks}
                           page={pageNumber}

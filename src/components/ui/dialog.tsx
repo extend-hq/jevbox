@@ -1,47 +1,22 @@
 import { X } from "@/components/icons";
 ("use client");
 import type React from "react";
-import { isValidElement } from "react";
+
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-export const DialogCreateHandle: typeof DialogPrimitive.createHandle =
-  DialogPrimitive.createHandle;
+
 export const Dialog: typeof DialogPrimitive.Root = DialogPrimitive.Root;
-export const DialogPortal: typeof DialogPrimitive.Portal =
-  DialogPrimitive.Portal;
-export function DialogTrigger({
-  asChild,
-  children,
-  render,
-  ...props
-}: DialogPrimitive.Trigger.Props & {
-  asChild?: boolean;
-}): React.ReactElement {
-  return (
-    <DialogPrimitive.Trigger
-      data-slot="dialog-trigger"
-      render={
-        render ??
-        (asChild && isValidElement(children)
-          ? (children as React.ReactElement<Record<string, unknown>>)
-          : undefined)
-      }
-      {...props}
-    >
-      {asChild && isValidElement(children) ? undefined : children}
-    </DialogPrimitive.Trigger>
-  );
-}
+const DialogPortal: typeof DialogPrimitive.Portal = DialogPrimitive.Portal;
+
 export function DialogClose(
   props: DialogPrimitive.Close.Props,
 ): React.ReactElement {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
 }
-export function DialogBackdrop({
+function DialogBackdrop({
   className,
   ...props
 }: DialogPrimitive.Backdrop.Props): React.ReactElement {
@@ -56,7 +31,7 @@ export function DialogBackdrop({
     />
   );
 }
-export function DialogViewport({
+function DialogViewport({
   className,
   ...props
 }: DialogPrimitive.Viewport.Props): React.ReactElement {
@@ -177,45 +152,5 @@ export function DialogTitle({
     />
   );
 }
-export function DialogDescription({
-  className,
-  ...props
-}: DialogPrimitive.Description.Props): React.ReactElement {
-  return (
-    <DialogPrimitive.Description
-      className={cn("text-sm text-muted-foreground", className)}
-      data-slot="dialog-description"
-      {...props}
-    />
-  );
-}
-export function DialogPanel({
-  className,
-  scrollFade = true,
-  render,
-  ...props
-}: useRender.ComponentProps<"div"> & {
-  scrollFade?: boolean;
-}): React.ReactElement {
-  const defaultProps = {
-    className: cn(
-      "p-6 in-[[data-slot=dialog-popup]:has([data-slot=dialog-footer]:not(.border-t))]:pb-1 in-[[data-slot=dialog-popup]:has([data-slot=dialog-header])]:pt-1",
-      className,
-    ),
-    "data-slot": "dialog-panel",
-  };
-  return (
-    <ScrollArea scrollFade={scrollFade}>
-      {useRender({
-        defaultTagName: "div",
-        props: mergeProps<"div">(defaultProps, props),
-        render,
-      })}
-    </ScrollArea>
-  );
-}
-export {
-  DialogPrimitive,
-  DialogBackdrop as DialogOverlay,
-  DialogPopup as DialogContent,
-};
+
+export { DialogPrimitive, DialogPopup as DialogContent };

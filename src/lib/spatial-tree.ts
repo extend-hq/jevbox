@@ -17,9 +17,9 @@ export type SpatialNode = {
 };
 
 /** Distance between neighbouring documents on a ring, in world units. */
-export const SPATIAL_DOCUMENT_SPACING = 5.5;
+const SPATIAL_DOCUMENT_SPACING = 5.5;
 /** Vertical drop from a folder to the level its contents hang on. */
-export const SPATIAL_LEVEL_DROP = 8;
+const SPATIAL_LEVEL_DROP = 8;
 const FIRST_RING = 4;
 const RING_GAP = 5;
 const RING_STEP_DOWN = 1.5;

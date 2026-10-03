@@ -21,7 +21,7 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 const revealedPreviewImageUrls = new Set<string>();
-export function FileThumbnailLoadingOverlay() {
+function FileThumbnailLoadingOverlay() {
   return (
     <div
       aria-hidden="true"

@@ -119,7 +119,7 @@ export function validateProviderURL(input: string) {
     throw new HttpError(400, "Use a public HTTPS endpoint on port 443");
   return url.toString();
 }
-export const publicFetch: Fetch = async (input, init) => {
+const publicFetch: Fetch = async (input, init) => {
   const url = input instanceof Request ? input.url : String(input);
   validateProviderURL(url);
   return (await undiciFetch(url, {
@@ -128,10 +128,10 @@ export const publicFetch: Fetch = async (input, init) => {
     dispatcher,
   })) as unknown as Response;
 };
-export function providerCredential(settings: Settings) {
+function providerCredential(settings: Settings) {
   return settings.credentials?.[settings.provider ?? "openai"];
 }
-export function chatConfigured(settings: Settings) {
+function chatConfigured(settings: Settings) {
   const c = providerCredential(settings);
   return Boolean(
     c?.enabled !== false &&
@@ -312,7 +312,7 @@ export async function generateAnswer(
             tools: {
               search_documents: tool({
                 description:
-                  "Search the accessible document library for evidence. Call when the question needs document facts, or when existing context is insufficient. Make the query self-contained using relevant topics, entities, and document references from the conversation. Apply filters when the user specifies upload dates, file types, sharing settings (private, organization, folder/inherited, or link), or a folder. Date-only bounds include the whole UTC day; fileTypes and access match any selected value, while distinct filters intersect. Filters only narrow existing access. Attached documents constrain this search automatically. Results contain numbered citations and excerpts; an empty result means no relevant evidence was found within the search budget.",
+                  "Search the accessible document library for evidence. Call when the question needs document facts, or when existing context is insufficient. Make the query self-contained using relevant topics, entities, and document references from the conversation. Apply filters when the user specifies upload dates, file types, sharing settings (private, organization, folder/inherited, or link), or a folder. Date-only bounds include the whole UTC day; fileTypes and access match any selected value, while distinct filters intersect. Filters only narrow existing access. Attached documents constrain this search automatically. Results contain source paths, numbered passage references, and precise block references with page locations and extracted text. Prefer the exact block reference supporting each claim; an empty result means no relevant evidence was found within the search budget.",
                 inputSchema: z
                   .object({
                     query: z.string().trim().min(1).max(4000),

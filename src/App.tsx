@@ -22,15 +22,11 @@ import {
 import { RouteLink } from "./components/route-link";
 import { PersonAvatar } from "./components/person-avatar";
 import { ProviderLogo } from "./components/provider-logo";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
-  ArrowUpRight,
-  ChevronDown,
   ChevronRight,
-  FileText,
   Folder,
-  GitBranch,
   Library,
   LockKeyhole,
   LogOut,
@@ -92,7 +88,7 @@ import {
   loginRedirect,
 } from "../shared/auth-navigation";
 import { Auth } from "@/components/auth";
-import { Brand, Loading, useAction } from "@/components/common";
+import { Loading, useAction } from "@/components/common";
 import { Sharing } from "@/components/sharing";
 import { SettingsView } from "@/components/settings";
 import { ApiKeysView } from "@/components/api-keys";
@@ -211,6 +207,8 @@ export default function App() {
     folderId: directory,
     documentId,
     node,
+    sourcePage,
+    sourceBlockIds,
     tab,
     chatId,
     query: searchQuery,
@@ -238,7 +236,6 @@ export default function App() {
   const deletion = useAction();
   const [sharing, setSharing] = useState<Resource | Resource[] | null>(null);
   const [folderOpen, setFolderOpen] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [uploading, setUploading] = useState("");
@@ -315,7 +312,7 @@ export default function App() {
   const folders = resources.filter((r) => r.kind === "folder");
   const documents = resources.filter((r) => r.kind === "document");
   const currentFolder = folders.find((r) => r.id === directory);
-  const selectedResource = resources.find((r) => r.id === selected);
+
   const pathFor = (r: Resource): string => {
     const parent = resources.find((p) => p.id === r.parent_id);
     const duplicate = resources.some(
@@ -444,7 +441,6 @@ export default function App() {
   const navigate = (next: string) => navigateTo(pagePath(next));
   useEffect(() => {
     setMobileNav(false);
-    setSelected(null);
   }, [page, directory, documentId, settingsSection]);
   async function upload(files: FileList | File[]) {
     const destinations = new Map<string, string | null>([
@@ -881,13 +877,18 @@ export default function App() {
               userId={me?.user.id}
               initialNode={node}
               initialTab={tab}
-              onNavigate={(nextNode, nextTab) =>
+              focusPage={sourcePage}
+              focusBlockIds={sourceBlockIds}
+              onNavigate={(nextNode, nextTab, selection) =>
                 navigateTo(
                   paths.document(
                     documentId,
                     nextNode,
                     nextTab,
                     currentDocument?.parent_id,
+                    selection
+                      ? undefined
+                      : { page: sourcePage, blockIds: sourceBlockIds },
                   ),
                 )
               }
@@ -1224,14 +1225,6 @@ export default function App() {
                       )
                     }
                     onFileOpen={(file) => openDocument(file.key ?? "")}
-                    onSelectionChange={(item) =>
-                      setSelected(
-                        item?.kind === "file"
-                          ? (item.key ?? null)
-                          : (resources.find((r) => pathFor(r) === item?.path)
-                              ?.id ?? null),
-                      )
-                    }
                   />
                 </div>
               </FinderDropZone>
@@ -1288,7 +1281,6 @@ export default function App() {
                     }),
                   });
                   setDeleting(null);
-                  setSelected(null);
                   await refresh();
                 })
               }

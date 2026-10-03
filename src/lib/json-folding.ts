@@ -184,7 +184,7 @@ export function createJsonFoldingModel(value: string): JsonFoldingModel {
   };
 }
 
-export function findJsonFoldRange(
+function findJsonFoldRange(
   model: JsonFoldingModel,
   key: JsonFoldKey,
 ): JsonFoldRange | undefined {
@@ -220,7 +220,7 @@ export function findJsonFoldRangeStartingOnLine(
     : undefined;
 }
 
-export function getVisibleCollapsedRanges(
+function getVisibleCollapsedRanges(
   model: JsonFoldingModel,
   collapsedKeys: ReadonlySet<JsonFoldKey>,
 ): JsonFoldRange[] {
@@ -351,22 +351,4 @@ export function mapVisibleJsonLineToOriginal(
   }
 
   return Math.max(0, visibleLine);
-}
-
-export function findCollapsedFoldOnVisibleLine(
-  document: VisibleJsonDocument,
-  visibleLine: number,
-): VisibleJsonFold | undefined {
-  let low = 0;
-  let high = document.collapsedFolds.length - 1;
-
-  while (low <= high) {
-    const middle = (low + high) >>> 1;
-    const fold = document.collapsedFolds[middle]!;
-    if (fold.visibleLine === visibleLine) return fold;
-    if (fold.visibleLine < visibleLine) low = middle + 1;
-    else high = middle - 1;
-  }
-
-  return undefined;
 }

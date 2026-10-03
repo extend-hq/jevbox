@@ -38,6 +38,7 @@ export type RetrievedSource = {
   score: number;
   routeScore: number;
   blockIds: string[];
+  citationBlocks?: { id: string; page: number; type: string }[];
 };
 type Value = {
   step: RetrievalStep;
@@ -219,7 +220,7 @@ export async function retrieveDocuments(
     parentNodeId?: string,
     ancestors: string[] = [],
   ): RouteNode<Value> {
-    const sectionPath = [...ancestors, node.title].slice(-8);
+    const sectionPath = [...ancestors, node.title];
     return {
       id: `section:${doc.id}:${node.id}`,
       scope: doc.id,

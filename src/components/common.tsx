@@ -146,15 +146,32 @@ function MarkdownLink({
         <DocumentPillContent {...attachment} />
       </RouteLink>
     );
-  const match = href?.match(/^#chat-source-(\d+)$/);
+  const match = href?.match(/^#chat-source-(\d+)(?:-(\d+))?$/);
   const number = match ? Number(match[1]) : 0;
-  const source = sources[number - 1];
+  const passage = sources[number - 1];
+  const block = match?.[2]
+    ? passage?.citationBlocks?.[Number(match[2]) - 1]
+    : undefined;
+  const source = match?.[2]
+    ? block && passage
+      ? {
+          ...passage,
+          page: block.page,
+          endPage: block.page,
+          blockIds: [block.id],
+          citationBlocks: [block],
+        }
+      : undefined
+    : passage;
   return source ? (
     <ChatSourceChip
       source={source}
       number={number}
+      reference={match?.[2] ? `${number}.${match[2]}` : undefined}
       onPreview={onSourcePreview}
     />
+  ) : match ? (
+    <>{children}</>
   ) : (
     <a href={href} target="_blank" rel="noopener noreferrer">
       {children}

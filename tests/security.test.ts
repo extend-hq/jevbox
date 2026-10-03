@@ -1,5 +1,5 @@
 import { isScoreRequest, scoreContents, scoreResponse } from "./model-tools";
-import { runJobs, waitForJobs } from "./jobs";
+import { runJobs } from "./jobs";
 import { authMailbox } from "./auth-mailbox";
 import {
   createAuthorization,

@@ -3,8 +3,7 @@ import type React from "react";
 import { isValidElement } from "react";
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import { cn } from "@/lib/utils";
-export const TooltipCreateHandle: typeof TooltipPrimitive.createHandle =
-  TooltipPrimitive.createHandle;
+
 export function TooltipProvider({
   delayDuration,
   delay = delayDuration,

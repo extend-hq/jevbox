@@ -1,22 +1,24 @@
 import type { Source } from "@/lib/api";
-import { paths } from "@/lib/navigation";
+import { sourceHref, sourceLocationLabel } from "@/lib/source-location";
 import { ResourceThumbnail } from "./resource-thumbnail";
 
 export function ChatSourceChip({
   source,
   number,
+  reference,
   onPreview,
 }: {
   source: Source;
   number: number;
+  reference?: string;
   onPreview?: (source: Source) => void;
 }) {
   return (
     <a
       className="chat-source-chip"
-      href={paths.document(source.documentId, source.nodeId, "parsed")}
-      title={`${source.name} · ${source.title} · p. ${source.page}`}
-      aria-label={`Source ${number}: ${source.name}, page ${source.page}`}
+      href={sourceHref(source)}
+      title={`${source.name} · ${sourceLocationLabel(source)}`}
+      aria-label={`Source ${reference ?? number}: ${source.name}, ${sourceLocationLabel(source)}`}
       onClick={(event) => {
         if (
           onPreview &&
@@ -40,7 +42,7 @@ export function ChatSourceChip({
         inline
       />
       <span>{source.name}</span>
-      <small>{number}</small>
+      <small>{reference ?? number}</small>
     </a>
   );
 }

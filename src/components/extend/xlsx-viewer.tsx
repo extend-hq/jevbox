@@ -11,7 +11,6 @@ import {
   CirclePlusIcon,
   Download,
   Ellipsis,
-  LoaderCircle,
   Moon,
   Search,
   Upload,
@@ -44,7 +43,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
+
 import {
   Popover,
   PopoverContent,
@@ -482,20 +481,8 @@ function WorkbookFileActionsMenu({
     </DropdownMenu>
   );
 }
-export function renderXlsxScroller({
-  children,
-  viewportProps,
-}: XlsxScrollerRenderProps) {
-  return (
-    <InlineScrollArea2
-      className="h-full min-h-0 w-full min-w-0 flex-1"
-      viewportProps={viewportProps}
-    >
-      {children}
-    </InlineScrollArea2>
-  );
-}
-export function WorkbookTableHeaderMenu({
+
+function WorkbookTableHeaderMenu({
   direction,
   sortAscending,
   sortDescending,
@@ -976,11 +963,7 @@ type WorkbookSheetTabsInnerProps = {
   onActiveSheetIndexChange: (index: number) => void;
   sheets: WorkbookSheetTab[];
 };
-export function WorkbookSheetTabs({
-  workbookIdentity,
-}: {
-  workbookIdentity: string;
-}) {
+function WorkbookSheetTabs({ workbookIdentity }: { workbookIdentity: string }) {
   const { activeSheetIndex, setActiveSheetIndex, sheets } = useXlsxViewer();
   const handleActiveSheetIndexChange = React.useCallback(
     (index: number) => setActiveSheetIndex(index),
@@ -1212,7 +1195,7 @@ const WorkbookSheetTabsInner = React.memo(function WorkbookSheetTabsInner({
     </div>
   );
 });
-export function XlsxWorkbookSurface({
+function XlsxWorkbookSurface({
   className,
   isDark,
   onDownload,
@@ -1665,20 +1648,3 @@ function InlineScrollArea2(
 ) {
   return <InlineScrollArea fill scrollFade {...props} />;
 }
-
-function InlineSpinner({ className, ...props }: InlineRegistryIconProps) {
-  return (
-    <LoaderCircle
-      role="status"
-      aria-label="Loading"
-      className={cn("size-4", className)}
-      {...props}
-    />
-  );
-}
-type InlineRegistryIconProps = Omit<
-  React.ComponentProps<"svg">,
-  "children" | "strokeWidth"
-> & {
-  strokeWidth?: number;
-};

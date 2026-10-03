@@ -4,23 +4,20 @@ import { createLinkSharingRouter } from "./link-sharing";
 import { createExternalAccess } from "./external-access";
 import { createMcpRouter } from "./mcp";
 import { createRuns } from "./runs";
+import { createGitHubStars } from "./github-stars";
 import { apiScopes } from "../shared/api-access";
 import { createUploads } from "./uploads";
 import { uploadLimits } from "../shared/uploads";
-import {
-  isAuthPage,
-  loginPath,
-  loginRedirect,
-} from "../shared/auth-navigation";
+import { isAuthPage, loginRedirect } from "../shared/auth-navigation";
 import { oauthProviderAuthServerMetadata } from "@better-auth/oauth-provider";
 import { enqueueIndex } from "./indexing-jobs";
 import { withLayoutSections } from "./indexing";
-import { describeThumbnail, enqueueThumbnail } from "./thumbnails";
+import { describeThumbnail } from "./thumbnails";
 import { createWorkers } from "./workers";
 import { queues, type QueueName } from "./jobs";
 import { authenticateToken as tokenActor, sessionActor } from "./sessions";
-import { asyncFilter, asyncEvery } from "./async";
-import { extension } from "../shared/file-types";
+import { asyncFilter } from "./async";
+
 import { availableChatModels, validateProviderURL } from "./ai";
 import { providerCatalog } from "../shared/providers";
 import express, {
@@ -48,12 +45,7 @@ import {
   type Actor,
   type Resource,
 } from "./db";
-import {
-  createProviders,
-  getSettings,
-  type Fetch,
-  type Settings,
-} from "./providers";
+import { createProviders, getSettings, type Fetch } from "./providers";
 const digest = (s: string) => createHash("sha256").update(s).digest("hex");
 const now = () => new Date().toISOString();
 const name = z
@@ -69,13 +61,7 @@ const id = z.string().uuid();
 type AuthedRequest = Request & {
   actor: Actor;
 };
-type Chat = {
-  id: string;
-  title: string;
-  messages: string;
-  dependencies: string;
-  updated: string;
-};
+
 export async function createApp(options: {
   directory: string;
   databaseUrl?: string;
@@ -344,6 +330,12 @@ export async function createApp(options: {
     createMcpRouter(external, auth, options.origin, uploads, runs),
   );
   app.use("/api/shared", createLinkSharingRouter(store));
+  const githubStars = createGitHubStars();
+  app.get("/api/github/stars", async (_req, res) => {
+    const stars = await githubStars();
+    res.set("Cache-Control", "public, max-age=300");
+    res.json({ stars });
+  });
   app.use("/api", async (req, res, next) => {
     try {
       (req as AuthedRequest).actor = await authenticate(req);

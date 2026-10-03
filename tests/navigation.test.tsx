@@ -64,6 +64,23 @@ test("routes preserve folders, document sections, search queries, conversations 
   assert.equal(read(paths.shared("token", "doc")).sharedResourceId, "doc");
 });
 
+test("citation links preserve precise block IDs and one-based source pages across navigation", () => {
+  const href = paths.document("doc", "section", "parsed", undefined, {
+    page: 3,
+    blockIds: ["block&one", "block/two"],
+  });
+  const route = readRoute(new URL(href, window.location.origin));
+  assert.equal(route.sourcePage, 3);
+  assert.deepEqual(route.sourceBlockIds, ["block&one", "block/two"]);
+  for (const page of ["-1", "0", "1.5", "NaN", "999999999999999999"])
+    assert.equal(
+      readRoute(
+        new URL(`/library/documents/doc?page=${page}`, window.location.origin),
+      ).sourcePage,
+      undefined,
+    );
+});
+
 test("browser back and forward restore route state; new navigation branches and refresh preserves location", async () => {
   let root = createRoot(document.getElementById("root")!);
   await act(async () => root.render(<Harness />));

@@ -12,6 +12,10 @@ import { retrieveDocuments } from "./retrieval";
 import { jsonRequest } from "./provider-http";
 import type { SearchFilters } from "../shared/search-filters";
 import { documentAnswerPolicy } from "./answer-policy";
+import {
+  citationPromptSource,
+  createCitationLocator,
+} from "./citation-sources";
 export type Settings = {
   organization?: {
     enabled: boolean;
@@ -214,6 +218,7 @@ export function createProviders(store: Store, fetcher: Fetch = fetch) {
       );
     const settings = { ...configured, ...selection };
     const system = documentAnswerPolicy;
+    const citationBlocks = await createCitationLocator(store)(sources);
     const prompt = JSON.stringify({
       question,
       ...(execution?.attachedDocuments?.length
@@ -221,16 +226,9 @@ export function createProviders(store: Store, fetcher: Fetch = fetch) {
             attachedDocuments: execution.attachedDocuments,
           }
         : {}),
-      sources: sources.map((s, i) => ({
-        citation: i + 1,
-        documentId: s.documentId,
-        title: s.name,
-        section: s.title,
-        sectionPath: s.sectionPath,
-        page: s.page,
-        endPage: s.endPage,
-        text: s.content,
-      })),
+      sources: sources.map((s, i) =>
+        citationPromptSource(s, i + 1, citationBlocks.get(s.documentId)),
+      ),
     });
     const messages = [...history.slice(-10), { role: "user", content: prompt }];
     return generateAnswer(

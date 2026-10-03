@@ -31,7 +31,6 @@ import {
   Trash2,
   ArrowUpDown,
   Calendar,
-  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -910,7 +909,7 @@ const MICRO_FILE_SYMBOLS = `<symbol id="micro-file-content" viewBox="0 0 20 20">
         stroke-width="0"
       ></path>
     </g>
-  </symbol><symbol id="micro-photo" viewBox="0 0 20 20"><g><path d="m17,11.586l-2.732-2.732c-.975-.975-2.561-.975-3.535,0l-6.994,6.994c-.017.017-.022.041-.037.059.55.663,1.37,1.093,2.298,1.093h8c1.657,0,3-1.343,3-3v-2.414Z" fill="currentColor" stroke-width="0" data-color="color-2" /><rect x="3" y="3" width="14" height="14" rx="3" ry="3" transform="translate(0 20) rotate(-90)" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" /><circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" stroke-width="0" data-color="color-2" /></g></symbol><symbol id="micro-file-zip" viewBox="0 0 20 20">
+  </symbol><symbol id="micro-photo-filled" viewBox="0 0 20 20"><path d="m14,2H6c-2.206,0-4,1.794-4,4v8c0,2.206,1.794,4,4,4h8c2.206,0,4-1.794,4-4V6c0-2.206-1.794-4-4-4Zm-7.25,3.5c.69,0,1.25.56,1.25,1.25s-.56,1.25-1.25,1.25-1.25-.56-1.25-1.25.56-1.25,1.25-1.25Zm7.25,10.5H6c-.688,0-1.296-.349-1.656-.88l5.888-5.888c.943-.944,2.591-.944,3.536,0l2.232,2.232v2.536c0,1.103-.897,2-2,2Z" fill="currentColor" stroke="none" stroke-linecap="butt" stroke-linejoin="miter" stroke-width="0" /></symbol><symbol id="micro-file-zip" viewBox="0 0 20 20">
     <g>
       <path
         d="m4,7h3c.552,0,1-.448,1-1v-3"

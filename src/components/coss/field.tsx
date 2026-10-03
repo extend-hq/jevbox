@@ -62,6 +62,4 @@ export function FieldError({
   );
 }
 
-export const FieldControl = FieldPrimitive.Control;
-export const FieldValidity = FieldPrimitive.Validity;
 export { FieldPrimitive };

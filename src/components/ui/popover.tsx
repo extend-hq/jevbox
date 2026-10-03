@@ -4,14 +4,9 @@ import type React from "react";
 import { isValidElement } from "react";
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { cn } from "@/lib/utils";
-export const PopoverCreateHandle: typeof PopoverPrimitive.createHandle =
-  PopoverPrimitive.createHandle;
+
 export const Popover: typeof PopoverPrimitive.Root = PopoverPrimitive.Root;
-export function PopoverAnchor(
-  props: React.ComponentProps<"span">,
-): React.ReactElement {
-  return <span data-slot="popover-anchor" {...props} />;
-}
+
 export function PopoverTrigger({
   className,
   children,
@@ -96,11 +91,7 @@ export function PopoverPopup({
     </PopoverPrimitive.Portal>
   );
 }
-export function PopoverClose({
-  ...props
-}: PopoverPrimitive.Close.Props): React.ReactElement {
-  return <PopoverPrimitive.Close data-slot="popover-close" {...props} />;
-}
+
 export function PopoverTitle({
   className,
   ...props

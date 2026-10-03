@@ -1,4 +1,4 @@
-import { runJobs, waitForJobs } from "./jobs";
+import { waitForJobs } from "./jobs";
 import { before, after, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";

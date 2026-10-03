@@ -14,6 +14,11 @@ import { availableChatModels } from "./ai";
 import { getSettings, type createProviders } from "./providers";
 import { isChatWorking, type ChatModel, type ChatTurn } from "../shared/chat";
 import { inspectDocument } from "./document-inspection";
+import {
+  citationPromptSource,
+  citationSourceKey,
+  createCitationLocator,
+} from "./citation-sources";
 import { chatTitle, chatTitleLabel } from "../shared/chat-title";
 import {
   createDocumentVisuals,
@@ -407,8 +412,8 @@ export function createChatRuntime(
         results: [],
         trace: [],
       };
-      const sourceKey = (source: (typeof retrieval.results)[number]) =>
-        `${source.documentId}:${source.nodeId}:${source.content}`;
+      const sourceKey = citationSourceKey;
+      const locateCitations = createCitationLocator(store);
       let searches = 0;
       let retrievalDurationMs: number | undefined;
       const lookupSlot = createLimiter(2);
@@ -432,6 +437,7 @@ export function createChatRuntime(
             turn.attempt_id,
           );
           const found = await lookup(currentActor);
+          const citationBlocks = await locateCitations(found.results);
           const merged = mergeChain.then(async () => {
             controller.signal.throwIfAborted();
             for (const source of found.results)
@@ -467,19 +473,15 @@ export function createChatRuntime(
               turn.attempt_id,
             );
             return {
-              sources: found.results.map((source) => ({
-                citation:
+              sources: found.results.map((source) =>
+                citationPromptSource(
+                  source,
                   retrieval.results.findIndex(
                     (existing) => sourceKey(existing) === sourceKey(source),
                   ) + 1,
-                title: source.name,
-                documentId: source.documentId,
-                section: source.title,
-                sectionPath: source.sectionPath,
-                page: source.page,
-                endPage: source.endPage,
-                text: source.content,
-              })),
+                  citationBlocks.get(source.documentId),
+                ),
+              ),
               ...(found.message ? { message: found.message } : {}),
               ...(found.images
                 ? {

@@ -20,6 +20,7 @@ import {
   validatePassword,
 } from "@/lib/form-validation";
 import { Brand, useAction } from "./common";
+import { GitHubLink } from "./github-link";
 export function Auth({ onLogin }: { onLogin: () => void }) {
   const invite = new URLSearchParams(location.search).get("invite");
   const query = new URLSearchParams(location.search);
@@ -92,7 +93,10 @@ export function Auth({ onLogin }: { onLogin: () => void }) {
     <ScrollArea className="h-dvh" scrollFade>
       <div className="auth-layout">
         <section className="auth-main">
-          <Brand />
+          <div className="flex items-center justify-between gap-4">
+            <Brand />
+            <GitHubLink />
+          </div>
           <div className="auth-form">
             <h1>
               {register

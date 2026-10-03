@@ -72,14 +72,13 @@ import {
   LockKeyhole,
   Plus,
   Search,
-  Send,
   Trash2,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/coss/input";
 import { Form } from "@/components/coss/form";
 import { Field, FieldLabel, FieldError } from "@/components/coss/field";
-import { validateLength, validateRequiredText } from "@/lib/form-validation";
+import { validateRequiredText } from "@/lib/form-validation";
 import {
   ChatComposerTools,
   type ChatComposerToolsHandle,
@@ -98,6 +97,7 @@ import {
   type Source,
   type Resource,
 } from "@/lib/api";
+import { sourceHref, sourceLocationLabel } from "@/lib/source-location";
 import { Loading, Markdown, plainTextPreview, useAction } from "./common";
 export function Sources({
   sources,
@@ -197,11 +197,7 @@ export function Sources({
                     title="Open in new tab"
                     render={
                       <a
-                        href={paths.document(
-                          source.documentId,
-                          source.nodeId,
-                          "parsed",
-                        )}
+                        href={sourceHref(source)}
                         target="_blank"
                         rel="noopener noreferrer"
                       />
@@ -487,6 +483,7 @@ export function ChatView({
     trace: NonNullable<Message["trace"]>;
     retrievalDurationMs?: number;
     focusRequest?: number;
+    focusPage?: number;
   } | null>(null);
   const sourceFocusRequest = useRef(0);
   const [previewTab, setPreviewTab] = useState("parsed");
@@ -502,7 +499,8 @@ export function ChatView({
       preview?.trace === trace &&
       preview.source.documentId === documentId &&
       preview.source.nodeId === (nodeId ?? "") &&
-      !preview.source.blockIds?.length
+      !preview.source.blockIds?.length &&
+      preview.focusPage === undefined
     )
       return;
     const document = trace.find(
@@ -1241,6 +1239,7 @@ export function ChatView({
                                         onSourcePreview={(source) => {
                                           setPreview({
                                             source,
+                                            focusPage: source.page,
                                             trace: message.trace ?? [],
                                             retrievalDurationMs:
                                               message.retrievalDurationMs,
@@ -1279,6 +1278,7 @@ export function ChatView({
                                               onPreview={(source) => {
                                                 setPreview({
                                                   source,
+                                                  focusPage: source.page,
                                                   trace: message.trace ?? [],
                                                   retrievalDurationMs:
                                                     message.retrievalDurationMs,
@@ -1591,24 +1591,36 @@ export function ChatView({
                   className="w-6 rounded-sm"
                   square
                 />
-                <span>
-                  {preview.source.name ||
-                    preview.trace.find(
-                      (step) =>
-                        step.stage === "document" &&
-                        step.resourceId === preview.source.documentId,
-                    )?.label ||
-                    "Document"}
-                </span>
+                <div className="min-w-0">
+                  <span className="block truncate">
+                    {preview.source.name ||
+                      preview.trace.find(
+                        (step) =>
+                          step.stage === "document" &&
+                          step.resourceId === preview.source.documentId,
+                      )?.label ||
+                      "Document"}
+                  </span>
+                  <small
+                    className="block truncate text-xs text-muted-foreground"
+                    title={sourceLocationLabel(preview.source)}
+                  >
+                    {sourceLocationLabel(preview.source)}
+                  </small>
+                </div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
                 <CursorTooltip label="Open full document">
                   <a
-                    href={paths.document(
-                      preview.source.documentId,
-                      preview.source.nodeId || undefined,
-                      "index",
-                    )}
+                    href={
+                      preview.focusRequest !== undefined
+                        ? sourceHref(preview.source)
+                        : paths.document(
+                            preview.source.documentId,
+                            preview.source.nodeId || undefined,
+                            "index",
+                          )
+                    }
                     target="_blank"
                     rel="noopener noreferrer"
                     className="source-open-full"
@@ -1660,21 +1672,28 @@ export function ChatView({
                 initialNode={preview.source.nodeId}
                 initialTab={previewTab}
                 focusBlockIds={preview.source.blockIds}
-                focusPage={preview.source.page}
+                focusPage={preview.focusPage}
                 focusRequest={preview.focusRequest}
                 embedded
                 onBack={() => setPreview(null)}
                 onShare={() => {}}
                 onChange={() => {}}
-                onNavigate={(nodeId, tab) => {
+                onNavigate={(nodeId, tab, focus) => {
                   setPreviewTab(tab);
                   setPreview({
                     ...preview,
+                    focusPage: focus ? undefined : preview.focusPage,
+                    focusRequest: focus ? undefined : preview.focusRequest,
                     source: {
                       ...preview.source,
                       nodeId: nodeId ?? preview.source.nodeId,
+                      page: focus?.page ?? preview.source.page,
+                      citationBlocks:
+                        !focus && (!nodeId || nodeId === preview.source.nodeId)
+                          ? preview.source.citationBlocks
+                          : undefined,
                       blockIds:
-                        nodeId === preview.source.nodeId
+                        !focus && (!nodeId || nodeId === preview.source.nodeId)
                           ? preview.source.blockIds
                           : undefined,
                     },

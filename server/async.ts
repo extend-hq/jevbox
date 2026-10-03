@@ -14,13 +14,6 @@ export async function asyncEvery<T>(
   for (const item of items) if (!(await predicate(item))) return false;
   return true;
 }
-export async function asyncSome<T>(
-  items: T[],
-  predicate: (item: T) => Promise<unknown>,
-): Promise<boolean> {
-  for (const item of items) if (await predicate(item)) return true;
-  return false;
-}
 
 export function createLimiter(limit: number) {
   let running = 0;

@@ -1,5 +1,5 @@
 import { isScoreRequest, scoreResponse } from "./model-tools";
-import { runJobs, waitForJobs } from "./jobs";
+import { runJobs } from "./jobs";
 import { authMailbox } from "./auth-mailbox";
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";

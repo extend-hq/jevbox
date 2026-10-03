@@ -387,11 +387,22 @@ test("independent search tools overlap, identical in-flight queries share work, 
     const sources = outputs.map((item: any) => JSON.parse(item.output).sources);
     assert.deepEqual(sources[0], sources[2]);
     for (const result of sources)
-      for (const source of result)
+      for (const source of result) {
         assert.equal(
           completed.messages[1].sources[source.citation - 1].documentId,
           source.documentId,
         );
+        assert.ok(source.sourcePath.includes(source.title));
+        for (const [index, block] of (source.blocks ?? []).entries()) {
+          const saved =
+            completed.messages[1].sources[source.citation - 1].citationBlocks[
+              index
+            ];
+          assert.equal(block.reference, `[${source.citation}.${index + 1}]`);
+          assert.equal(block.blockId, saved.id);
+          assert.equal(block.page, saved.page);
+        }
+      }
     assert.ok(completed.messages[1].retrievalDurationMs > 0);
   } finally {
     release();

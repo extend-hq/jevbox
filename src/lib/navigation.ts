@@ -7,6 +7,8 @@ export type AppRoute = {
   folderId: string | null;
   documentId: string | null;
   node?: string;
+  sourcePage?: number;
+  sourceBlockIds?: string[];
   tab: string;
   chatId: string | null;
   query: string;
@@ -21,10 +23,14 @@ export const paths = {
     node?: string,
     tab = node ? "index" : "original",
     folderId?: string | null,
+    focus?: { page?: number; blockIds?: string[] },
   ) => {
     const query = new URLSearchParams();
     if (node) query.set("node", node);
     if (tab !== "original") query.set("tab", tab);
+    if (focus?.page && Number.isSafeInteger(focus.page) && focus.page > 0)
+      query.set("page", String(focus.page));
+    for (const block of focus?.blockIds ?? []) query.append("block", block);
     return `${paths.library(folderId)}/documents/${encodeURIComponent(id)}${query.size ? `?${query}` : ""}`;
   },
   shared: (
@@ -71,6 +77,10 @@ export function readRoute(url: URL): AppRoute {
         : null;
   const node = url.searchParams.get("node") ?? undefined;
   const requestedTab = url.searchParams.get("tab");
+  const requestedPage = url.searchParams.get("page");
+  const sourcePage = /^\d+$/.test(requestedPage ?? "")
+    ? Number(requestedPage)
+    : NaN;
   return {
     shareToken: segments[0] === "s" ? decode(segments[1]) : null,
     sharedResourceId:
@@ -93,6 +103,13 @@ export function readRoute(url: URL): AppRoute {
           : null,
     documentId,
     node,
+    sourcePage:
+      Number.isSafeInteger(sourcePage) && sourcePage > 0
+        ? sourcePage
+        : undefined,
+    sourceBlockIds: url.searchParams.has("block")
+      ? [...new Set(url.searchParams.getAll("block").filter(Boolean))]
+      : undefined,
     tab:
       requestedTab &&
       ["original", "index", "parsed", "links"].includes(requestedTab)

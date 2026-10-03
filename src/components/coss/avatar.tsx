@@ -20,22 +20,6 @@ export function Avatar({
   );
 }
 
-export function AvatarImage({
-  className,
-  ...props
-}: AvatarPrimitive.Image.Props): React.ReactElement {
-  return (
-    <AvatarPrimitive.Image
-      className={cn(
-        "absolute inset-0 z-10 size-full object-cover data-error:invisible data-loading:invisible",
-        className,
-      )}
-      data-slot="avatar-image"
-      {...props}
-    />
-  );
-}
-
 export function AvatarFallback({
   className,
   ...props

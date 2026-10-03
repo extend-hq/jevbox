@@ -225,6 +225,146 @@ test("chat citations use document previews without changing code or unknown refe
   assert.equal(selected, source);
 });
 
+test("block citations open the precise evidence and retain it in new-tab links", async () => {
+  const source = {
+    documentId: "doc",
+    nodeId: "section",
+    name: "Document",
+    title: "Section",
+    sectionPath: ["Parent", "Section"],
+    page: 1,
+    endPage: 3,
+    blockIds: ["first", "target"],
+    citationBlocks: [
+      { id: "first", page: 1, type: "paragraph" },
+      { id: "target", page: 3, type: "table" },
+    ],
+  };
+  let selected: any;
+  await act(async () =>
+    root.render(
+      <Markdown
+        sources={[source]}
+        onSourcePreview={(value) => {
+          selected = value;
+        }}
+      >
+        {"Precise evidence [1.2], invalid [1.9], and `[1.2]`."}
+      </Markdown>,
+    ),
+  );
+  const chip = host.querySelector<HTMLAnchorElement>(".chat-source-chip");
+  assert.ok(chip);
+  assert.equal(host.querySelectorAll(".chat-source-chip").length, 1);
+  const url = new URL(chip.href);
+  assert.equal(url.searchParams.get("page"), "3");
+  assert.deepEqual(url.searchParams.getAll("block"), ["target"]);
+  assert.match(chip.title, /Parent › Section › p. 3 › table/);
+  await click(chip);
+  assert.deepEqual(selected.blockIds, ["target"]);
+  assert.equal(selected.page, 3);
+  assert.equal(selected.endPage, 3);
+  assert.ok(host.textContent?.includes("[1.9]"));
+  assert.equal(host.querySelector("code")?.textContent, "[1.2]");
+});
+
+test("assistant citation pills open the original source with only the cited bounding box highlighted", async () => {
+  await import("../src/components/other-viewer");
+  const target = {
+    id: "target",
+    type: "table",
+    content: "Precise evidence",
+    page: 1,
+    pageWidth: 100,
+    pageHeight: 100,
+    boundingBox: { left: 10, top: 20, right: 60, bottom: 70 },
+  };
+  const resource = {
+    id: "doc",
+    name: "Source.png",
+    kind: "document",
+    mime: "image/png",
+    size: 10,
+    pages: 1,
+    status: "ready",
+    canWrite: false,
+    parsed: {
+      source: "extend",
+      pages: 1,
+      blocks: [target, { ...target, id: "unrelated" }],
+      nodes: [
+        {
+          id: "section",
+          title: "Section",
+          summary: "",
+          content: "Precise evidence",
+          page: 1,
+          endPage: 1,
+          links: [],
+          blocks: [target],
+          children: [],
+        },
+      ],
+    },
+  };
+  const snapshot = {
+    id: "chat",
+    title: "Question",
+    blocked: false,
+    turns: [],
+    messages: [
+      {
+        role: "assistant",
+        content: "The evidence is here [1.1].",
+        sources: [
+          {
+            documentId: "doc",
+            nodeId: "section",
+            name: "Source.png",
+            title: "Section",
+            page: 1,
+            blockIds: ["target"],
+            citationBlocks: [{ id: "target", page: 1, type: "table" }],
+          },
+        ],
+      },
+    ],
+  };
+  globalThis.fetch = async (input) =>
+    Response.json(
+      String(input) === "/api/chats"
+        ? [{ id: "chat", title: "Question" }]
+        : String(input) === "/api/resources/doc"
+          ? resource
+          : snapshot,
+    );
+  await act(async () =>
+    root.render(
+      <ChatView
+        me={{ chatEnabled: true } as Me}
+        chatId="chat"
+        onTitleChange={() => {}}
+        onChatChange={() => {}}
+        onOpen={() => {}}
+        onSettings={() => {}}
+      />,
+    ),
+  );
+  await click(host.querySelector(".chat-source-chip"));
+  const selected = host.querySelector<SVGRectElement>(
+    'rect[data-block-id="target"][data-selected]',
+  );
+  assert.ok(selected);
+  assert.equal(selected.getAttribute("x"), "10");
+  assert.equal(selected.getAttribute("y"), "20");
+  assert.equal(selected.getAttribute("width"), "50");
+  assert.equal(host.querySelector('rect[data-block-id="unrelated"]'), null);
+  const full = host.querySelector<HTMLAnchorElement>(
+    '[aria-label="Open full document"]',
+  );
+  assert.ok(full?.href.includes("block=target"));
+});
+
 test("user messages preserve clickable attachment pills in their original prompt positions", async () => {
   const previousEventSource = globalThis.EventSource;
   globalThis.EventSource = class {

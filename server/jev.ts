@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { HttpError } from "./errors";
+
 import { jsonRequest, ProviderResponseError } from "./provider-http";
 
 export const retrievalLimits = {

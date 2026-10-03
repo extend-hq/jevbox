@@ -12,7 +12,7 @@ Local adaptations resolve registry icon placeholders through the local Nucleo ad
 
 Additional renderers: react-markdown and remark-gfm; Pierre Diffs; @uiw/react-json-view; Papa Parse; react-zoom-pan-pinch; DOMPurify; fflate; and Media Chrome. Their licenses are distributed in the corresponding packages.
 
-Interface controls use a checked-in subset of the licensed Nucleo Micro Bold collection including filled variants for status, navigation, and actions. The build does not require a private icon registry or the desktop app. Nucleo assets retain their own licensing terms; see `licenses/nucleo.txt`.
+Interface controls use 97 unique designs from the licensed Nucleo Micro Bold collection, including outline and filled variants for status, navigation, and actions. Component aliases and inline SVG sprites reuse these designs. The build does not require a private icon registry or the desktop app. Nucleo assets retain their own licensing terms and copyright notice; see `licenses/nucleo.txt`.
 
 The theme uses local light and dark color tokens, dark app surfaces, and Retina hairlines.
 

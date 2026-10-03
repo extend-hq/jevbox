@@ -8,7 +8,6 @@ import {
   Plus,
   RotateCcw,
   Download,
-  ExternalLink,
 } from "@/components/icons";
 import { Button } from "@/components/coss/button";
 import { Tabs, TabsList, TabsTab, TabsPanel } from "@/components/coss/tabs";
