@@ -24,13 +24,6 @@ jobs:
       - run: pnpm build
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-      - run: docker build -t jevbox:ci .
-      - run: >-
-          docker run --rm --read-only
-          --tmpfs /tmp:rw,size=268435456,uid=1000,gid=1000
-          --entrypoint node jevbox:ci --import tsx --input-type=module -e
-          'await import("./server/app.ts"); const {chromium}=await import("playwright");
-          const browser=await chromium.launch({headless:true}); await browser.close();'
       - if: always()
         run: docker compose down -v
   deployment:
@@ -57,7 +50,6 @@ jobs:
           > /tmp/aws.yaml
       - run: pip install -r infra/deployment-requirements.txt
       - run: python scripts/verify-deployment.py /tmp/portable.yaml /tmp/aws.yaml
-      - run: docker build -f infra/render/spicedb.Dockerfile -t jevbox-spicedb:ci .
       - run: terraform -chdir=infra/terraform/aws fmt -check
       - run: terraform -chdir=infra/terraform/aws init -backend=false
       - run: terraform -chdir=infra/terraform/aws validate

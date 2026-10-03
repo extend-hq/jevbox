@@ -251,7 +251,7 @@ python3 -m venv /tmp/jevbox-deployment-validation
 /tmp/jevbox-deployment-validation/bin/python scripts/verify-deployment.py
 ```
 
-CI also validates portable and AWS Helm manifests, builds both Docker images, and checks Terraform with mocked providers. This does not create cloud resources. Render's dashboard validation and an actual deploy remain the final checks for account-specific limits and networking. See the [Blueprint reference](https://render.com/docs/blueprint-spec).
+CI also validates portable and AWS Helm manifests and checks Terraform with mocked providers. This does not create cloud resources. Render builds the Docker images during deployment. Render's dashboard validation and an actual deploy remain the final checks for account-specific limits and networking. See the [Blueprint reference](https://render.com/docs/blueprint-spec).
 
 ## Backup and recovery
 

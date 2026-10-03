@@ -484,16 +484,15 @@ export default function App() {
   }
   if (navigation.route.shareToken)
     return <SharedResourceView route={navigation.route} />;
-  if (loading) return <Loading fullScreen />;
   if (
     pathname === "/reset-password" ||
     (pathname === loginPath &&
-      (!me || new URLSearchParams(search).has("invite")))
+      (!me || !oauthLogin || new URLSearchParams(search).has("invite")))
   )
     return <Auth onLogin={() => void loadMe()} />;
+  if (loading) return <Loading fullScreen />;
   if (!me) return <Loading fullScreen />;
-  if (pathname === loginPath)
-    return oauthLogin ? <OAuthResume /> : <Loading fullScreen />;
+  if (pathname === loginPath) return <OAuthResume />;
   if (location.pathname === "/oauth/consent") return <OAuthConsent me={me} />;
   if (location.pathname === "/oauth/sign-in") return <OAuthResume />;
   const currentDocument = resources.find((r) => r.id === documentId);
