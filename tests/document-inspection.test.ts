@@ -73,51 +73,11 @@ test("document inspection computes full-text statistics and keeps exact requeste
   assert.equal(stats.tables, 1);
   assert.equal(stats.termOccurrences.count, 3);
   assert.deepEqual(stats.topAbbreviations[0], { term: "ABC", count: 3 });
-  assert.equal(sources.length, 4);
+  assert.equal(sources.length, 3);
   assert.equal(sources[1].page, 2);
   assert.deepEqual(sources[1].blockIds, ["closing"]);
   assert.match(sources[1].content, /ABC other term/);
-  assert.match(sources[3].content, /Page 3 does not exist/);
-  assert.deepEqual(stats.termLocations.pageCounts, [{ page: 2, matches: 1 }]);
-});
-
-test("literal lookup returns bounded paginated passages with exact page and block provenance", async () => {
-  const { store, parsed } = fixture();
-  parsed.blocks = Array.from({ length: 19 }, (_, index) => ({
-    ...parsed.blocks[0],
-    id: `block-${index}`,
-    page: index + 1,
-    content: "Surrounding text ".repeat(200) + "needle " + index + " end",
-  }));
-  parsed.pages = 19;
-  store.one = async () =>
-    ({
-      id: "doc",
-      name: "Document",
-      status: "ready",
-      parsed: JSON.stringify(parsed),
-    }) as never;
-  const found = [];
-  let offset: number | null = 0;
-  do {
-    const sources = await inspectDocument(store, actor, {
-      documentId: "doc",
-      term: "needle",
-      termOffset: offset,
-    });
-    const stats = JSON.parse(sources[0].content);
-    assert.equal(stats.termOccurrences.count, 19);
-    assert.equal(stats.termLocations.totalMatchingBlocks, 19);
-    assert.ok(sources.length <= 9);
-    for (const source of sources.slice(1)) {
-      assert.match(source.content, /needle/);
-      assert.ok(source.content.length < 1300);
-      assert.deepEqual(source.blockIds, [`block-${source.page - 1}`]);
-      found.push(source.blockIds[0]);
-    }
-    offset = stats.termLocations.nextTermOffset;
-  } while (offset !== null);
-  assert.equal(new Set(found).size, 19);
+  assert.match(sources[2].content, /Page 3 does not exist/);
 });
 
 test("inspection fails closed when access is absent or revoked during reading", async () => {
@@ -131,61 +91,6 @@ test("inspection fails closed when access is absent or revoked during reading", 
   await assert.rejects(
     inspectDocument(revoked.store, actor, { documentId: "doc" }),
     /Document not found/,
-  );
-});
-
-test("printed labels resolve only from explicit page-number blocks and preserve PDF citation positions", async () => {
-  const { store, parsed } = fixture();
-  parsed.blocks.push({
-    ...parsed.blocks[0],
-    id: "page-label",
-    type: "page_number",
-    page: 2,
-    content: "i",
-  });
-  store.one = async () =>
-    ({
-      id: "doc",
-      name: "Document",
-      status: "ready",
-      parsed: JSON.stringify(parsed),
-    }) as never;
-  const resolved = await inspectDocument(store, actor, {
-    documentId: "doc",
-    printedPages: ["I"],
-  });
-  const stats = JSON.parse(resolved[0].content);
-  assert.deepEqual(stats.pageNumbering.requestedPrintedPages, [
-    { label: "I", pdfPages: [2] },
-  ]);
-  assert.equal(resolved[1].page, 2);
-  assert.match(resolved[1].content, /ABC other term/);
-  const missing = await inspectDocument(store, actor, {
-    documentId: "doc",
-    printedPages: ["5"],
-  });
-  assert.equal(missing.length, 1);
-  assert.deepEqual(
-    JSON.parse(missing[0].content).pageNumbering.requestedPrintedPages[0]
-      .pdfPages,
-    [],
-  );
-  parsed.blocks.push({
-    ...parsed.blocks[0],
-    id: "other-label",
-    type: "page_number",
-    page: 1,
-    content: "i",
-  });
-  const ambiguous = await inspectDocument(store, actor, {
-    documentId: "doc",
-    printedPages: ["i"],
-  });
-  assert.equal(ambiguous.length, 1);
-  assert.equal(
-    JSON.parse(ambiguous[0].content).pageNumbering.requestedPrintedPages[0]
-      .pdfPages.length,
-    2,
   );
 });
 

@@ -439,14 +439,13 @@ test("failed membership provisioning removes the credential account and can be r
   assert.equal((await request("/me", undefined, cookie)).status, 200);
 });
 test("native database rate limits survive auth recreation", async () => {
-  const { authRateLimits } = await import("../server/rate-limits");
   let auth = createAuthentication(runtime.store, {
     directory,
     origin,
     sendAuthEmail: mailbox.sendAuthEmail,
   }).auth;
-  for (let index = 0; index < 3; index++) {
-    if (index === 2)
+  for (let index = 0; index < 4; index++) {
+    if (index === 3)
       auth = createAuthentication(runtime.store, {
         directory,
         origin,
@@ -463,20 +462,15 @@ test("native database rate limits survive auth recreation", async () => {
         body: JSON.stringify({ email: "throttled@local.test", password }),
       }),
     );
-    assert.equal(response.status, index < 2 ? 401 : 429);
+    assert.equal(response.status, index < 3 ? 401 : 429);
     if (index === 0) {
       const limit = await runtime.store.one<{ id: string; count: number }>(
         'SELECT id,count FROM "rateLimit" WHERE key=?',
         "192.0.2.200|/sign-in/email",
       );
       assert.equal(limit?.count, 1);
-      await runtime.store.run(
-        'UPDATE "rateLimit" SET count=? WHERE id=?',
-        authRateLimits().signIn - 1,
-        limit!.id,
-      );
     }
-    if (index === 2)
+    if (index === 3)
       assert.ok(Number(response.headers.get("x-retry-after")) > 0);
   }
 });
@@ -1134,4 +1128,31 @@ test("native member removal works after the member has signed out", async () => 
       ).json()
     ).members.some((current: { id: string }) => current.id === member.id),
   );
+});
+
+test("OAuth registration inherits the plugin's native abuse limit", async () => {
+  const { auth } = createAuthentication(runtime.store, {
+    directory,
+    origin,
+    sendAuthEmail: mailbox.sendAuthEmail,
+  });
+  for (let index = 0; index < 6; index++) {
+    const response = await auth.handler(
+      new Request(origin + "/api/auth/oauth2/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: origin,
+          "x-jevbox-client-ip": "192.0.2.201",
+        },
+        body: JSON.stringify({ redirect_uris: [] }),
+      }),
+    );
+    if (index < 5) assert.notEqual(response.status, 429);
+    else {
+      assert.equal(response.status, 429);
+      assert.ok(Number(response.headers.get("x-retry-after")) > 0);
+    }
+    await response.arrayBuffer();
+  }
 });

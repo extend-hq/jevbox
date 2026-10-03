@@ -22,7 +22,6 @@ import { createAuthEmailSender, type SendAuthEmail } from "./auth-email";
 import type { Store } from "./db";
 import { z } from "zod";
 import { verificationDestination } from "../shared/auth-navigation";
-import { authRateLimits } from "./rate-limits";
 
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -36,7 +35,6 @@ export function createAuthentication(
     sendAuthEmail?: SendAuthEmail;
   },
 ) {
-  const limits = authRateLimits();
   const localDevelopment =
     process.env.AUTH_LOCAL_DEVELOPMENT === "true" &&
     ["localhost", "127.0.0.1", "[::1]"].includes(
@@ -219,7 +217,7 @@ export function createAuthentication(
         rateLimit: {
           enabled: options.rateLimits !== false,
           timeWindow: 60000,
-          maxRequests: limits.apiKey,
+          maxRequests: 600,
         },
         permissions: {
           defaultPermissions: {
@@ -359,17 +357,9 @@ export function createAuthentication(
     },
     rateLimit: {
       enabled: options.rateLimits !== false,
-      window: 60,
-      max: limits.requests,
       storage: "database",
       customRules: {
-        "/sign-in/email": { window: 900, max: limits.signIn },
-        "/sign-up/email": { window: 60, max: limits.signUp },
-        "/request-password-reset": { window: 900, max: limits.recovery },
-        "/send-verification-email": { window: 900, max: limits.verification },
-        "/api-key/create": { window: 3600, max: limits.keyCreation },
-        "/oauth2/register": { window: 60, max: limits.oauthRegistration },
-        "/oauth2/*": { window: 60, max: limits.oauth },
+        "/api-key/create": { window: 3600, max: 10 },
       },
     },
     hooks: {

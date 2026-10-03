@@ -34,7 +34,6 @@ import multer from "multer";
 import {
   createApiRateLimiter,
   createAnonymousRateLimiter,
-  createSignupRateLimiter,
 } from "./rate-limits";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { z } from "zod";
@@ -168,8 +167,7 @@ export async function createApp(options: {
         )
       : null;
   if (anonymousLimit) {
-    app.use(["/api/auth", "/api/shared"], anonymousLimit);
-    app.use("/api/auth/sign-up/email", createSignupRateLimiter());
+    app.use("/api/shared", anonymousLimit);
   }
   const audit = async (
     actor: Actor,

@@ -201,7 +201,6 @@ export function createTraversal<T>(
             .filter((route) => !expandedNodes.has(route.node.id)),
         );
         deferred.splice(retrievalLimits.expansions);
-        if (found.some((route) => hasEvidence(route.node))) return found;
       }
       beam = [];
       return found;

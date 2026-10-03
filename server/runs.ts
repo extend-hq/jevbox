@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { configuredLimit } from "./rate-limits";
 import { z } from "zod";
 import {
   HttpError,
@@ -71,7 +70,7 @@ export function createRuns(
   origin: string,
 ) {
   const running = new Map<string, AbortController>();
-  const activeLimit = configuredLimit("RUN_USER_CONCURRENCY", 3);
+  const activeLimit = 3;
   async function find(principal: Principal, orgId: string, runId: string) {
     await access.actor(principal, orgId);
     const run = await store.one<Run>(

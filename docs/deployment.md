@@ -40,27 +40,30 @@ Generate secrets with `openssl rand -hex 32`. Store them in your cloud secret ma
 
 The defaults support concurrent users on one web instance. Authenticated browser, REST, and MCP requests share per-user buckets across tabs and credentials. Anonymous requests and native authentication endpoints use trusted client IPs. These admission ceilings do not change Render service sizes or background-worker concurrency.
 
-| Variable                                                                                                       | Default                                              |
-| -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `API_READ_LIMIT_PER_MINUTE` / `API_WRITE_LIMIT_PER_MINUTE`                                                     | 1,200 / 120 per user                                 |
-| `API_KEY_LIMIT_PER_MINUTE`                                                                                     | 600 per key                                          |
-| `ANONYMOUS_LIMIT_PER_MINUTE`                                                                                   | 300 per IP and request kind                          |
-| `AUTH_LIMIT_PER_MINUTE`                                                                                        | 60 per IP and endpoint                               |
-| `AUTH_SIGN_IN_LIMIT_PER_15_MINUTES`                                                                            | 20 per IP                                            |
-| `AUTH_SIGN_UP_LIMIT_PER_MINUTE`                                                                                | 3 per IP                                             |
-| `SIGNUP_DEPLOYMENT_LIMIT_PER_HOUR`                                                                             | 100 per web process                                  |
-| `AUTH_RECOVERY_LIMIT_PER_15_MINUTES`                                                                           | 5 per IP                                             |
-| `AUTH_VERIFICATION_LIMIT_PER_15_MINUTES`                                                                       | 10 per IP                                            |
-| `AUTH_KEY_CREATION_LIMIT_PER_HOUR`                                                                             | 10 per IP                                            |
-| `AUTH_OAUTH_LIMIT_PER_MINUTE` / `AUTH_OAUTH_REGISTRATION_LIMIT_PER_MINUTE`                                     | 120 / 5 per IP                                       |
-| `SEARCH_USER_LIMIT_PER_MINUTE` / `SEARCH_CREDENTIAL_LIMIT_PER_MINUTE` / `SEARCH_ORGANIZATION_LIMIT_PER_MINUTE` | 20 / 20 / 100                                        |
-| `RUN_USER_CONCURRENCY`                                                                                         | 3 per user in an organization                        |
-| `UPLOAD_CONCURRENCY` / `UPLOAD_USER_CONCURRENCY`                                                               | 4 / 2                                                |
-| `UPLOAD_IN_FLIGHT_BYTES`                                                                                       | 134,217,728 (128 MiB); one larger request runs alone |
-| `UPLOAD_WAITING_REQUESTS` / `UPLOAD_WAIT_TIMEOUT_MS`                                                           | 32 / 10,000                                          |
-| `UPLOAD_VALIDATION_CONCURRENCY` / `UPLOAD_TIMEOUT_MS`                                                          | 4 / 120,000                                          |
-| `DOWNLOAD_CONCURRENCY` / `DOWNLOAD_USER_CONCURRENCY`                                                           | 8 / 4                                                |
-| `DOWNLOAD_TEMP_BYTES` / `DOWNLOAD_TIMEOUT_MS`                                                                  | 536,870,912 (512 MiB) / 120,000                      |
+Only two optional environment overrides remain:
+
+| Variable                     | Default        |
+| ---------------------------- | -------------- |
+| `API_READ_LIMIT_PER_MINUTE`  | 1,200 per user |
+| `API_WRITE_LIMIT_PER_MINUTE` | 120 per user   |
+
+Authentication uses [Better Auth's native rate limiter](https://better-auth.com/docs/concepts/rate-limit) with database storage and its built-in sensitive-endpoint rules. There is no global signup cap. The application replaces the client-IP header with the address resolved through its trusted-proxy configuration; auth routes have no second Express limiter. Better Auth controls the window, counters, and 429 retry headers. OAuth inherits the provider plugin's endpoint rules. API-key verification uses the API-key plugin's 600-request/minute limit; creating keys has a native custom rule of 10/hour.
+
+With the installed Better Auth version, general auth endpoints allow 100 requests per 10 seconds per IP and endpoint; sign-in/signup/password changes allow 3 per 10 seconds, and recovery/verification emails allow 3 per minute. Plugin defaults may change when upgrading Better Auth.
+
+Application safeguards are fixed in code:
+
+| Safeguard                                          | Limit                                                          |
+| -------------------------------------------------- | -------------------------------------------------------------- |
+| Anonymous public links and invalid API credentials | 300/minute per IP and request kind                             |
+| Search                                             | 20/minute per user and credential; 100/minute per organization |
+| Active external runs                               | 3 per user in an organization                                  |
+| Active uploads                                     | 4 total; 2 per user                                            |
+| Upload memory budget                               | 128 MiB; one larger request runs alone                         |
+| Waiting uploads                                    | 32 requests; 10-second wait deadline                           |
+| Upload validation / receipt deadline               | 4 concurrent / 120 seconds                                     |
+| Active downloads                                   | 8 total; 4 per user or anonymous IP                            |
+| Download temporary storage / deadline              | 512 MiB total / 120 seconds                                    |
 
 Files may be up to 250 MB. Browser batches accept up to 100 files and preserve nested folder paths. Files upload sequentially, with progress and bounded retries for short retryable capacity/rate-limit responses. Organizations start with 10 GB (10,000,000,000 bytes), shared across all members. Original files and serialized search indexes count toward the allowance shown in Settings → Storage. Uploads are rejected once full, including empty files; any upload crossing the limit is rejected atomically. Deleting documents frees storage. Existing documents are retained if usage already exceeds the limit. Indexing cannot push storage above the allowance.
 
@@ -73,11 +76,11 @@ Files may be up to 250 MB. Browser batches accept up to 100 files and preserve n
 | Stored bytes           | 15 GiB | 10 GB        | 500 GiB    |
 | Uploaded bytes per day | 15 GiB | 100 GiB      | 250 GiB    |
 
-All scopes support positive-integer `UPLOAD_{USER,ORGANIZATION,DEPLOYMENT}_{ATTEMPTS_PER_MINUTE,ATTEMPTS_PER_HOUR,DAILY_BYTES,STORED_BYTES,DOCUMENTS,PENDING_DOCUMENTS}` overrides. Daily counters are not refunded on deletion. Upload counters and storage checks use database transactions. Search, request, signup, download and in-flight upload admission limits are per process; keep one public web replica or add shared ingress admission before scaling out.
+Upload quotas and resource budgets use fixed defaults in `shared/uploads.ts`, `server/upload-limits.ts`, and `server/file-downloads.ts`. Retired environment overrides are no longer read and can be removed from existing deployment settings. Daily counters are not refunded on deletion. Upload counters and storage checks use database transactions. Search, application request, download and in-flight upload admission limits are per process; keep one public web replica or add shared ingress admission before scaling out. Better Auth's authentication counters persist in the shared database.
 
 Original downloads, public links, and ZIP entries stream through private temporary files with bounded concurrency and aggregate disk use. S3 checksums are verified before original bytes are returned. Range requests still read and verify the complete source but only send the requested range; HEAD requests read metadata only. Allow at least 1 GiB writable temporary disk on the web service. Large uploads still use bounded in-memory buffering; increase memory only alongside explicit concurrency limits.
 
-Migration 021 lowers existing API keys using prior default limits of 6,000 or 100,000 requests per minute to 600. Other custom limits are preserved. `API_KEY_LIMIT_PER_MINUTE` applies to newly created keys. Environment overrides take precedence over defaults; review old deployment overrides when adopting these limits.
+Migration 021 lowers existing API keys using prior default limits of 6,000 or 100,000 requests per minute to 600. Other custom limits are preserved. New API keys use the fixed 600/minute default; existing keys retain their stored limits after migration.
 
 ## Web and background services
 

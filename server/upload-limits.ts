@@ -1,49 +1,27 @@
 import { uploadLimits } from "../shared/uploads";
-import { configuredLimit } from "./rate-limits";
 
-const optionalLimit = (name: string, fallback: number) =>
-  process.env[name] === undefined ? fallback : configuredLimit(name, fallback);
+type ScopedLimit = { user: number; organization: number; deployment: number };
+export type UploadAdmissionLimits = {
+  waiting: number;
+  waitMs: number;
+  active: number;
+  activePerUser: number;
+  activeBytes: number;
+  validation: number;
+  receiveMs: number;
+  attemptsPerMinute: ScopedLimit;
+  attemptsPerHour: ScopedLimit;
+  documents: ScopedLimit;
+  pending: ScopedLimit;
+  storedBytes: ScopedLimit;
+  dailyBytes: ScopedLimit;
+};
 
-const scopedLimits = (
-  name: string,
-  defaults: { user: number; organization: number; deployment: number },
-) => ({
-  user: optionalLimit(`UPLOAD_USER_${name}`, defaults.user),
-  organization: optionalLimit(
-    `UPLOAD_ORGANIZATION_${name}`,
-    defaults.organization,
-  ),
-  deployment: optionalLimit(`UPLOAD_DEPLOYMENT_${name}`, defaults.deployment),
-});
-
-export function uploadAdmissionLimits() {
+export function uploadAdmissionLimits(): UploadAdmissionLimits {
   return {
-    waiting: configuredLimit("UPLOAD_WAITING_REQUESTS", 32),
-    waitMs: configuredLimit("UPLOAD_WAIT_TIMEOUT_MS", 10_000),
-    active: optionalLimit("UPLOAD_CONCURRENCY", uploadLimits.active),
-    activePerUser: optionalLimit(
-      "UPLOAD_USER_CONCURRENCY",
-      uploadLimits.activePerUser,
-    ),
-    activeBytes: configuredLimit(
-      "UPLOAD_IN_FLIGHT_BYTES",
-      uploadLimits.activeBytes,
-    ),
-    validation: configuredLimit("UPLOAD_VALIDATION_CONCURRENCY", 4),
-    receiveMs: configuredLimit("UPLOAD_TIMEOUT_MS", uploadLimits.receiveMs),
-    attemptsPerMinute: scopedLimits(
-      "ATTEMPTS_PER_MINUTE",
-      uploadLimits.attemptsPerMinute,
-    ),
-    attemptsPerHour: scopedLimits(
-      "ATTEMPTS_PER_HOUR",
-      uploadLimits.attemptsPerHour,
-    ),
-    documents: scopedLimits("DOCUMENTS", uploadLimits.documents),
-    pending: scopedLimits("PENDING_DOCUMENTS", uploadLimits.pending),
-    storedBytes: scopedLimits("STORED_BYTES", uploadLimits.storedBytes),
-    dailyBytes: scopedLimits("DAILY_BYTES", uploadLimits.dailyBytes),
+    ...uploadLimits,
+    waiting: 32,
+    waitMs: 10_000,
+    validation: 4,
   };
 }
-
-export type UploadAdmissionLimits = ReturnType<typeof uploadAdmissionLimits>;

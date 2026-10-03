@@ -5,7 +5,6 @@ import concurrent.futures
 import hashlib
 import json
 import pathlib
-import re
 import tarfile
 import urllib.parse
 import urllib.request
@@ -16,7 +15,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 BASE = ROOT / ".data" / "benchmarks"
 SOURCES = BASE / "sources"
 SEED = "jevbox-local-benchmarks-v1"
-DATASETS = ["financebench", "qasper", "mmlongbench", "mmlongbench-v2", "vidoseek", "longdocurl"]
+DATASETS = ["financebench", "qasper", "mmlongbench", "vidoseek", "longdocurl"]
 
 
 def rank(value):
@@ -59,9 +58,6 @@ def metadata(dataset):
         "mmlongbench": {
             "mmlongbench.json": "https://raw.githubusercontent.com/mayubo2333/MMLongBench-Doc/main/data/samples.json",
         },
-        "mmlongbench-v2": {
-            "mmlongbench-v2.json": "https://raw.githubusercontent.com/VectifyAI/MMLongBench-Doc-V2/main/data/samples.json",
-        },
     }
     if dataset == "qasper":
         target = SOURCES / "qasper-official-test.json"
@@ -86,8 +82,7 @@ def candidates(dataset):
         for item in read("longdocurl.jsonl"):
             doc = str(item["doc_no"])
             documents[doc] = {"title": doc + ".pdf", "expectedPages": item["total_pages"]}
-            input_pages = [int(re.search(r"_(\d+)\.png$", path).group(1)) + 1 for path in item["images"]]
-            questions.append({"id": item["question_id"], "documentId": doc, "question": item["question"], "references": [reference(item["answer"], item.get("detailed_evidences", ""), item.get("answer_format") == "None")], "evidencePages": item["evidence_pages"], "type": item["task_tag"] + "/" + item["question_type"], "evidenceSources": item["evidence_sources"], "constructionPageRange": item["start_end_idx"], "inputPages": input_pages, "inputPageRange": [min(input_pages), max(input_pages)]})
+            questions.append({"id": item["question_id"], "documentId": doc, "question": item["question"], "references": [reference(item["answer"], item.get("detailed_evidences", ""), item.get("answer_format") == "None")], "evidencePages": item["evidence_pages"], "type": item["task_tag"] + "/" + item["question_type"], "evidenceSources": item["evidence_sources"], "inputPageRange": item["start_end_idx"]})
     elif dataset == "financebench":
         info = {item["doc_name"]: item for item in read("financebench-documents.jsonl")}
         for item in read("financebench.jsonl"):
@@ -100,8 +95,8 @@ def candidates(dataset):
             doc = meta["file_name"]
             documents[doc] = {"title": doc}
             questions.append({"id": item["uid"], "documentId": doc, "question": item["query"], "references": [reference(item["reference_answer"])], "evidencePages": meta["reference_page"], "type": meta["query_type"], "evidenceSources": [meta["source_type"]]})
-    elif dataset in ["mmlongbench", "mmlongbench-v2"]:
-        for index, item in enumerate(read(dataset + ".json")):
+    elif dataset == "mmlongbench":
+        for index, item in enumerate(read("mmlongbench.json")):
             doc = item["doc_id"]
             documents[doc] = {"title": doc}
             sources = item["evidence_sources"]

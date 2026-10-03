@@ -1443,7 +1443,6 @@ test("authenticated REST and MCP requests share user limits without consuming sh
     ...process.env,
     API_READ_LIMIT_PER_MINUTE: "2",
     API_WRITE_LIMIT_PER_MINUTE: "2",
-    ANONYMOUS_LIMIT_PER_MINUTE: "1",
   });
   const isolated = await createApp({
     directory,
@@ -1458,10 +1457,11 @@ test("authenticated REST and MCP requests share user limits without consuming sh
   const previousBase = base;
   base = `http://127.0.0.1:${address.port}`;
   try {
-    assert.equal(
-      (await request("/api/v1/organizations", "invalid")).status,
-      401,
-    );
+    for (let index = 0; index < 300; index++) {
+      const response = await request("/api/v1/organizations", "invalid");
+      assert.equal(response.status, 401);
+      await response.arrayBuffer();
+    }
     assert.equal(
       (await request("/api/v1/organizations", "invalid")).status,
       429,
@@ -1529,15 +1529,9 @@ test("API key migration raises the old default and preserves custom limits", asy
   assert.equal(await allowance(second.key.id), 42);
 });
 
-test("search admission isolates users and prevents rotating credentials from resetting a user's allowance", async (t) => {
+test("search admission isolates users and prevents rotating credentials from resetting a user's allowance", async () => {
   const { createExternalAccess } = await import("../server/external-access");
   const { createUploads } = await import("../server/uploads");
-  t.mock.property(process, "env", {
-    ...process.env,
-    SEARCH_USER_LIMIT_PER_MINUTE: "2",
-    SEARCH_CREDENTIAL_LIMIT_PER_MINUTE: "2",
-    SEARCH_ORGANIZATION_LIMIT_PER_MINUTE: "4",
-  });
   const access = createExternalAccess(
     runtime.store,
     runtime.auth,
@@ -1550,24 +1544,38 @@ test("search admission isolates users and prevents rotating credentials from res
     createUploads(runtime.store),
   );
   const principal = { userId, credentialId: "first", scopes: ["search:read"] };
-  await access.limitSearch(principal, orgId);
-  await access.limitSearch({ ...principal, credentialId: "second" }, orgId);
+  for (let index = 0; index < 20; index++)
+    await access.limitSearch(
+      { ...principal, credentialId: `key-${index}` },
+      orgId,
+    );
   await assert.rejects(
-    access.limitSearch({ ...principal, credentialId: "third" }, secondOrgId),
+    access.limitSearch({ ...principal, credentialId: "rotated" }, secondOrgId),
     /Search limit/,
   );
-  await access.limitSearch({ ...principal, userId: otherId }, orgId);
-  await access.limitSearch(
-    { ...principal, userId: otherId, credentialId: "fourth" },
-    orgId,
+  for (let index = 0; index < 80; index++)
+    await access.limitSearch(
+      {
+        ...principal,
+        userId: `member-${index}`,
+        credentialId: `member-key-${index}`,
+      },
+      orgId,
+    );
+  await assert.rejects(
+    access.limitSearch(
+      { ...principal, userId: "another", credentialId: "another-key" },
+      orgId,
+    ),
+    /Search limit/,
   );
   await access.limitSearch(
-    { ...principal, userId: "another", credentialId: "fifth" },
-    orgId,
+    { ...principal, userId: otherId, credentialId: "other-key" },
+    secondOrgId,
   );
 });
 
-test("default upload admission isolates users and ignores prior shared counters", async (t) => {
+test("default upload admission enforces user and shared counters", async (t) => {
   const { createUploads } = await import("../server/uploads");
   await runtime.store.run("DELETE FROM upload_usage");
   const clock = Date.now();
@@ -1582,16 +1590,16 @@ test("default upload admission isolates users and ignores prior shared counters"
       bucket,
       new Date(clock + 60000).toISOString(),
     );
-    await Promise.all(
-      [a, b].flatMap((actor) =>
-        Array.from({ length: 240 }, () => uploads.admit(actor)),
-      ),
-    );
+    await assert.rejects(uploads.admit(a), /Upload rate limit/);
+    await assert.rejects(uploads.admit(b), /Upload rate limit/);
+    await runtime.store.run("DELETE FROM upload_usage");
+    await uploads.admit(a);
+    await uploads.admit(b);
     const usage = await runtime.store.one<{ attempts: number }>(
       "SELECT attempts FROM upload_usage WHERE subject='deployment' AND bucket=? AND period=60000",
       bucket,
     );
-    assert.equal(usage?.attempts, 10000000);
+    assert.equal(usage?.attempts, 2);
     await runtime.store.run(
       "UPDATE upload_usage SET attempts=? WHERE subject=? AND bucket=? AND period=60000",
       uploadLimits.attemptsPerMinute.user,

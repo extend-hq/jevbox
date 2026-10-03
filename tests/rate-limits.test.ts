@@ -3,7 +3,6 @@ import { test } from "node:test";
 import express from "express";
 import {
   apiRateLimits,
-  authRateLimits,
   searchRateLimits,
   createApiRateLimiter,
   createAnonymousRateLimiter,
@@ -111,18 +110,22 @@ test("API ceilings are configurable and reject invalid limits", () => {
   }
 });
 
-test("shared quotas and user safeguards remain configurable", (t) => {
+test("retired environment overrides cannot change fixed safeguards", (t) => {
   t.mock.property(process, "env", {
     ...process.env,
-    UPLOAD_USER_ATTEMPTS_PER_MINUTE: "240",
+    UPLOAD_USER_ATTEMPTS_PER_MINUTE: "100000",
+    UPLOAD_ORGANIZATION_STORED_BYTES: "100000000000",
     UPLOAD_DEPLOYMENT_PENDING_DOCUMENTS: "100000",
     SEARCH_ORGANIZATION_LIMIT_PER_MINUTE: "100000",
     AUTH_OAUTH_LIMIT_PER_MINUTE: "2000",
+    UPLOAD_IN_FLIGHT_BYTES: "0",
   });
   assert.equal(uploadAdmissionLimits().attemptsPerMinute.user, 240);
-  assert.equal(uploadAdmissionLimits().pending.deployment, 100000);
-  assert.equal(searchRateLimits().organization, 100000);
-  assert.equal(authRateLimits().oauth, 2000);
-  process.env.UPLOAD_IN_FLIGHT_BYTES = "0";
-  assert.throws(uploadAdmissionLimits);
+  assert.equal(
+    uploadAdmissionLimits().storedBytes.organization,
+    10_000_000_000,
+  );
+  assert.equal(uploadAdmissionLimits().pending.deployment, 2000);
+  assert.equal(uploadAdmissionLimits().activeBytes, 128 * 1024 * 1024);
+  assert.equal(searchRateLimits().organization, 100);
 });

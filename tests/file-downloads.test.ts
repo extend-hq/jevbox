@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import express, { type ErrorRequestHandler } from "express";
-import { createFileDownloads } from "../server/file-downloads";
+import { createFileDownloads, downloadLimits } from "../server/file-downloads";
 import { HttpError, type Resource, type Store } from "../server/db";
 
 function source(bytes = 1024 * 1024) {
@@ -27,13 +27,12 @@ function source(bytes = 1024 * 1024) {
   return { store, reads: () => reads };
 }
 
-test("download staging bounds disk use, verifies content, and releases capacity after cleanup", async (t) => {
-  t.mock.property(process, "env", {
-    ...process.env,
-    DOWNLOAD_TEMP_BYTES: "1048576",
-  });
+test("download staging bounds disk use, verifies content, and releases capacity after cleanup", async () => {
   const { store } = source();
-  const downloads = createFileDownloads(store);
+  const downloads = createFileDownloads(store, {
+    ...downloadLimits,
+    tempBytes: 1048576,
+  });
   const signal = new AbortController().signal;
   const staged = await downloads.stage("document", signal);
   assert.equal((await stat(staged.path)).size, 1048576);
@@ -52,18 +51,17 @@ test("download staging bounds disk use, verifies content, and releases capacity 
   await afterAbort.dispose();
 });
 
-test("failed integrity checks clean up temporary capacity", async (t) => {
-  t.mock.property(process, "env", {
-    ...process.env,
-    DOWNLOAD_TEMP_BYTES: "1048576",
-  });
+test("failed integrity checks clean up temporary capacity", async () => {
   const { store } = source();
   const original = store.files.download;
   store.files.download = async (id) => ({
     ...(await original(id)),
     sha256: "incorrect",
   });
-  const downloads = createFileDownloads(store);
+  const downloads = createFileDownloads(store, {
+    ...downloadLimits,
+    tempBytes: 1048576,
+  });
   await assert.rejects(
     downloads.stage("document", new AbortController().signal),
     /integrity/,

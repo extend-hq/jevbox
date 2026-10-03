@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { Request, Response } from "express";
 import { ipKeyGenerator } from "express-rate-limit";
-import { configuredLimit } from "./rate-limits";
 import {
   HttpError,
   resourceAccessBatch,
@@ -36,11 +35,20 @@ export async function requireDownloadResource(
   return resource;
 }
 
-export function createFileDownloads(store: Store) {
-  const maximum = configuredLimit("DOWNLOAD_CONCURRENCY", 8);
-  const perUser = configuredLimit("DOWNLOAD_USER_CONCURRENCY", 4);
-  const diskBudget = configuredLimit("DOWNLOAD_TEMP_BYTES", 512 * 1024 * 1024);
-  const timeout = configuredLimit("DOWNLOAD_TIMEOUT_MS", 120_000);
+export const downloadLimits = {
+  active: 8,
+  activePerUser: 4,
+  tempBytes: 512 * 1024 * 1024,
+  timeoutMs: 120_000,
+};
+
+export function createFileDownloads(store: Store, limits = downloadLimits) {
+  const {
+    active: maximum,
+    activePerUser: perUser,
+    tempBytes: diskBudget,
+    timeoutMs: timeout,
+  } = limits;
   const active = new Map<string, number>();
   let count = 0;
   let bytes = 0;

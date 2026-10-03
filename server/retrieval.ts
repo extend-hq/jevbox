@@ -19,7 +19,6 @@ import { sectionBlockType } from "../shared/section-block-type";
 import { searchMetadata } from "./search-metadata";
 import { metadataCandidates } from "./search-candidates";
 import { buildSectionPreviews } from "./routing-preview";
-import { prioritizePassages } from "./passage-priority";
 import { createResourceAccessReader } from "./resource-access";
 import {
   searchFiltersSchema,
@@ -243,7 +242,7 @@ export async function retrieveDocuments(
           blockType: sectionBlockType(node),
           page: node.page,
         },
-        sources: prioritizePassages(node.passages ?? [], query).map((passage) => ({
+        sources: (node.passages ?? []).map((passage) => ({
           documentId: doc.id,
           name: doc.name,
           nodeId: node.id,
