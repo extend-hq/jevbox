@@ -1,14 +1,28 @@
+import { createFileDownloads, downloadResourceColumns } from "./file-downloads";
 import { createHash } from "node:crypto";
 import { Router } from "express";
-import { HttpError, type Resource, type Store } from "./db";
+import {
+  HttpError,
+  type Resource,
+  type Store,
+  type PermissionCache,
+} from "./db";
 import { describeThumbnail } from "./thumbnails";
 
-export function createLinkSharingRouter(store: Store) {
+export function createLinkSharingRouter(
+  store: Store,
+  downloads = createFileDownloads(store),
+) {
   const router = Router();
   const missing = () =>
     new HttpError(404, "This link is unavailable or access has been removed.");
 
-  async function resolve(token: string, resourceId?: string) {
+  async function resolve(
+    token: string,
+    resourceId?: string,
+    cache: PermissionCache = { values: new Map() },
+    metadataOnly = false,
+  ) {
     if (!/^[a-f0-9]{64}$/.test(token)) throw missing();
     const tokenHash = createHash("sha256").update(token).digest("hex");
     const link = await store.one<{ resource_id: string; org_id: string }>(
@@ -22,19 +36,29 @@ export function createLinkSharingRouter(store: Store) {
       role: "viewer",
       token: "",
     };
-    const allowed = (id: string) =>
-      store.permission(actor, "resource", id, "link_read", "link");
-    if (!(await allowed(link.resource_id))) throw missing();
+    const allowed = (ids: string[]) =>
+      store.permissions(actor, "resource", ids, "link_read", "link", cache);
     const resource = await store.one<Resource>(
-      "SELECT * FROM resources WHERE id=? AND org_id=?",
+      `SELECT ${metadataOnly ? downloadResourceColumns : "*"} FROM resources WHERE id=? AND org_id=?`,
       resourceId ?? link.resource_id,
       link.org_id,
     );
-    if (!resource || !(await allowed(resource.id))) throw missing();
+    if (
+      !resource ||
+      (await allowed([...new Set([link.resource_id, resource.id])])).some(
+        (value) => !value,
+      )
+    )
+      throw missing();
     return { resource, rootId: link.resource_id, allowed };
   }
 
-  function describe(resource: Resource, rootId: string, includeParsed = false, token?: string) {
+  function describe(
+    resource: Resource,
+    rootId: string,
+    includeParsed = false,
+    token?: string,
+  ) {
     const parsed = resource.parsed ? JSON.parse(resource.parsed) : null;
     return {
       id: resource.id,
@@ -50,7 +74,12 @@ export function createLinkSharingRouter(store: Store) {
       canWrite: false,
       canShare: false,
       pages: parsed?.pages ?? 0,
-      thumbnail: token ? describeThumbnail(resource, `/api/shared/${token}/resources/${resource.id}`) : null,
+      thumbnail: token
+        ? describeThumbnail(
+            resource,
+            `/api/shared/${token}/resources/${resource.id}`,
+          )
+        : null,
       ...(includeParsed ? { parsed } : {}),
     };
   }
@@ -60,47 +89,74 @@ export function createLinkSharingRouter(store: Store) {
     const resourceId = req.params.resourceId
       ? String(req.params.resourceId)
       : undefined;
-    const { resource, rootId, allowed } = await resolve(token, resourceId);
+    const permissionCache: PermissionCache = { values: new Map() };
+    const { resource, rootId, allowed } = await resolve(
+      token,
+      resourceId,
+      permissionCache,
+    );
     const children = [];
     if (resource.kind === "folder") {
-      for (const child of await store.all<Resource>(
+      const rows = await store.all<Resource>(
         "SELECT * FROM resources WHERE parent_id=? AND org_id=? ORDER BY kind,name",
         resource.id,
         resource.org_id,
-      )) {
-        if (await allowed(child.id)) children.push(describe(child, rootId, false, token));
-      }
+      );
+      const access = await allowed(rows.map((child) => child.id));
+      children.push(
+        ...rows
+          .filter((_child, index) => access[index])
+          .map((child) => describe(child, rootId, false, token)),
+      );
     }
-    await resolve(token, resourceId);
+    await resolve(token, resourceId, permissionCache);
     res.json({ ...describe(resource, rootId, true, token), rootId, children });
   });
 
   router.get("/:token/resources/:resourceId/thumbnail", async (req, res) => {
-    const token = String(req.params.token), resourceId = String(req.params.resourceId);
-    const { resource } = await resolve(token, resourceId);
+    const token = String(req.params.token),
+      resourceId = String(req.params.resourceId);
+    const permissionCache: PermissionCache = { values: new Map() };
+    const { resource } = await resolve(token, resourceId, permissionCache);
     if (resource.kind !== "document") throw missing();
     const thumbnail = await store.files.read("thumbnail", resource.id);
-    await resolve(token, resourceId);
-    if (!thumbnail || resource.thumbnail_status !== "ready") return res.status(204).end();
-    res.set({ "Content-Type": thumbnail.mime, "Content-Security-Policy": "default-src 'none'; sandbox", "Cache-Control": "private, no-cache", ETag: `"${resource.thumbnail_key}"` });
-    if (req.get("If-None-Match")?.split(",").some((tag) => tag.trim().replace(/^W\//, "") === `"${resource.thumbnail_key}"` || tag.trim() === "*")) return res.status(304).end();
+    await resolve(token, resourceId, permissionCache);
+    if (!thumbnail || resource.thumbnail_status !== "ready")
+      return res.status(204).end();
+    res.set({
+      "Content-Type": thumbnail.mime,
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+      "Cache-Control": "private, no-cache",
+      ETag: `"${resource.thumbnail_key}"`,
+    });
+    if (
+      req
+        .get("If-None-Match")
+        ?.split(",")
+        .some(
+          (tag) =>
+            tag.trim().replace(/^W\//, "") === `"${resource.thumbnail_key}"` ||
+            tag.trim() === "*",
+        )
+    )
+      return res.status(304).end();
     res.send(thumbnail.body);
   });
 
   router.get("/:token/resources/:resourceId/content", async (req, res) => {
     const token = String(req.params.token),
       resourceId = String(req.params.resourceId);
-    const { resource } = await resolve(token, resourceId);
+    const permissionCache: PermissionCache = { values: new Map() };
+    const { resource } = await resolve(
+      token,
+      resourceId,
+      permissionCache,
+      true,
+    );
     if (resource.kind !== "document") throw missing();
-    const blob = await store.files.read("document", resource.id);
-    if (!blob) throw missing();
-    await resolve(token, resourceId);
-    res.set({
-      "Content-Type": resource.mime,
-      "Content-Security-Policy": "default-src 'none'; sandbox",
-      "Content-Disposition": `${["text/html", "text/xml", "image/svg+xml", "application/octet-stream"].includes(resource.mime) ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(resource.name)}`,
-    });
-    res.send(Buffer.from(blob.body));
+    await downloads.send(req, res, resource, () =>
+      resolve(token, resourceId, permissionCache, true),
+    );
   });
   return router;
 }

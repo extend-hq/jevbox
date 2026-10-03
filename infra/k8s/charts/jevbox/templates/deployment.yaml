@@ -146,4 +146,4 @@ spec:
             sizeLimit: 16Mi
         - name: tmp
           emptyDir:
-            sizeLimit: 256Mi
+            sizeLimit: 1Gi

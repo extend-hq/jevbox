@@ -1233,11 +1233,11 @@ test("a disconnected MCP search finishes without its original request and rechec
       ),
     );
     await pending;
-    const original = runtime.store.permission.bind(runtime.store);
-    runtime.store.permission = (actor, type, id, permission) =>
-      type === "resource" && id === documentId
-        ? Promise.resolve(false)
-        : original(actor, type, id, permission);
+    const original = runtime.store.permissions.bind(runtime.store);
+    runtime.store.permissions = async (actor, type, ids, permission) =>
+      (await original(actor, type, ids, permission)).map((allowed, index) =>
+        type === "resource" && ids[index] === documentId ? false : allowed,
+      );
     try {
       const revoked = await callTool(client, "get_run", {
         organizationId,
@@ -1245,7 +1245,7 @@ test("a disconnected MCP search finishes without its original request and rechec
       });
       assert.deepEqual(revoked.result.results, []);
     } finally {
-      runtime.store.permission = original;
+      runtime.store.permissions = original;
     }
   } finally {
     release();

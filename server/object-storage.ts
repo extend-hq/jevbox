@@ -7,6 +7,7 @@ import {
   HeadBucketCommand,
 } from "@aws-sdk/client-s3";
 import { HttpError } from "./errors";
+import type { Readable } from "node:stream";
 
 export function storageFailureDetails(operation: string, error: unknown) {
   const failure = error as {
@@ -44,6 +45,11 @@ export type ObjectStorage = {
   prefix: string;
   put: (key: string, body: Buffer, mime: string) => Promise<void>;
   get: (bucket: string, key: string) => Promise<Buffer>;
+  stream: (
+    bucket: string,
+    key: string,
+    signal: AbortSignal,
+  ) => Promise<Readable>;
   delete: (bucket: string, key: string) => Promise<void>;
   ready: () => Promise<void>;
   close: () => void;
@@ -133,6 +139,18 @@ export function createObjectStorage(
         );
         if (!result.Body) throw new Error("Empty storage response");
         return Buffer.from(await result.Body.transformToByteArray());
+      } catch (error) {
+        throw unavailable("GetObject", error);
+      }
+    },
+    async stream(bucket, key, signal) {
+      try {
+        const result = await client.send(
+          new GetObjectCommand({ Bucket: bucket, Key: key }),
+          { abortSignal: signal },
+        );
+        if (!result.Body) throw new Error("Empty storage response");
+        return result.Body as Readable;
       } catch (error) {
         throw unavailable("GetObject", error);
       }
@@ -255,6 +273,54 @@ export function createFileStorage(db: FileDatabase, objects?: ObjectStorage) {
   }
   return {
     backend: objects ? "s3" : "postgres",
+    async download(resourceId: string) {
+      const row = await db.one<Partial<StoredObject> & { bytes: number }>(
+        "SELECT o.bucket,o.object_key,o.sha256,o.size,COALESCE(o.size,OCTET_LENGTH(b.body)) AS bytes FROM blobs b LEFT JOIN storage_objects o ON o.resource_id=b.resource_id AND o.kind='document' WHERE b.resource_id=?",
+        resourceId,
+      );
+      if (!row) throw new HttpError(404, "Content not found");
+      if (!Number.isSafeInteger(row.bytes) || row.bytes < 0)
+        throw new HttpError(503, "Stored file reference is unavailable");
+      return {
+        size: row.bytes,
+        sha256: row.object_key ? row.sha256 : undefined,
+        async *chunks(signal: AbortSignal): AsyncGenerator<Uint8Array> {
+          if (row.object_key) {
+            if (!objects)
+              throw new HttpError(
+                503,
+                "S3 storage must be configured to read this file",
+              );
+            const stream = await objects.stream(
+              row.bucket!,
+              row.object_key,
+              signal,
+            );
+            try {
+              for await (const chunk of stream) {
+                signal.throwIfAborted();
+                yield chunk;
+              }
+            } finally {
+              stream.destroy();
+            }
+          } else {
+            for (let offset = 0; offset < row.bytes; offset += 1024 * 1024) {
+              signal.throwIfAborted();
+              const part = await db.one<{ body: Buffer | null }>(
+                "SELECT substring(body FROM ? FOR ?) AS body FROM blobs WHERE resource_id=?",
+                offset + 1,
+                Math.min(1024 * 1024, row.bytes - offset),
+                resourceId,
+              );
+              if (!part?.body?.length)
+                throw new HttpError(503, "Stored file is unavailable");
+              yield part.body;
+            }
+          }
+        },
+      };
+    },
     read,
     write,
     async ready() {

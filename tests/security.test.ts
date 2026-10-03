@@ -1167,9 +1167,18 @@ test("batch sharing checks permissions together and publishes one snapshot for f
       permission,
       userId,
       subjectKind,
+      zedToken,
     ) => {
       checks.push(ids);
-      return checkBulk(version, kind, ids, permission, userId, subjectKind);
+      return checkBulk(
+        version,
+        kind,
+        ids,
+        permission,
+        userId,
+        subjectKind,
+        zedToken,
+      );
     };
     runtime.store.authorization.write = async (relationships) => {
       publications++;
@@ -1623,15 +1632,15 @@ test("public links are scoped, view only, revocable and enforced by SpiceDB", as
   );
   assert.equal((await req("/resources")).status, 401);
   assert.equal((await req(`/shared/${"a".repeat(64)}`)).status, 404);
-  const check = runtime.store.authorization.check;
+  const check = runtime.store.authorization.checkBulk;
   try {
-    runtime.store.authorization.check = async () => {
+    runtime.store.authorization.checkBulk = async () => {
       throw new HttpError(503, "Unavailable");
     };
     assert.equal((await req(prefix)).status, 503);
     assert.equal((await req(`${prefix}/resources/${rid}/content`)).status, 503);
   } finally {
-    runtime.store.authorization.check = check;
+    runtime.store.authorization.checkBulk = check;
   }
   await req(`/resources/${rid}/access`, cookie, "PUT", {
     access: "restricted",
@@ -1915,7 +1924,10 @@ test("startup rebuilds committed permission snapshots after SpiceDB relationship
     actor.orgId,
   ))!.authz_version;
   await runtime.store.authorization.removeSnapshot(before);
-  assert.equal(await resourceAccess(runtime.store, actor, document), false);
+  assert.equal(
+    await runtime.store.authorization.check(before, "resource", document, "read", actor.userId),
+    false,
+  );
   const restarted = await createStore(directory, database.url);
   try {
     const after = (await restarted.one<{ authz_version: string }>(
@@ -2366,4 +2378,84 @@ test("content ranges bound thumbnail downloads and retain permission checks", as
     headers: { Cookie: outsider, Range: "bytes=0-10" },
   });
   assert.equal(denied.status, 404);
+});
+
+test("organization storage is shared, denies full uploads, and frees capacity after deletion", async () => {
+  const { owner: cookie, member } = await sharingWorkspace();
+  const documentId = await upload(cookie, "stored");
+  const initial = await req("/settings/storage", cookie);
+  assert.equal(initial.status, 200);
+  assert.equal(initial.data.limitBytes, 10_000_000_000);
+  assert.equal(initial.data.documents, 1);
+  assert.equal(
+    (await req("/settings/storage", member)).data.usedBytes,
+    initial.data.usedBytes,
+  );
+  assert.equal((await req("/settings/storage")).status, 401);
+  await runtime.store.run(
+    "UPDATE resources SET size=?,parsed=NULL WHERE id=?",
+    250_000_000,
+    documentId,
+  );
+  await runtime.store.run(
+    "INSERT INTO resources(id,org_id,owner_id,kind,name,size,status,created) SELECT gen_random_uuid()::text,org_id,owner_id,'document','stored',250000000,'stored',created FROM resources CROSS JOIN generate_series(1,39) WHERE id=?",
+    documentId,
+  );
+  const full = await req("/settings/storage", cookie);
+  assert.equal(full.data.usedBytes, full.data.limitBytes);
+  const form = new FormData();
+  form.append("file", new Blob([]), "empty.txt");
+  const rejected = await req("/documents", member, "POST", form);
+  assert.equal(rejected.status, 429);
+  assert.match(rejected.data.error, /storage limit/);
+  assert.equal((await req("/settings/storage", cookie)).data.documents, 40);
+  await runtime.store.run(
+    "UPDATE resources SET size=size-10 WHERE id=?",
+    documentId,
+  );
+  const attempts = await Promise.all(
+    Array.from({ length: 2 }, () => {
+      const body = new FormData();
+      body.append("file", new Blob(["123456"]), "upload.txt");
+      return req("/documents", cookie, "POST", body);
+    }),
+  );
+  assert.deepEqual(attempts.map((result) => result.status).sort(), [201, 429]);
+  assert.equal(
+    (await req("/settings/storage", cookie)).data.usedBytes,
+    10_000_000_000 - 4,
+  );
+  await runtime.store.run(
+    "DELETE FROM resources WHERE org_id=(SELECT org_id FROM resources WHERE id=?) AND id<>?",
+    documentId,
+    documentId,
+  );
+  assert.equal(
+    (await req(`/resources/${documentId}`, cookie, "DELETE")).status,
+    200,
+  );
+  assert.equal((await req("/settings/storage", cookie)).data.usedBytes, 0);
+  await upload(member, "available again");
+});
+
+test("provider settings reject credentials belonging to a different adapter", async () => {
+  for (const providerConfig of [
+    {
+      googleAuthOptions: {
+        credentials: {
+          client_email: "org@example.test",
+          private_key: "org-private",
+        },
+      },
+    },
+    { accessKeyId: "org-access", secretAccessKey: "org-secret" },
+  ]) {
+    const response = await req("/settings", owner, "PUT", {
+      provider: "openai",
+      model: "model",
+      providerKey: "",
+      providerConfig,
+    });
+    assert.equal(response.status, 400);
+  }
 });

@@ -2,11 +2,11 @@ import { createLimiter } from "./async";
 import { createTraversal, type RouteNode } from "./beam-search";
 import { createJev, retrievalLimits } from "./jev";
 import {
-  resourceAccess,
   HttpError,
   type Actor,
   type Resource,
   type Store,
+  type PermissionCache,
 } from "./db";
 import {
   flatten,
@@ -19,6 +19,8 @@ import { sectionBlockType } from "../shared/section-block-type";
 import { searchMetadata } from "./search-metadata";
 import { metadataCandidates } from "./search-candidates";
 import { buildSectionPreviews } from "./routing-preview";
+import { prioritizePassages } from "./passage-priority";
+import { createResourceAccessReader } from "./resource-access";
 import {
   searchFiltersSchema,
   matchesSearchFilters,
@@ -45,9 +47,6 @@ type Value = {
   sources: Omit<RetrievedSource, "score" | "routeScore">[];
 };
 const evidenceSlot = createLimiter(retrievalLimits.evidenceConcurrency);
-const authorizationSlot = createLimiter(
-  retrievalLimits.authorizationConcurrency,
-);
 
 export async function retrieveDocuments(
   store: Store,
@@ -63,6 +62,7 @@ export async function retrieveDocuments(
     maxResults?: number;
     recoverRoutes?: boolean;
     filters?: SearchFilters;
+    permissionCache?: PermissionCache;
   },
 ) {
   if (!key)
@@ -71,6 +71,12 @@ export async function retrieveDocuments(
       "Connect TypeSafe in organization settings to enable search.",
     );
   signal?.throwIfAborted();
+  const canRead = createResourceAccessReader(
+    store,
+    actor,
+    signal,
+    options?.permissionCache,
+  );
   const filters = searchFiltersSchema.parse(options?.filters ?? {});
   if (filters.folderId) {
     const folder = await store.one<Resource>(
@@ -78,7 +84,7 @@ export async function retrieveDocuments(
       filters.folderId,
       actor.orgId,
     );
-    if (!folder || !(await resourceAccess(store, actor, folder.id)))
+    if (!folder || !(await canRead(folder.id)))
       throw new HttpError(404, "Folder not found");
   }
   const maxPassages = Math.min(
@@ -89,17 +95,6 @@ export async function retrieveDocuments(
     retrievalLimits.results,
     options?.maxResults ?? retrievalLimits.results,
   );
-  const pendingAccess = new Map<string, Promise<boolean>>();
-  const canRead = (id: string) => {
-    const pending = pendingAccess.get(id);
-    if (pending) return pending;
-    const check = authorizationSlot(async () => {
-      signal?.throwIfAborted();
-      return resourceAccess(store, actor, id);
-    }, signal).finally(() => pendingAccess.delete(id));
-    pendingAccess.set(id, check);
-    return check;
-  };
   const readable = async <T>(
     items: T[],
     resourceId: (item: T) => string | undefined,
@@ -248,7 +243,7 @@ export async function retrieveDocuments(
           blockType: sectionBlockType(node),
           page: node.page,
         },
-        sources: (node.passages ?? []).map((passage) => ({
+        sources: prioritizePassages(node.passages ?? [], query).map((passage) => ({
           documentId: doc.id,
           name: doc.name,
           nodeId: node.id,

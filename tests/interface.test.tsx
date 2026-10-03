@@ -84,7 +84,8 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 
 const { DocumentView } = await import("../src/components/document");
-const { ChatView, Sources } = await import("../src/components/discovery");
+const { ChatView, SearchView, Sources } =
+  await import("../src/components/discovery");
 const { ChatQueue } = await import("../src/components/chat-queue");
 const { Markdown } = await import("../src/components/common");
 const { ChatThinking } = await import("../src/components/loading-state");
@@ -132,6 +133,56 @@ async function click(element: Element | null | undefined) {
     ),
   );
 }
+test("search excerpts render complete Markdown and sanitized tables with independent navigation", async () => {
+  const source = {
+    documentId: "doc",
+    nodeId: "node",
+    passageId: "passage",
+    name: "Document",
+    title: "Overview",
+    page: 1,
+    endPage: 1,
+    content:
+      "# Overview\n\n**Strong** and *emphasis*.\n\n" +
+      "Context. ".repeat(50) +
+      '\n\n| Name | Value |\n| --- | --- |\n| Ready | Yes |\n\n<table><tr><th colspan="2">Details</th></tr><tr><td rowspan="2">Group</td><td>First</td></tr><tr><td>Second</td></tr></table>\n\n- First item\n- Second item\n\n[Reference](https://example.org)\n\n<script>unsafe()</script><a href="javascript:unsafe()" onclick="unsafe()">Unsafe</a>',
+  };
+  const opened: string[] = [];
+  globalThis.fetch = async () =>
+    Response.json({ results: [source], trace: [] });
+  await act(async () =>
+    root.render(
+      <SearchView
+        me={{} as Me}
+        initialQuery="question"
+        onSearch={() => {}}
+        onOpen={(id, node) => opened.push(`${id}:${node}`)}
+      />,
+    ),
+  );
+  const snippet = host.querySelector(".search-result-snippet");
+  assert.ok(snippet);
+  assert.equal(snippet.querySelectorAll("table").length, 2);
+  assert.equal(snippet.querySelector("strong")?.textContent, "Strong");
+  assert.equal(snippet.querySelector("em")?.textContent, "emphasis");
+  assert.equal(snippet.querySelectorAll("li").length, 2);
+  assert.equal(
+    snippet.querySelector("th[colspan]")?.getAttribute("colspan"),
+    "2",
+  );
+  assert.equal(
+    snippet.querySelector("td[rowspan]")?.getAttribute("rowspan"),
+    "2",
+  );
+  assert.equal(
+    snippet.querySelector("script, [onclick], a[href^='javascript:']"),
+    null,
+  );
+  assert.equal(snippet.closest("button, a"), null);
+  assert.ok(snippet.querySelector('a[href="https://example.org"]'));
+  await click(host.querySelector(".search-result-open"));
+  assert.deepEqual(opened, ["doc:node"]);
+});
 test("parsed content renders Markdown and sanitized HTML tables with merged cells", async () => {
   await act(async () =>
     root.render(
@@ -3822,4 +3873,54 @@ test("folder drops wait for count confirmation and cancellation uploads nothing"
     uploads[0].map((file) => file.webkitRelativePath),
     ["Collection/First.txt", "Collection/Nested/Second.txt"],
   );
+});
+
+test("storage settings display shared usage as an accessible meter", async () => {
+  const { StorageSettings } =
+    await import("../src/components/storage-settings");
+  globalThis.fetch = async (input) => {
+    assert.equal(String(input), "/api/settings/storage");
+    return Response.json({
+      usedBytes: 2_500_000_000,
+      limitBytes: 10_000_000_000,
+      originalBytes: 2_000_000_000,
+      indexBytes: 500_000_000,
+      documents: 42,
+    });
+  };
+  await act(async () => root.render(<StorageSettings />));
+  const meter = document.querySelector('[role="meter"]')!;
+  assert.equal(meter.getAttribute("aria-label"), "Storage used");
+  assert.equal(meter.getAttribute("aria-valuenow"), "2500000000");
+  assert.equal(meter.getAttribute("aria-valuemax"), "10000000000");
+  assert.ok(document.body.textContent?.includes("7.5 GB available"));
+  assert.ok(document.body.textContent?.includes("42"));
+});
+
+test("upload batches accept 100 files and reject larger selections before uploading", async () => {
+  const { uploadBatch } = await import("../src/lib/upload-batch");
+  const { toastManager } = await import("../src/components/coss/toast");
+  await act(async () => root.render(<ToastProvider>{null}</ToastProvider>));
+  const files = Array.from(
+    { length: 100 },
+    (_, i) => new dom.window.File(["text"], `${i}.txt`),
+  );
+  let uploaded = 0;
+  await act(async () => {
+    assert.equal(
+      (
+        await uploadBatch(files, async () => {
+          uploaded++;
+        })
+      ).completed,
+      100,
+    );
+    const rejected = await uploadBatch([...files, files[0]], async () =>
+      assert.fail("Oversized batch must not start"),
+    );
+    assert.equal(rejected.completed, 0);
+    assert.match(rejected.errors[0], /up to 100/);
+  });
+  assert.equal(uploaded, 100);
+  await act(async () => toastManager.close());
 });

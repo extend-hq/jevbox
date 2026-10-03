@@ -7,7 +7,7 @@ import { uploadLimits } from "../shared/uploads";
 import { HttpError, requireResource, type Actor, type Store } from "./db";
 import { enqueueIndex } from "./indexing-jobs";
 import { enqueueThumbnail } from "./thumbnails";
-import { checkStoredDocumentQuota } from "./upload-quotas";
+import { checkStoredDocumentQuota, uploadScopes } from "./upload-quotas";
 import { createLimiter } from "./async";
 import {
   uploadAdmissionLimits,
@@ -105,6 +105,7 @@ export function createUploads(
     let retained = false;
     let started = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let waitTimer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
     let resolveReady!: () => void;
     let rejectReady!: (error: Error) => void;
@@ -117,6 +118,7 @@ export function createUploads(
       if (released) return;
       released = true;
       clearTimeout(timer);
+      clearTimeout(waitTimer);
       waiting.delete(start);
       if (started) {
         const remaining = (active.get(userId) ?? 1) - 1;
@@ -138,6 +140,7 @@ export function createUploads(
         (activeRequests > 0 && activeBytes + bytes > limits.activeBytes)
       )
         return false;
+      clearTimeout(waitTimer);
       started = true;
       active.set(userId, (active.get(userId) ?? 0) + 1);
       activeRequests++;
@@ -169,7 +172,24 @@ export function createUploads(
       signal: controller.signal,
     };
     leases.set(req, lease);
-    if (!start()) waiting.add(start);
+    if (!start()) {
+      if (waiting.size >= limits.waiting) {
+        release();
+        throw new HttpError(
+          429,
+          "Upload queue is busy. Try again shortly.",
+          10,
+        );
+      }
+      waiting.add(start);
+      waitTimer = setTimeout(() => {
+        rejectReady(
+          new HttpError(429, "Upload queue is busy. Try again shortly.", 10),
+        );
+        release();
+      }, limits.waitMs);
+      waitTimer.unref();
+    }
     return lease;
   }
   async function checkParent(a: Actor, parentId: string | null) {
@@ -181,20 +201,22 @@ export function createUploads(
     )
       throw new HttpError(404, "Writable folder not found");
   }
-  const subjects = (a: Actor) => [`user:${a.userId}`];
+  const subjects = (a: Actor) =>
+    uploadScopes(a.userId, a.orgId).map((scope) => scope.subject);
   async function capacity(a: Actor, bytes: number) {
     await checkStoredDocumentQuota(store, a.userId, a.orgId, bytes, 1, limits);
-    if (!Number.isFinite(limits.pending.user)) return;
-    const row = await store.one<{ pending: string }>(
-      "SELECT COUNT(*)::text AS pending FROM resources r WHERE kind='document' AND owner_id=? AND (status IN ('queued','processing') OR thumbnail_status IN ('queued','processing') OR EXISTS (SELECT 1 FROM document_filing f WHERE f.resource_id=r.id AND f.state IN ('pending','working')))",
-      a.userId,
-    );
-    if (Number(row?.pending ?? 0) >= limits.pending.user)
-      throw new HttpError(
-        429,
-        "Document processing queue is full. Wait for existing uploads to finish.",
-        10,
+    for (const scope of uploadScopes(a.userId, a.orgId)) {
+      const row = await store.one<{ pending: string }>(
+        `SELECT COUNT(*)::text AS pending FROM resources r WHERE kind='document' AND ${scope.where} AND (status IN ('queued','processing','awaiting_key') OR thumbnail_status IN ('queued','processing') OR EXISTS (SELECT 1 FROM document_filing f WHERE f.resource_id=r.id AND f.state IN ('pending','working')))`,
+        ...scope.args,
       );
+      if (Number(row?.pending ?? 0) >= limits.pending[scope.key])
+        throw new HttpError(
+          429,
+          "Document processing queue is full. Wait for existing uploads to finish.",
+          10,
+        );
+    }
   }
   async function admit(a: Actor) {
     await store.transaction(async () => {
@@ -203,8 +225,22 @@ export function createUploads(
       const time = Date.now();
       await store.run("DELETE FROM upload_usage WHERE expires_at<now()");
       for (const [period, allowances] of [
-        [60_000, [limits.attemptsPerMinute.user]],
-        [3_600_000, [limits.attemptsPerHour.user]],
+        [
+          60_000,
+          [
+            limits.attemptsPerMinute.user,
+            limits.attemptsPerMinute.organization,
+            limits.attemptsPerMinute.deployment,
+          ],
+        ],
+        [
+          3_600_000,
+          [
+            limits.attemptsPerHour.user,
+            limits.attemptsPerHour.organization,
+            limits.attemptsPerHour.deployment,
+          ],
+        ],
       ] as const) {
         const bucket = Math.floor(time / period);
         const current = subjects(a);
@@ -301,7 +337,11 @@ export function createUploads(
       await capacity(current, body.length);
       const period = 86_400_000,
         bucket = Math.floor(Date.now() / period);
-      const allowances = [limits.dailyBytes.user];
+      const allowances = [
+        limits.dailyBytes.user,
+        limits.dailyBytes.organization,
+        limits.dailyBytes.deployment,
+      ];
       const currentSubjects = subjects(current);
       for (let i = 0; i < currentSubjects.length; i++) {
         const row = await store.one<{ bytes: string }>(

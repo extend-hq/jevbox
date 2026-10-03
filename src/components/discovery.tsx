@@ -337,33 +337,60 @@ export function SearchView({
             <span>Ranked by JEV</span>
           </div>
           {result.results.map((s: Source, i: number) => (
-            <button
+            <article
               className="search-result"
-              key={i}
-              onClick={() => onOpen(s.documentId, s.nodeId)}
+              key={`${s.documentId}:${s.passageId ?? s.nodeId}:${i}`}
             >
-              <ResourceThumbnail
-                name={s.name}
-                mime=""
-                src={`/api/documents/${s.documentId}/content`}
-                className="search-result-thumbnail"
-                square
-              />
+              <button
+                type="button"
+                className="search-result-cover"
+                aria-label={`Open ${s.name}, page ${s.page}`}
+                onClick={() => onOpen(s.documentId, s.nodeId)}
+              >
+                <ResourceThumbnail
+                  name={s.name}
+                  mime=""
+                  src={`/api/documents/${s.documentId}/content`}
+                  className="search-result-thumbnail"
+                  square
+                />
+              </button>
               <div className="search-result-content">
-                <div className="result-path">
-                  {s.name}
-                  <span>›</span>Page {s.page}
-                </div>
-                <h3>
-                  {s.title}
-                  <ArrowUpRight size={16} />
-                </h3>
-                <p>
-                  {s.content &&
-                    plainTextPreview(s.content, s.title).slice(0, 300)}
-                </p>
+                <RouteLink
+                  href={sourceHref(s)}
+                  className="search-result-open"
+                  onClick={(event) => {
+                    if (
+                      event.button !== 0 ||
+                      event.metaKey ||
+                      event.ctrlKey ||
+                      event.shiftKey ||
+                      event.altKey
+                    )
+                      return;
+                    event.preventDefault();
+                    onOpen(s.documentId, s.nodeId);
+                  }}
+                >
+                  <div className="result-path">
+                    {s.name}
+                    <span>›</span>Page {s.page}
+                  </div>
+                  <h3>
+                    {s.title}
+                    <ArrowUpRight size={16} />
+                  </h3>
+                </RouteLink>
+                {s.content && (
+                  <ScrollArea
+                    className="search-result-snippet"
+                    viewportProps={{ "aria-label": `${s.title} excerpt` }}
+                  >
+                    <Markdown allowHtml>{s.content}</Markdown>
+                  </ScrollArea>
+                )}
               </div>
-            </button>
+            </article>
           ))}
           {!result.results.length && (
             <div className="empty-inline">

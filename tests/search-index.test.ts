@@ -219,6 +219,8 @@ test("retrieval can select document statistics without invoking an answer model"
     all: async () => [resource],
     one: async () => resource,
     permission: async () => true,
+    permissions: async (_actor: unknown, _kind: string, ids: string[]) =>
+      ids.map(() => true),
   } as unknown as import("../server/db").Store;
   const result = await retrieveDocuments(
     store,
@@ -284,6 +286,8 @@ test("several partial matches do not stop exploration before complete evidence",
     all: async () => [resource],
     one: async () => resource,
     permission: async () => true,
+    permissions: async (_actor: unknown, _kind: string, ids: string[]) =>
+      ids.map(() => true),
   } as unknown as import("../server/db").Store;
   let coverageChecks = 0;
   const result = await retrieveDocuments(

@@ -7,6 +7,7 @@ export class ApiError extends Error {
     message: string,
     public readonly status: number,
     public readonly code?: string,
+    public readonly retryAfter?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -30,6 +31,7 @@ export async function api<T = any>(
       ...options.headers,
     },
   });
+  const retryAfter = Number(response.headers.get("Retry-After")) || undefined;
   let data;
   try {
     data = await response.json();
@@ -39,6 +41,8 @@ export async function api<T = any>(
         ? "Too many requests. Wait a moment and try again."
         : "The server returned an unexpected response. Try again.",
       response.status,
+      undefined,
+      retryAfter,
     );
   }
   if (!response.ok) {
@@ -48,6 +52,7 @@ export async function api<T = any>(
       data.error || data.message || "Request failed",
       response.status,
       data.code,
+      retryAfter,
     );
   }
   const message = mutationSuccessMessage(

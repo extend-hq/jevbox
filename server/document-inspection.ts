@@ -13,7 +13,9 @@ export const documentInspectionSchema = z
   .object({
     documentId: z.string().min(1).max(128),
     pages: z.array(z.number().int().positive()).max(5).optional(),
+    printedPages: z.array(z.string().trim().min(1).max(32)).max(5).optional(),
     term: z.string().trim().min(1).max(200).optional(),
+    termOffset: z.number().int().min(0).max(1_000_000).optional(),
     outlineOffset: z.number().int().min(0).max(1_000_000).optional(),
     includeVisuals: z.boolean().optional(),
     visualOffset: z.number().int().min(0).max(1_000_000).optional(),
@@ -21,10 +23,15 @@ export const documentInspectionSchema = z
   .strict();
 export type DocumentInspection = z.infer<typeof documentInspectionSchema>;
 
-function inventoryPage<T>(items: T[], offset: number, characters: number) {
+function inventoryPage<T>(
+  items: T[],
+  offset: number,
+  characters: number,
+  limit = 80,
+) {
   const selected: T[] = [];
   let used = 0;
-  for (const item of items.slice(offset, offset + 80)) {
+  for (const item of items.slice(offset, offset + limit)) {
     const length = JSON.stringify(item).length;
     if (selected.length && used + length > characters) break;
     selected.push(item);
@@ -67,7 +74,38 @@ export async function inspectDocument(
     }
     return titles;
   };
-  const requestedPages = [...new Set(input.pages ?? [])];
+  const pageLabels = new Map<string, Set<number>>();
+  const normalizeLabel = (label: string) =>
+    label
+      .replace(/<[^>]*>/g, " ")
+      .normalize("NFKC")
+      .trim()
+      .replace(/^page\s+/i, "")
+      .toLocaleLowerCase();
+  for (const block of parsed.blocks) {
+    if (block.type !== "page_number") continue;
+    const label = normalizeLabel(block.content);
+    if (!label || label.length > 32) continue;
+    const pages = pageLabels.get(label) ?? new Set<number>();
+    pages.add(block.page);
+    pageLabels.set(label, pages);
+  }
+  const printedRequests = [...new Set(input.printedPages ?? [])].map(
+    (label) => ({
+      label,
+      pdfPages: [...(pageLabels.get(normalizeLabel(label)) ?? [])],
+    }),
+  );
+  const requestedPages = [
+    ...new Set([
+      ...(input.pages ?? []),
+      ...printedRequests.flatMap((request) =>
+        request.pdfPages.length === 1 ? request.pdfPages : [],
+      ),
+    ]),
+  ];
+  if (requestedPages.length > 5)
+    throw new HttpError(400, "Inspect at most five PDF pages at a time");
   const outline = nodes
     .filter(
       (node) =>
@@ -87,7 +125,11 @@ export async function inspectDocument(
       children: node.children.length,
     }));
   const outlineOffset = input.outlineOffset ?? 0;
-  const sections = inventoryPage(outline, outlineOffset, 12000);
+  const sections = inventoryPage(
+    outline,
+    outlineOffset,
+    input.term ? 6000 : 12000,
+  );
   const text = (
     parsed.blocks.length
       ? parsed.blocks.map((block) => block.content).join("\n")
@@ -133,6 +175,27 @@ export async function inspectDocument(
   const statistics: Record<string, unknown> = {
     document: document.name,
     pages: parsed.pages,
+    pageNumbering: {
+      requestedPrintedPages: printedRequests,
+      requestedPdfPages: requestedPages.map((page) => ({
+        pdfPage: page,
+        printedLabels: [...pageLabels]
+          .filter(([, pages]) => pages.has(page))
+          .map(([label]) => label),
+      })),
+      matchingPrintedLabels: [...new Set((input.pages ?? []).map(String))].map(
+        (label) => ({ label, pdfPages: [...(pageLabels.get(label) ?? [])] }),
+      ),
+      offsetSamples: [...pageLabels]
+        .flatMap(([label, pages]) =>
+          [...pages]
+            .filter((page) => label !== String(page))
+            .map((pdfPage) => ({ label, pdfPage })),
+        )
+        .slice(0, 8),
+      method:
+        "Only explicitly extracted page-number blocks establish these labels. PDF page positions and printed labels can differ. No offset is inferred. A missing label is unknown. A repeated printed label is ambiguous: choose an explicit PDF page using document context. Use printedPages for unique printed labels and pages for PDF positions.",
+    },
     extractedWordCount: text.trim().split(/\s+/u).filter(Boolean).length,
     figures: parsed.blocks.filter((block) => block.type === "figure").length,
     tables: parsed.blocks.filter((block) => block.type === "table").length,
@@ -149,6 +212,16 @@ export async function inspectDocument(
     nextOutlineOffset: sections.next,
     sectionsTruncated: outlineOffset > 0 || sections.next !== null,
     sections: sections.items,
+  };
+  const matchingBlocks: {
+    id: string;
+    page: number;
+    content: string;
+    count: number;
+  }[] = [];
+  let termPage: { items: typeof matchingBlocks; next: number | null } = {
+    items: [],
+    next: null,
   };
   if (input.includeVisuals) {
     const pageBlocks = new Map<number, typeof parsed.blocks>();
@@ -189,7 +262,11 @@ export async function inspectDocument(
         };
       });
     const visualOffset = input.visualOffset ?? 0;
-    const inventory = inventoryPage(visuals, visualOffset, 8000);
+    const inventory = inventoryPage(
+      visuals,
+      visualOffset,
+      input.term ? 4000 : 8000,
+    );
     statistics.visualInventory = {
       total: visuals.length,
       offset: visualOffset,
@@ -203,16 +280,67 @@ export async function inspectDocument(
     const needle = input.term.normalize("NFKC").toLocaleLowerCase();
     const haystack = text.toLocaleLowerCase();
     let count = 0,
-      offset = 0;
-    while ((offset = haystack.indexOf(needle, offset)) !== -1) {
+      searchOffset = 0;
+    while ((searchOffset = haystack.indexOf(needle, searchOffset)) !== -1) {
       count++;
-      offset += needle.length;
+      searchOffset += needle.length;
     }
     statistics.termOccurrences = {
       term: input.term,
       count,
       method:
         "Case-insensitive literal matches in the complete extracted text, including matches inside longer phrases. This is not a count of distinct objects, charts, tables, or categories.",
+    };
+    const seen = new Set<string>();
+    for (const block of parsed.blocks) {
+      if (
+        seen.has(block.id) ||
+        (requestedPages.length && !requestedPages.includes(block.page))
+      )
+        continue;
+      seen.add(block.id);
+      const content = block.content
+        .replace(/<[^>]*>/g, " ")
+        .replace(/\u00ad/g, "")
+        .normalize("NFKC");
+      const lower = content.toLocaleLowerCase();
+      const first = lower.indexOf(needle);
+      if (first < 0) continue;
+      let count = 0;
+      for (
+        let offset = first;
+        offset !== -1;
+        offset = lower.indexOf(needle, offset + needle.length)
+      )
+        count++;
+      const start = Math.max(0, first - 350);
+      const end = Math.min(content.length, start + 1200);
+      matchingBlocks.push({
+        id: block.id,
+        page: block.page,
+        count,
+        content: `${start ? "[Earlier block text omitted]\n" : ""}${content.slice(start, end)}${end < content.length ? "\n[Later block text omitted]" : ""}`,
+      });
+    }
+    const termOffset = input.termOffset ?? 0;
+    termPage = inventoryPage(matchingBlocks, termOffset, 6000, 8);
+    const pageCounts = new Map<number, number>();
+    for (const block of matchingBlocks)
+      pageCounts.set(
+        block.page,
+        (pageCounts.get(block.page) ?? 0) + block.count,
+      );
+    statistics.termLocations = {
+      pages: requestedPages,
+      totalMatchingBlocks: matchingBlocks.length,
+      offset: termOffset,
+      nextTermOffset: termPage.next,
+      pageCounts: [...pageCounts]
+        .slice(0, 200)
+        .map(([page, matches]) => ({ page, matches })),
+      pageInventoryComplete: pageCounts.size <= 200,
+      method:
+        "Matching extracted blocks on the requested pages, or all pages when none are specified. Excerpts surround the first literal match in each block and may be partial. Continue with nextTermOffset for more blocks. Matches do not establish semantic relevance or object counts.",
     };
   }
   const source = (
@@ -254,6 +382,18 @@ export async function inspectDocument(
     ),
   ];
   let remainingCharacters = Math.max(0, 24000 - result[0].content.length);
+  for (const block of termPage.items) {
+    result.push(
+      source(
+        block.page,
+        `Matching text on page ${block.page}`,
+        block.content,
+        [block.id],
+        `inspection-term-${block.id}`,
+      ),
+    );
+    remainingCharacters -= block.content.length;
+  }
   for (const page of requestedPages) {
     if (!Number.isInteger(page) || page < 1 || page > parsed.pages) {
       result.push(

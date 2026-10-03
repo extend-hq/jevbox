@@ -1,3 +1,5 @@
+import { StorageSettings } from "./components/storage-settings";
+import { Database } from "./components/icons";
 import { toastManager } from "./components/coss/toast";
 import { authClient } from "./lib/auth-client";
 import { uploadBatch } from "./lib/upload-batch";
@@ -519,13 +521,15 @@ export default function App() {
             { label: "Settings", href: paths.settings() },
             {
               label:
-                settingsSection === "mcp"
-                  ? "MCP"
-                  : settingsSection === "api-keys"
-                    ? "API keys"
-                    : settingsSection === "connections"
-                      ? "Connections"
-                      : "Members",
+                settingsSection === "storage"
+                  ? "Storage"
+                  : settingsSection === "mcp"
+                    ? "MCP"
+                    : settingsSection === "api-keys"
+                      ? "API keys"
+                      : settingsSection === "connections"
+                        ? "Connections"
+                        : "Members",
               href: paths.settings(settingsSection),
             },
           ]
@@ -786,6 +790,7 @@ export default function App() {
             ? [
                 { id: "people", title: "Members", icon: Users },
                 { id: "connections", title: "Connections", icon: KeyRound },
+                { id: "storage", title: "Storage", icon: Database },
                 { id: "api-keys", title: "API keys", icon: UserKey },
                 { id: "mcp", title: "MCP", icon: McpIcon },
               ]
@@ -903,7 +908,9 @@ export default function App() {
             />
           ) : page === "settings" ? (
             <ScrollArea scrollFade>
-              {settingsSection === "api-keys" ? (
+              {settingsSection === "storage" ? (
+                <StorageSettings key={me.organization.id} />
+              ) : settingsSection === "api-keys" ? (
                 <ApiKeysView key={me.user.id} me={me} />
               ) : settingsSection === "mcp" ? (
                 <McpView key={me.user.id} me={me} />

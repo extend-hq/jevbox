@@ -9,12 +9,17 @@ const scopedLimits = (
   defaults: { user: number; organization: number; deployment: number },
 ) => ({
   user: optionalLimit(`UPLOAD_USER_${name}`, defaults.user),
-  organization: Infinity,
-  deployment: Infinity,
+  organization: optionalLimit(
+    `UPLOAD_ORGANIZATION_${name}`,
+    defaults.organization,
+  ),
+  deployment: optionalLimit(`UPLOAD_DEPLOYMENT_${name}`, defaults.deployment),
 });
 
 export function uploadAdmissionLimits() {
   return {
+    waiting: configuredLimit("UPLOAD_WAITING_REQUESTS", 32),
+    waitMs: configuredLimit("UPLOAD_WAIT_TIMEOUT_MS", 10_000),
     active: optionalLimit("UPLOAD_CONCURRENCY", uploadLimits.active),
     activePerUser: optionalLimit(
       "UPLOAD_USER_CONCURRENCY",

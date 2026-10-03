@@ -132,13 +132,33 @@ function providerCredential(settings: Settings) {
   return settings.credentials?.[settings.provider ?? "openai"];
 }
 function chatConfigured(settings: Settings) {
-  const c = providerCredential(settings);
-  return Boolean(
-    c?.enabled !== false &&
-    (c?.apiKey ||
-      c?.config?.googleAuthOptions ||
-      (c?.config?.accessKeyId && c?.config?.secretAccessKey)),
-  );
+  const credential = providerCredential(settings);
+  if (!credential || credential.enabled === false) return false;
+  const present = (value: unknown) =>
+    typeof value === "string" && value.trim().length > 0;
+  const config = credential.config ?? {};
+  const aws = present(config.accessKeyId) && present(config.secretAccessKey);
+  switch (settings.provider ?? "openai") {
+    case "vertex": {
+      return z
+        .object({
+          credentials: z
+            .object({
+              client_email: z.string().trim().min(1),
+              private_key: z.string().trim().min(1),
+            })
+            .strict(),
+        })
+        .strict()
+        .safeParse(config.googleAuthOptions).success;
+    }
+    case "bedrock":
+      return present(credential.apiKey) || aws;
+    case "anthropic-aws":
+      return present(credential.apiKey) || aws;
+    default:
+      return present(credential.apiKey);
+  }
 }
 export function availableChatModels(settings: Settings) {
   return providerCatalog.flatMap((provider) => {
@@ -176,7 +196,13 @@ export async function generateAnswer(
     );
   const config = credential.config ?? {};
   const networkFetch = fetcher === fetch ? publicFetch : fetcher;
-  const options = { ...config, apiKey: credential.apiKey, fetch: networkFetch };
+  const options = {
+    ...config,
+    apiKey: credential.apiKey?.trim() || "",
+    sessionToken:
+      typeof config.sessionToken === "string" ? config.sessionToken : "",
+    fetch: networkFetch,
+  };
   const modelId = settings.model;
   if (!modelId)
     throw new HttpError(409, "Set a model ID in organization settings.");
@@ -336,7 +362,7 @@ export async function generateAnswer(
                 ? {
                     inspect_document: tool({
                       description:
-                        "Inspect an attached or previously retrieved document. Returns full-document statistics and a paginated section outline with exact titles and parent headings. With pages, the outline focuses on those PDF page positions and includes their extracted text. Continue an outline with outlineOffset=nextOutlineOffset. Set includeVisuals=true for a paginated extracted figure/table inventory with page context; continue with visualOffset=nextVisualOffset. Request a literal term for text frequency, which is not an object or chart count. Extraction and captions can differ from the visual original; do not guess visual colors, relationships, or exact visual counts.",
+                        "Inspect an attached or previously retrieved document. Returns full-document statistics and a paginated section outline with exact titles and parent headings. With pages, the outline focuses on those PDF page positions and includes their extracted text. With printedPages, uniquely matching extracted printed page labels resolve to PDF positions. pageNumbering reports observed labels, alternative mappings, and ambiguous or missing labels; never assume a fixed offset. Continue an outline with outlineOffset=nextOutlineOffset. Set includeVisuals=true for a paginated extracted figure/table inventory with page context; continue with visualOffset=nextVisualOffset. Request a literal term for text frequency and cited matching passages with page locations. Continue matching passages with termOffset=nextTermOffset; pages restrict the matching passages, while the top-level frequency remains document-wide. Literal frequency is not an object or chart count. Extraction and captions can differ from the visual original; do not guess visual colors, relationships, or exact visual counts.",
                       inputSchema: documentInspectionSchema,
                       execute: async (input, { abortSignal }) => {
                         try {

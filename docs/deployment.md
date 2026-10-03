@@ -4,7 +4,7 @@ All configuration is contained in this repository. Render deploys changes from `
 
 ## Portable container
 
-The runtime image includes only Chromium's headless shell and its Linux libraries, installed during the image build. Thumbnail workers serve their bundled renderer on an ephemeral loopback port; they need no public renderer endpoint or display server. Local development requires `pnpm exec playwright install --only-shell chromium` once. The default restricted containers use Playwright's default sandbox setting; set `THUMBNAIL_CHROMIUM_SANDBOX=true` only where the runtime supports Chromium's sandbox. Rendering contexts block external network access and never receive session tokens or provider credentials. Keep worker memory limits separate from the API; native image and text previews do not launch Chromium.
+The runtime image includes only Chromium's headless shell and its Linux libraries, installed during the image build. Thumbnail workers serve their bundled renderer on an ephemeral loopback port; they need no public renderer endpoint or display server. Local development requires `pnpm exec playwright install --only-shell chromium` once. Chromium sandboxing defaults on for non-Linux hosts. The default restricted Linux containers cannot create Chromium user namespaces, so their sandbox remains disabled to preserve thumbnails. Set `THUMBNAIL_CHROMIUM_SANDBOX=true` after configuring and testing a compatible Linux runtime and seccomp policy; see [Playwright's container guidance](https://playwright.dev/docs/docker). There is no automatic retry without the sandbox when it is explicitly enabled. Rendering contexts block external network access and never receive session tokens or provider credentials. Keep worker memory limits separate from the API; native image and text previews do not launch Chromium.
 
 Build an immutable image tag and push to a registry you control:
 
@@ -40,29 +40,44 @@ Generate secrets with `openssl rand -hex 32`. Store them in your cloud secret ma
 
 The defaults support concurrent users on one web instance. Authenticated browser, REST, and MCP requests share per-user buckets across tabs and credentials. Anonymous requests and native authentication endpoints use trusted client IPs. These admission ceilings do not change Render service sizes or background-worker concurrency.
 
-| Variable                                                              | Default                            |
-| --------------------------------------------------------------------- | ---------------------------------- |
-| `API_READ_LIMIT_PER_MINUTE` / `API_WRITE_LIMIT_PER_MINUTE`            | 100,000 / 100,000 per user         |
-| `API_KEY_LIMIT_PER_MINUTE`                                            | 100,000 per key                    |
-| `ANONYMOUS_LIMIT_PER_MINUTE`                                          | 100,000 per IP and request kind    |
-| `AUTH_LIMIT_PER_MINUTE`                                               | 100,000 per IP and endpoint        |
-| `AUTH_SIGN_IN_LIMIT_PER_15_MINUTES`                                   | 10,000 per IP                      |
-| `AUTH_SIGN_UP_LIMIT_PER_MINUTE`                                       | 10,000 per IP                      |
-| `AUTH_RECOVERY_LIMIT_PER_15_MINUTES`                                  | 1,000 per IP                       |
-| `AUTH_VERIFICATION_LIMIT_PER_15_MINUTES`                              | 10,000 per IP                      |
-| `AUTH_KEY_CREATION_LIMIT_PER_HOUR`                                    | 10,000 per IP                      |
-| `AUTH_OAUTH_LIMIT_PER_MINUTE`                                         | 100,000 per IP and endpoint        |
-| `AUTH_OAUTH_REGISTRATION_LIMIT_PER_MINUTE`                            | 10,000 per IP                      |
-| `SEARCH_USER_LIMIT_PER_MINUTE` / `SEARCH_CREDENTIAL_LIMIT_PER_MINUTE` | 10,000 / 10,000                    |
-| `RUN_USER_CONCURRENCY`                                                | 10,000 per user in an organization |
-| `UPLOAD_CONCURRENCY` / `UPLOAD_USER_CONCURRENCY`                      | Unlimited / unlimited              |
-| `UPLOAD_IN_FLIGHT_BYTES`                                              | 536,870,912 (512 MiB)              |
-| `UPLOAD_VALIDATION_CONCURRENCY`                                       | 4                                  |
-| `UPLOAD_TIMEOUT_MS`                                                   | 120,000                            |
+| Variable                                                                                                       | Default                                              |
+| -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `API_READ_LIMIT_PER_MINUTE` / `API_WRITE_LIMIT_PER_MINUTE`                                                     | 1,200 / 120 per user                                 |
+| `API_KEY_LIMIT_PER_MINUTE`                                                                                     | 600 per key                                          |
+| `ANONYMOUS_LIMIT_PER_MINUTE`                                                                                   | 300 per IP and request kind                          |
+| `AUTH_LIMIT_PER_MINUTE`                                                                                        | 60 per IP and endpoint                               |
+| `AUTH_SIGN_IN_LIMIT_PER_15_MINUTES`                                                                            | 20 per IP                                            |
+| `AUTH_SIGN_UP_LIMIT_PER_MINUTE`                                                                                | 3 per IP                                             |
+| `SIGNUP_DEPLOYMENT_LIMIT_PER_HOUR`                                                                             | 100 per web process                                  |
+| `AUTH_RECOVERY_LIMIT_PER_15_MINUTES`                                                                           | 5 per IP                                             |
+| `AUTH_VERIFICATION_LIMIT_PER_15_MINUTES`                                                                       | 10 per IP                                            |
+| `AUTH_KEY_CREATION_LIMIT_PER_HOUR`                                                                             | 10 per IP                                            |
+| `AUTH_OAUTH_LIMIT_PER_MINUTE` / `AUTH_OAUTH_REGISTRATION_LIMIT_PER_MINUTE`                                     | 120 / 5 per IP                                       |
+| `SEARCH_USER_LIMIT_PER_MINUTE` / `SEARCH_CREDENTIAL_LIMIT_PER_MINUTE` / `SEARCH_ORGANIZATION_LIMIT_PER_MINUTE` | 20 / 20 / 100                                        |
+| `RUN_USER_CONCURRENCY`                                                                                         | 3 per user in an organization                        |
+| `UPLOAD_CONCURRENCY` / `UPLOAD_USER_CONCURRENCY`                                                               | 4 / 2                                                |
+| `UPLOAD_IN_FLIGHT_BYTES`                                                                                       | 134,217,728 (128 MiB); one larger request runs alone |
+| `UPLOAD_WAITING_REQUESTS` / `UPLOAD_WAIT_TIMEOUT_MS`                                                           | 32 / 10,000                                          |
+| `UPLOAD_VALIDATION_CONCURRENCY` / `UPLOAD_TIMEOUT_MS`                                                          | 4 / 120,000                                          |
+| `DOWNLOAD_CONCURRENCY` / `DOWNLOAD_USER_CONCURRENCY`                                                           | 8 / 4                                                |
+| `DOWNLOAD_TEMP_BYTES` / `DOWNLOAD_TIMEOUT_MS`                                                                  | 536,870,912 (512 MiB) / 120,000                      |
 
-Upload attempts default to 10,000 per minute and 100,000 per hour per user. There are no shared organization or deployment quotas. Document counts, stored bytes, daily bytes, and pending-document counts are unlimited by default. Optional positive-integer `UPLOAD_USER_{ATTEMPTS_PER_MINUTE,ATTEMPTS_PER_HOUR,DAILY_BYTES,STORED_BYTES,DOCUMENTS,PENDING_DOCUMENTS}` settings can impose user-specific limits; organization and deployment quota settings are ignored. Leave `UPLOAD_CONCURRENCY` and `UPLOAD_USER_CONCURRENCY` unset for unlimited request counts. The memory budget and any configured concurrency settings queue excess bodies instead of rejecting them. Receipt/processing deadlines start when a body is admitted. Higher memory and validation concurrency settings need matching instance capacity.
+Files may be up to 250 MB. Browser batches accept up to 100 files and preserve nested folder paths. Files upload sequentially, with progress and bounded retries for short retryable capacity/rate-limit responses. Organizations start with 10 GB (10,000,000,000 bytes), shared across all members. Original files and serialized search indexes count toward the allowance shown in Settings → Storage. Uploads are rejected once full, including empty files; any upload crossing the limit is rejected atomically. Deleting documents frees storage. Existing documents are retained if usage already exceeds the limit. Indexing cannot push storage above the allowance.
 
-The normal migration raises existing API keys that still have a previous default of 180 or 6,000 requests per minute to 100,000. Custom key limits are preserved. `API_KEY_LIMIT_PER_MINUTE` configures newly created keys; existing keys store their own limits. Render environment overrides take precedence over code defaults, so remove or update an old override to adopt a raised limit.
+| Upload safeguard       | User   | Organization | Deployment |
+| ---------------------- | ------ | ------------ | ---------- |
+| Attempts per minute    | 240    | 600          | 1,200      |
+| Attempts per hour      | 300    | 1,200        | 5,000      |
+| Documents              | 1,000  | 5,000        | 25,000     |
+| Pending documents      | 200    | 500          | 2,000      |
+| Stored bytes           | 15 GiB | 10 GB        | 500 GiB    |
+| Uploaded bytes per day | 15 GiB | 100 GiB      | 250 GiB    |
+
+All scopes support positive-integer `UPLOAD_{USER,ORGANIZATION,DEPLOYMENT}_{ATTEMPTS_PER_MINUTE,ATTEMPTS_PER_HOUR,DAILY_BYTES,STORED_BYTES,DOCUMENTS,PENDING_DOCUMENTS}` overrides. Daily counters are not refunded on deletion. Upload counters and storage checks use database transactions. Search, request, signup, download and in-flight upload admission limits are per process; keep one public web replica or add shared ingress admission before scaling out.
+
+Original downloads, public links, and ZIP entries stream through private temporary files with bounded concurrency and aggregate disk use. S3 checksums are verified before original bytes are returned. Range requests still read and verify the complete source but only send the requested range; HEAD requests read metadata only. Allow at least 1 GiB writable temporary disk on the web service. Large uploads still use bounded in-memory buffering; increase memory only alongside explicit concurrency limits.
+
+Migration 021 lowers existing API keys using prior default limits of 6,000 or 100,000 requests per minute to 600. Other custom limits are preserved. `API_KEY_LIMIT_PER_MINUTE` applies to newly created keys. Environment overrides take precedence over defaults; review old deployment overrides when adopting these limits.
 
 ## Web and background services
 

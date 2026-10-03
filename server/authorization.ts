@@ -5,6 +5,13 @@ export type Relationship = {
   relation: string;
   subject: { object: { objectType: string; objectId: string } };
 };
+export type PermissionCheck = {
+  kind: "resource" | "organization" | "chat";
+  id: string;
+  permission: string;
+  zedToken?: string | null;
+};
+export const bulkPermissionBatchSize = 10_000;
 export function createAuthorization(url: string, token: string) {
   const endpoint = new URL(url);
   if (
@@ -45,15 +52,32 @@ export function createAuthorization(url: string, token: string) {
   async function ready() {
     await request("/v1/schema/read", {});
   }
+  function requireToken(value: unknown): string {
+    if (typeof value !== "string" || !value.length)
+      throw new HttpError(503, "Permission service unavailable. Please retry.");
+    return value;
+  }
+  function consistency(zedToken?: string | null) {
+    return zedToken == null
+      ? { fullyConsistent: true }
+      : { atLeastAsFresh: { token: requireToken(zedToken) } };
+  }
   async function write(relationships: Relationship[]) {
+    if (!relationships.length) {
+      const response = await request("/v1/schema/read", {});
+      return requireToken(response?.readAt?.token);
+    }
+    let zedToken = "";
     for (let i = 0; i < relationships.length; i += 500) {
-      await request("/v1/relationships/write", {
+      const response = await request("/v1/relationships/write", {
         updates: relationships.slice(i, i + 500).map((relationship) => ({
           operation: "OPERATION_TOUCH",
           relationship,
         })),
       });
+      zedToken = requireToken(response?.writtenAt?.token);
     }
+    return zedToken;
   }
   async function check(
     version: string,
@@ -62,9 +86,10 @@ export function createAuthorization(url: string, token: string) {
     permission: string,
     userId: string,
     subjectKind: "user" | "link" = "user",
+    zedToken?: string | null,
   ) {
     const response = await request("/v1/permissions/check", {
-      consistency: { fullyConsistent: true },
+      consistency: consistency(zedToken),
       resource: { objectType: `jevbox/${kind}`, objectId: `${version}/${id}` },
       permission,
       subject: {
@@ -80,51 +105,86 @@ export function createAuthorization(url: string, token: string) {
     permission: string,
     userId: string,
     subjectKind: "user" | "link" = "user",
+    zedToken?: string | null,
   ): Promise<boolean[]> {
-    const allowed: boolean[] = [];
-    for (let i = 0; i < ids.length; i += 500) {
-      const items = ids.slice(i, i + 500).map((id) => ({
-        resource: {
-          objectType: `jevbox/${kind}`,
-          objectId: `${version}/${id}`,
-        },
-        permission,
-        subject: {
-          object: { objectType: `jevbox/${subjectKind}`, objectId: userId },
-        },
-      }));
-      const response = await request("/v1/permissions/checkbulk", {
-        consistency: { fullyConsistent: true },
-        items,
-      });
-      if (
-        !Array.isArray(response?.pairs) ||
-        response.pairs.length !== items.length
-      )
-        throw new HttpError(
-          503,
-          "Permission service unavailable. Please retry.",
-        );
-      for (const [index, pair] of response.pairs.entries()) {
-        const expected = items[index];
+    return checkMany(
+      version,
+      ids.map((id) => ({ kind, id, permission })),
+      userId,
+      subjectKind,
+      zedToken,
+    );
+  }
+  async function checkMany(
+    version: string,
+    checks: PermissionCheck[],
+    userId: string,
+    subjectKind: "user" | "link" = "user",
+    zedToken?: string | null,
+  ): Promise<boolean[]> {
+    const allowed: boolean[] = new Array(checks.length);
+    const groups = new Map<
+      string | null,
+      Map<string, { check: PermissionCheck; indices: number[] }>
+    >();
+    for (const [index, check] of checks.entries()) {
+      const token =
+        check.zedToken === undefined ? (zedToken ?? null) : check.zedToken;
+      const group = groups.get(token) ?? new Map();
+      groups.set(token, group);
+      const key = JSON.stringify([check.kind, check.id, check.permission]);
+      const item = group.get(key) ?? { check, indices: [] };
+      item.indices.push(index);
+      group.set(key, item);
+    }
+    for (const [token, group] of groups) {
+      const entries = [...group.values()];
+      for (let i = 0; i < entries.length; i += bulkPermissionBatchSize) {
+        const batch = entries.slice(i, i + bulkPermissionBatchSize);
+        const items = batch.map(({ check: { kind, id, permission } }) => ({
+          resource: {
+            objectType: `jevbox/${kind}`,
+            objectId: `${version}/${id}`,
+          },
+          permission,
+          subject: {
+            object: { objectType: `jevbox/${subjectKind}`, objectId: userId },
+          },
+        }));
+        const response = await request("/v1/permissions/checkbulk", {
+          consistency: consistency(token),
+          items,
+        });
         if (
-          !pair ||
-          pair.error ||
-          !pair.item ||
-          pair.request?.resource?.objectType !== expected.resource.objectType ||
-          pair.request?.resource?.objectId !== expected.resource.objectId ||
-          pair.request?.permission !== permission ||
-          pair.request?.subject?.object?.objectType !==
-            expected.subject.object.objectType ||
-          pair.request?.subject?.object?.objectId !== userId
+          !Array.isArray(response?.pairs) ||
+          response.pairs.length !== items.length
         )
           throw new HttpError(
             503,
             "Permission service unavailable. Please retry.",
           );
-        allowed.push(
-          pair.item.permissionship === "PERMISSIONSHIP_HAS_PERMISSION",
-        );
+        for (const [index, pair] of response.pairs.entries()) {
+          const expected = items[index];
+          if (
+            !pair ||
+            pair.error ||
+            !pair.item ||
+            pair.request?.resource?.objectType !==
+              expected.resource.objectType ||
+            pair.request?.resource?.objectId !== expected.resource.objectId ||
+            pair.request?.permission !== expected.permission ||
+            pair.request?.subject?.object?.objectType !==
+              expected.subject.object.objectType ||
+            pair.request?.subject?.object?.objectId !== userId
+          )
+            throw new HttpError(
+              503,
+              "Permission service unavailable. Please retry.",
+            );
+          for (const position of batch[index].indices)
+            allowed[position] =
+              pair.item.permissionship === "PERMISSIONSHIP_HAS_PERMISSION";
+        }
       }
     }
     return allowed;
@@ -139,5 +199,13 @@ export function createAuthorization(url: string, token: string) {
       });
     }
   }
-  return { initialize, ready, write, check, checkBulk, removeSnapshot };
+  return {
+    initialize,
+    ready,
+    write,
+    check,
+    checkBulk,
+    checkMany,
+    removeSnapshot,
+  };
 }

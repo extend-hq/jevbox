@@ -431,8 +431,9 @@ test("expiration during permission publication rolls back the entire completion"
   } as BackgroundJob;
   const publish = store.authorization.write;
   store.authorization.write = async (...args) => {
-    await publish(...args);
+    const zedToken = await publish(...args);
     await new Promise((resolve) => setTimeout(resolve, 1100));
+    return zedToken;
   };
   try {
     await assert.rejects(

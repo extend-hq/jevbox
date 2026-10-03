@@ -6,13 +6,14 @@ Nucleo Icons
 - Icons are restricted for use only within the product they are bundled with.
 
 Nucleo Micro Bold icons are licensed commercial assets from Nucleo (https://nucleoapp.com).
-The application includes 97 unique icon designs obtained from the owner's licensed local collection. Export aliases and inline SVG sprites reuse these designs.
+The application includes 98 unique icon designs obtained from the owner's licensed local collection. Export aliases and inline SVG sprites reuse these designs.
 These assets remain governed by the Nucleo license:
 https://nucleoapp.com/license
 They are not relicensed under the licenses of other source code in this repository.
 
 Included unique icon definitions (outline and filled designs counted separately):
 BranchOut
+Database
 CameraFilled
 CircleCheck
 CircleCheckFilled

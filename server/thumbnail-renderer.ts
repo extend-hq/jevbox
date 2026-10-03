@@ -44,7 +44,10 @@ export function createThumbnailRenderer() {
     if (!browser?.isConnected()) {
       browser = await chromium.launch({
         headless: true,
-        chromiumSandbox: process.env.THUMBNAIL_CHROMIUM_SANDBOX === "true",
+        chromiumSandbox:
+          process.env.THUMBNAIL_CHROMIUM_SANDBOX === undefined
+            ? process.platform !== "linux"
+            : process.env.THUMBNAIL_CHROMIUM_SANDBOX === "true",
         timeout: 30_000,
         args: [
           "--js-flags=--max-old-space-size=256",

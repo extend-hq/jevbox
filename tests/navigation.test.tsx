@@ -58,6 +58,7 @@ test("routes preserve folders, document sections, search queries, conversations 
   assert.equal(read(paths.chat("chat")).chatId, "chat");
   assert.equal(read(paths.search("a & b / c")).query, "a & b / c");
   assert.equal(read(paths.settings("api-keys")).settingsSection, "api-keys");
+  assert.equal(read(paths.settings("storage")).settingsSection, "storage");
   assert.equal(read("/?document=doc&node=section").tab, "index");
   assert.equal(read("/?folder=folder").folderId, "folder");
   assert.equal(read("/documents/doc").documentId, "doc");

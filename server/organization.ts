@@ -8,10 +8,12 @@ import { getSettings } from "./providers";
 import { flatten, type ParsedDocument } from "./indexing";
 import { createReorganization, enqueueReorganization } from "./reorganization";
 import {
-  resourceAccess,
+  resourceAccessBatch,
+  resourcePermissionsBatch,
   type Resource,
   type Actor,
   type Store,
+  type PermissionCache,
   HttpError,
 } from "./db";
 
@@ -311,6 +313,7 @@ export function createOrganization(
       role: member.role,
       token: "",
     };
+    const permissionCache: PermissionCache = { values: new Map() };
     const signal = AbortSignal.any([job.signal, AbortSignal.timeout(90000)]);
     async function check() {
       signal.throwIfAborted();
@@ -323,6 +326,15 @@ export function createOrganization(
         "SELECT state,attempt_id FROM document_filing WHERE resource_id=?",
         document.id,
       );
+      const [shareable, writable] = await resourcePermissionsBatch(
+        store,
+        actor,
+        [
+          { id: document.id, action: "share" },
+          ...(scopeId ? [{ id: scopeId, action: "write" as const }] : []),
+        ],
+        permissionCache,
+      );
       if (
         !current ||
         current.status !== "ready" ||
@@ -331,13 +343,13 @@ export function createOrganization(
         current.parsed !== document.parsed ||
         job?.state !== "working" ||
         job.attempt_id !== attemptId ||
-        !(await resourceAccess(store, actor, document.id, "share"))
+        !shareable
       )
         throw new HttpError(
           409,
           "The document changed or is no longer accessible. Filing stopped.",
         );
-      if (scopeId && !(await resourceAccess(store, actor, scopeId, "write")))
+      if (scopeId && !writable)
         throw new HttpError(
           409,
           "The upload folder is no longer writable. Filing stopped.",
@@ -355,13 +367,20 @@ export function createOrganization(
         );
     }
     await check();
-    const folders: Folder[] = [];
-    for (const folder of await store.all<Resource>(
+    const folderRows = await store.all<Resource>(
       "SELECT * FROM resources WHERE org_id=? AND kind='folder' ORDER BY created,id",
       actor.orgId,
-    ))
-      if (await resourceAccess(store, actor, folder.id, "write"))
-        folders.push(folder);
+    );
+    const writable = await resourceAccessBatch(
+      store,
+      actor,
+      folderRows.map((folder) => folder.id),
+      "write",
+      permissionCache,
+    );
+    const folders: Folder[] = folderRows.filter((folder) =>
+      writable.has(folder.id),
+    );
     const eligible = new Set<string>();
     const isDescendant = (folder: Folder) => {
       let parent = folder.parent_id;
@@ -382,20 +401,30 @@ export function createOrganization(
     const jev = createJev(settings.jevKey, fetcher, signal);
     async function checkFolders() {
       await check();
-      for (const folder of folders.filter((folder) =>
-        eligible.has(folder.id),
-      )) {
-        const current = await store.one<Folder>(
-          "SELECT * FROM resources WHERE id=? AND org_id=?",
-          folder.id,
-          actor.orgId,
-        );
+      const selected = folders.filter((folder) => eligible.has(folder.id));
+      const currentRows = await store.all<Folder>(
+        "SELECT * FROM resources WHERE org_id=? AND id=ANY(?::text[])",
+        actor.orgId,
+        selected.map((folder) => folder.id),
+      );
+      const currentById = new Map(
+        currentRows.map((folder) => [folder.id, folder]),
+      );
+      const allowed = await resourceAccessBatch(
+        store,
+        actor,
+        selected.map((folder) => folder.id),
+        "write",
+        permissionCache,
+      );
+      for (const folder of selected) {
+        const current = currentById.get(folder.id);
         if (
           !current ||
           current.parent_id !== folder.parent_id ||
           current.name !== folder.name ||
           current.description !== folder.description ||
-          !(await resourceAccess(store, actor, folder.id, "write"))
+          !allowed.has(folder.id)
         )
           throw new HttpError(409, "Folders changed. Retry filing.");
       }
@@ -526,7 +555,18 @@ export function createOrganization(
         return;
       }
       let parentId = plan.parentId;
-      if (parentId && !(await resourceAccess(store, actor, parentId, "write")))
+      if (
+        parentId &&
+        !(
+          await resourceAccessBatch(
+            store,
+            actor,
+            [parentId],
+            "write",
+            permissionCache,
+          )
+        ).has(parentId)
+      )
         throw new HttpError(
           409,
           "The destination is no longer writable. Retry filing.",
@@ -538,14 +578,17 @@ export function createOrganization(
           actor.orgId,
           parentId,
         );
-        let existing: Resource | undefined;
-        for (const sibling of siblings.filter(
+        const matching = siblings.filter(
           (node) => normalized(node.name) === normalized(folder.name),
-        ))
-          if (await resourceAccess(store, actor, sibling.id, "write")) {
-            existing = sibling;
-            break;
-          }
+        );
+        const writable = await resourceAccessBatch(
+          store,
+          actor,
+          matching.map((sibling) => sibling.id),
+          "write",
+          permissionCache,
+        );
+        const existing = matching.find((sibling) => writable.has(sibling.id));
         if (existing) {
           parentId = existing.id;
           continue;

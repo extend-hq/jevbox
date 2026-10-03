@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { createStore, type Actor } from "../server/db";
 import { getSettings, type Fetch } from "../server/providers";
@@ -138,8 +139,11 @@ const implementation = await Promise.all(
     "server/search-metadata.ts",
     "server/search-candidates.ts",
     "server/routing-preview.ts",
+    "server/passage-priority.ts",
     "server/providers.ts",
-  ].map((path) => readFile(resolve(path))),
+  ].map((path) =>
+    readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", path)),
+  ),
 );
 let implementationHash = createHash("sha256")
   .update(Buffer.concat(implementation))

@@ -14,7 +14,11 @@ import {
   createCipheriv,
   createDecipheriv,
 } from "node:crypto";
-import { createAuthorization, type Relationship } from "./authorization";
+import {
+  createAuthorization,
+  type Relationship,
+  type PermissionCheck,
+} from "./authorization";
 import { HttpError } from "./errors";
 import { createJobs, type Jobs } from "./jobs";
 import { createFileStorage, createObjectStorage } from "./object-storage";
@@ -222,10 +226,14 @@ export async function createStore(
       add("chat", chat.id, "organization", "organization", orgId);
       add("chat", chat.id, "owner", "user", chat.user_id);
     }
-    await authorization.write(relationships);
+    const zedToken = await authorization.write(relationships);
     await context
       .getStore()!
-      .query("UPDATE orgs SET authz_version=$1 WHERE id=$2", [version, orgId]);
+      .query("UPDATE orgs SET authz_version=$1,authz_token=$2 WHERE id=$3", [
+        version,
+        zedToken,
+        orgId,
+      ]);
     await context
       .getStore()!
       .query("DELETE FROM authz_dirty WHERE org_id=$1", [orgId]);
@@ -277,21 +285,25 @@ export async function createStore(
   }
   async function withPermissionSnapshot<T>(
     actor: Actor,
-    check: (version: string) => Promise<T>,
+    check: (version: string, zedToken: string | null) => Promise<T>,
   ) {
     for (let attempt = 0; attempt < 3; attempt++) {
-      const before = await one<{ authz_version: string }>(
-        "SELECT authz_version FROM orgs WHERE id=?",
-        actor.orgId,
-      );
+      const before = await one<{
+        authz_version: string;
+        authz_token: string | null;
+      }>("SELECT authz_version,authz_token FROM orgs WHERE id=?", actor.orgId);
       if (!before?.authz_version)
         throw new HttpError(503, "Permissions are not initialized");
-      const allowed = await check(before.authz_version);
-      const after = await one<{ authz_version: string }>(
-        "SELECT authz_version FROM orgs WHERE id=?",
-        actor.orgId,
-      );
-      if (after?.authz_version === before.authz_version) return allowed;
+      const allowed = await check(before.authz_version, before.authz_token);
+      const after = await one<{
+        authz_version: string;
+        authz_token: string | null;
+      }>("SELECT authz_version,authz_token FROM orgs WHERE id=?", actor.orgId);
+      if (
+        after?.authz_version === before.authz_version &&
+        after.authz_token === before.authz_token
+      )
+        return allowed;
     }
     throw new HttpError(503, "Permissions changed. Please retry.");
   }
@@ -302,8 +314,16 @@ export async function createStore(
     action: string,
     subjectKind: "user" | "link" = "user",
   ) {
-    return withPermissionSnapshot(actor, (version) =>
-      authorization.check(version, kind, id, action, actor.userId, subjectKind),
+    return withPermissionSnapshot(actor, (version, zedToken) =>
+      authorization.check(
+        version,
+        kind,
+        id,
+        action,
+        actor.userId,
+        subjectKind,
+        zedToken,
+      ),
     );
   }
   async function permissions(
@@ -312,17 +332,90 @@ export async function createStore(
     ids: string[],
     action: string,
     subjectKind: "user" | "link" = "user",
+    cache?: PermissionCache,
   ) {
-    return withPermissionSnapshot(actor, (version) =>
-      authorization.checkBulk(
-        version,
-        kind,
-        ids,
-        action,
-        actor.userId,
-        subjectKind,
-      ),
+    return cachedPermissions(
+      actor,
+      ids.map((id) => ({ kind, id, permission: action })),
+      (version, missing, zedToken) =>
+        authorization.checkBulk(
+          version,
+          kind,
+          missing.map(({ id }) => id),
+          action,
+          actor.userId,
+          subjectKind,
+          zedToken,
+        ),
+      subjectKind,
+      cache,
     );
+  }
+  async function permissionsFor(
+    actor: Actor,
+    checks: PermissionCheck[],
+    subjectKind: "user" | "link" = "user",
+    cache?: PermissionCache,
+  ) {
+    return cachedPermissions(
+      actor,
+      checks,
+      (version, missing, zedToken) =>
+        authorization.checkMany(
+          version,
+          missing,
+          actor.userId,
+          subjectKind,
+          zedToken,
+        ),
+      subjectKind,
+      cache,
+    );
+  }
+  async function cachedPermissions(
+    actor: Actor,
+    checks: PermissionCheck[],
+    check: (
+      version: string,
+      missing: PermissionCheck[],
+      zedToken: string | null,
+    ) => Promise<boolean[]>,
+    subjectKind: "user" | "link",
+    cache?: PermissionCache,
+  ) {
+    if (!checks.length) return [];
+    return withPermissionSnapshot(actor, async (version, zedToken) => {
+      if (cache && (cache.version !== version || cache.zedToken !== zedToken)) {
+        cache.version = version;
+        cache.zedToken = zedToken;
+        cache.values = new Map();
+      }
+      const values = cache?.values ?? new Map<string, boolean>();
+      const key = ({
+        kind,
+        id,
+        permission,
+        zedToken: itemToken,
+      }: PermissionCheck) =>
+        JSON.stringify([
+          kind,
+          permission,
+          subjectKind,
+          actor.userId,
+          id,
+          itemToken === undefined ? zedToken : itemToken,
+        ]);
+      const unique = new Map(checks.map((item) => [key(item), item]));
+      const missing = [...unique.values()].filter(
+        (item) => !values.has(key(item)),
+      );
+      if (missing.length) {
+        const allowed = await check(version, missing, zedToken);
+        for (const [index, item] of missing.entries())
+          values.set(key(item), allowed[index]);
+      }
+      return checks.map((item) => values.get(key(item))!);
+    });
   }
   async function cleanupPermissions() {
     await transaction(async () => {
@@ -445,11 +538,17 @@ export async function createStore(
     authorization,
     permission,
     permissions,
+    permissionsFor,
     cleanupPermissions,
     close,
   };
 }
 export type Store = Awaited<ReturnType<typeof createStore>>;
+export type PermissionCache = {
+  version?: string;
+  zedToken?: string | null;
+  values: Map<string, boolean>;
+};
 export type Actor = {
   userId: string;
   orgId: string;
@@ -495,14 +594,71 @@ export async function resourceAccess(
   );
   return !!resource && store.permission(actor, "resource", id, action);
 }
+export async function resourceAccessBatch(
+  store: Store,
+  actor: Actor,
+  ids: string[],
+  action: "read" | "write" | "share" = "read",
+  cache?: PermissionCache,
+): Promise<Set<string>> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return new Set();
+  const resources = await store.all<{ id: string }>(
+    "SELECT id FROM resources WHERE org_id=? AND id=ANY(?::text[])",
+    actor.orgId,
+    unique,
+  );
+  const scoped = new Set(resources.map((resource) => resource.id));
+  const existing = unique.filter((id) => scoped.has(id));
+  if (!existing.length) return new Set();
+  const allowed = await store.permissions(
+    actor,
+    "resource",
+    existing,
+    action,
+    "user",
+    cache,
+  );
+  return new Set(existing.filter((_id, index) => allowed[index]));
+}
+export async function resourcePermissionsBatch(
+  store: Store,
+  actor: Actor,
+  checks: { id: string; action: "read" | "write" | "share" }[],
+  cache?: PermissionCache,
+): Promise<boolean[]> {
+  if (!checks.length) return [];
+  const resources = await store.all<{ id: string }>(
+    "SELECT id FROM resources WHERE org_id=? AND id=ANY(?::text[])",
+    actor.orgId,
+    [...new Set(checks.map(({ id }) => id))],
+  );
+  const scoped = new Set(resources.map(({ id }) => id));
+  const existing = checks.filter(({ id }) => scoped.has(id));
+  const allowed = await store.permissionsFor(
+    actor,
+    existing.map(({ id, action }) => ({
+      kind: "resource",
+      id,
+      permission: action,
+    })),
+    "user",
+    cache,
+  );
+  let index = 0;
+  return checks.map(({ id }) => (scoped.has(id) ? allowed[index++] : false));
+}
 export async function requireResource(
   store: Store,
   actor: Actor,
   id: string,
   action: "read" | "write" | "share" = "read",
+  cache?: PermissionCache,
 ) {
-  if (!(await resourceAccess(store, actor, id, action)))
-    throw new HttpError(404, "Resource not found");
+  const allowed = cache
+    ? (await resourceAccessBatch(store, actor, [id], action, cache)).has(id)
+    : await resourceAccess(store, actor, id, action);
+  if (!allowed) throw new HttpError(404, "Resource not found");
   const resource = await store.one<Resource>(
     "SELECT * FROM resources WHERE id=? AND org_id=?",
     id,
@@ -511,13 +667,45 @@ export async function requireResource(
   if (!resource) throw new HttpError(404, "Resource not found");
   return resource;
 }
+export async function requireResources(
+  store: Store,
+  actor: Actor,
+  ids: string[],
+  action: "read" | "write" | "share" = "read",
+  cache?: PermissionCache,
+): Promise<Resource[]> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return [];
+  const allowed = await resourceAccessBatch(
+    store,
+    actor,
+    unique,
+    action,
+    cache,
+  );
+  if (allowed.size !== unique.length)
+    throw new HttpError(404, "Resource not found");
+  const resources = await store.all<Resource>(
+    "SELECT * FROM resources WHERE org_id=? AND id=ANY(?::text[])",
+    actor.orgId,
+    unique,
+  );
+  const byId = new Map(resources.map((resource) => [resource.id, resource]));
+  return unique.map((id) => {
+    const resource = byId.get(id);
+    if (!resource) throw new HttpError(404, "Resource not found");
+    return resource;
+  });
+}
 export async function visibleResources(store: Store, actor: Actor) {
   const rows = await store.all<Resource>(
     "SELECT * FROM resources WHERE org_id=? ORDER BY created DESC",
     actor.orgId,
   );
-  const visible: Resource[] = [];
-  for (const row of rows)
-    if (await resourceAccess(store, actor, row.id)) visible.push(row);
-  return visible;
+  const allowed = await resourceAccessBatch(
+    store,
+    actor,
+    rows.map((resource) => resource.id),
+  );
+  return rows.filter((resource) => allowed.has(resource.id));
 }

@@ -227,19 +227,22 @@ test("upload deadline cancels work without admitting replacement bodies before c
   next.release();
 });
 
-test("upload admission has no shared or per-user request-count cap by default", async () => {
-  const uploads = createUploads({} as Store);
-  const leases = Array.from({ length: 1000 }, (_, i) =>
-    uploads.reserve(request("1024"), response(), `user-${i % 10}`, 2048),
+test("upload admission bounds waiting requests and returns retryable backpressure", async () => {
+  const uploads = createUploads({} as Store, {
+    limits: { ...uploadAdmissionLimits(), active: 1, waiting: 1, waitMs: 10 },
+  });
+  const first = uploads.reserve(request(), response(), "first", 10);
+  await first.ready;
+  const waiting = uploads.reserve(request(), response(), "second", 10);
+  assert.throws(
+    () => uploads.reserve(request(), response(), "third", 10),
+    status(429),
   );
-  try {
-    await Promise.all(leases.map((lease) => lease.ready));
-  } finally {
-    leases.forEach((lease) => {
-      lease.release();
-      lease.release();
-    });
-  }
+  await assert.rejects(waiting.ready, status(429));
+  first.release();
+  const next = uploads.reserve(request(), response(), "third", 10);
+  await next.ready;
+  next.release();
 });
 
 test("upload memory backpressure queues declared and chunked bodies and cancels disconnected waiters", async () => {
@@ -350,27 +353,35 @@ test("parser responses above the former 16 MiB cap are accepted for declared and
   }
 });
 
-test("document storage and counts are unlimited by default, with optional user-only overrides", async () => {
+test("storage and document limits apply independently to all scopes", async () => {
   const { checkStoredDocumentQuota } = await import("../server/upload-quotas");
-  let queried = false;
-  const store = {
-    one: async () => {
-      queried = true;
-      return { count: "1000000", size: "1000000000000000" };
-    },
-  } as unknown as Store;
-  await checkStoredDocumentQuota(store, "actor", "org", 1, 1);
-  assert.equal(queried, false);
   const defaults = uploadAdmissionLimits();
-  await assert.rejects(
-    checkStoredDocumentQuota(store, "actor", "org", 1, 1, {
-      ...defaults,
-      documents: { ...defaults.documents, user: 1000000 },
-    }),
-    /count quota/,
-  );
-  await checkStoredDocumentQuota(store, "actor", "org", 1, 1, {
-    ...defaults,
-    documents: { ...defaults.documents, organization: 1, deployment: 1 },
-  });
+  assert.equal(defaults.storedBytes.organization, 10 * 1000 ** 3);
+  for (const scope of ["user", "organization", "deployment"] as const) {
+    const store = {
+      one: async () => ({ count: "1", size: "10" }),
+    } as unknown as Store;
+    await checkStoredDocumentQuota(store, "actor", "org", 1, 1, defaults);
+    await assert.rejects(
+      checkStoredDocumentQuota(store, "actor", "org", 1, 1, {
+        ...defaults,
+        documents: { ...defaults.documents, [scope]: 1 },
+      }),
+      /count quota/,
+    );
+    await assert.rejects(
+      checkStoredDocumentQuota(store, "actor", "org", 1, 1, {
+        ...defaults,
+        storedBytes: { ...defaults.storedBytes, [scope]: 10 },
+      }),
+      /storage/,
+    );
+    await assert.rejects(
+      checkStoredDocumentQuota(store, "actor", "org", 0, 1, {
+        ...defaults,
+        storedBytes: { ...defaults.storedBytes, [scope]: 10 },
+      }),
+      /storage/,
+    );
+  }
 });

@@ -2,11 +2,11 @@ import { queues, type BackgroundJob } from "./jobs";
 import { Router, type Request } from "express";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { asyncEvery, createLimiter } from "./async";
+import { createLimiter } from "./async";
 import {
   HttpError,
-  requireResource,
-  resourceAccess,
+  requireResources,
+  resourceAccessBatch,
   type Actor,
   type Store,
 } from "./db";
@@ -107,10 +107,8 @@ export function createChatRuntime(
     return chat;
   }
   async function readable(a: Actor, deps: string[]) {
-    return asyncEvery(
-      deps,
-      async (id) => !!(await resourceAccess(store, a, id)),
-    );
+    const allowed = await resourceAccessBatch(store, a, deps);
+    return deps.every((id) => allowed.has(id));
   }
   async function assertReadable(a: Actor, deps: string[]) {
     if (!(await readable(a, deps)))
@@ -246,16 +244,15 @@ export function createChatRuntime(
         "This model is not enabled for your organization.",
       );
     const documentIds = [...new Set(input.documentIds)];
-    const attachments = await Promise.all(
-      documentIds.map(async (id) => {
-        const resource = await requireResource(store, a, id);
+    const attachments = (await requireResources(store, a, documentIds)).map(
+      (resource) => {
         if (resource.kind !== "document" || resource.status !== "ready")
           throw new HttpError(
             409,
             "Wait for attached documents to finish indexing before sending.",
           );
         return { id: resource.id, name: resource.name };
-      }),
+      },
     );
     return {
       ...input,
@@ -809,21 +806,29 @@ export function createChatRuntime(
       a.orgId,
       a.userId,
     );
+    const dependencies = new Map<string, string[]>(
+      chats.map((chat) => [chat.id, JSON.parse(chat.dependencies)]),
+    );
+    const allowed = await resourceAccessBatch(
+      store,
+      a,
+      [...dependencies.values()].flat(),
+    );
     res.json(
-      await Promise.all(
-        chats.map(async (chat) => {
-          const blocked = !(await readable(a, JSON.parse(chat.dependencies)));
-          return {
-            id: chat.id,
-            title: blocked
-              ? "Sources no longer available"
-              : chatTitleLabel(chat.title),
-            updated: chat.updated,
-            blocked,
-            working: !blocked && isChatWorking(chat.activity),
-          };
-        }),
-      ),
+      chats.map((chat) => {
+        const blocked = !dependencies
+          .get(chat.id)!
+          .every((id) => allowed.has(id));
+        return {
+          id: chat.id,
+          title: blocked
+            ? "Sources no longer available"
+            : chatTitleLabel(chat.title),
+          updated: chat.updated,
+          blocked,
+          working: !blocked && isChatWorking(chat.activity),
+        };
+      }),
     );
   });
   router.post("/", async (req, res) => {

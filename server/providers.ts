@@ -5,7 +5,7 @@ import {
   type AnswerExecution,
 } from "./ai";
 import type { ModelMessage } from "ai";
-import { type Store, type Actor, type Resource, HttpError } from "./db";
+import { type Store, type Actor, type Resource, type PermissionCache, HttpError } from "./db";
 import { PermanentJobError } from "./jobs";
 import { buildIndex } from "./indexing";
 import { retrieveDocuments } from "./retrieval";
@@ -178,6 +178,7 @@ export function createProviders(store: Store, fetcher: Fetch = fetch) {
     documentIds: string[] = [],
     signal?: AbortSignal,
     filters?: SearchFilters,
+    permissionCache?: PermissionCache,
   ) {
     const settings = await getSettings(store, actor.orgId);
     return retrieveDocuments(
@@ -188,7 +189,7 @@ export function createProviders(store: Store, fetcher: Fetch = fetch) {
       fetcher,
       documentIds,
       signal,
-      { filters },
+      { filters, permissionCache },
     );
   }
   async function answer(

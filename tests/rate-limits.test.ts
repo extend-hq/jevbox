@@ -95,7 +95,7 @@ test("API ceilings are configurable and reject invalid limits", () => {
   try {
     delete process.env.API_READ_LIMIT_PER_MINUTE;
     delete process.env.API_WRITE_LIMIT_PER_MINUTE;
-    assert.deepEqual(apiRateLimits(), { read: 100000, write: 100000 });
+    assert.deepEqual(apiRateLimits(), { read: 1200, write: 120 });
     process.env.API_READ_LIMIT_PER_MINUTE = "4500";
     process.env.API_WRITE_LIMIT_PER_MINUTE = "900";
     assert.deepEqual(apiRateLimits(), { read: 4500, write: 900 });
@@ -111,7 +111,7 @@ test("API ceilings are configurable and reject invalid limits", () => {
   }
 });
 
-test("shared quotas are disabled and user safeguards remain configurable", (t) => {
+test("shared quotas and user safeguards remain configurable", (t) => {
   t.mock.property(process, "env", {
     ...process.env,
     UPLOAD_USER_ATTEMPTS_PER_MINUTE: "240",
@@ -120,8 +120,8 @@ test("shared quotas are disabled and user safeguards remain configurable", (t) =
     AUTH_OAUTH_LIMIT_PER_MINUTE: "2000",
   });
   assert.equal(uploadAdmissionLimits().attemptsPerMinute.user, 240);
-  assert.equal(uploadAdmissionLimits().pending.deployment, Infinity);
-  assert.equal(searchRateLimits().organization, Infinity);
+  assert.equal(uploadAdmissionLimits().pending.deployment, 100000);
+  assert.equal(searchRateLimits().organization, 100000);
   assert.equal(authRateLimits().oauth, 2000);
   process.env.UPLOAD_IN_FLIGHT_BYTES = "0";
   assert.throws(uploadAdmissionLimits);

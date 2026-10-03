@@ -1,16 +1,21 @@
+import { createReadStream } from "node:fs";
+import {
+  createFileDownloads,
+  requireDownloadResource,
+  downloadResourceColumns,
+} from "./file-downloads";
 import { Router, type Request } from "express";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { Zip, ZipPassThrough } from "fflate";
 import { z } from "zod";
-import { createLimiter } from "./async";
 import {
   HttpError,
-  requireResource,
-  resourceAccess,
+  resourceAccessBatch,
   type Actor,
   type Resource,
   type Store,
+  type PermissionCache,
 } from "./db";
 
 export function archiveEntries(resources: Resource[], selectedIds: string[]) {
@@ -61,6 +66,7 @@ export function archiveEntries(resources: Resource[], selectedIds: string[]) {
 export function createDownloadRouter(
   store: Store,
   actor: (req: Request) => Actor,
+  downloads = createFileDownloads(store),
 ) {
   const router = Router();
   router.post("/download", async (req, res) => {
@@ -69,27 +75,38 @@ export function createDownloadRouter(
       .object({ ids: z.array(z.string().uuid()).min(1).max(1000) })
       .strict()
       .parse(req.body);
-    const selected = await Promise.all(
-      [...new Set(ids)].map((id) => requireResource(store, a, id)),
-    );
+    const permissionCache: PermissionCache = { values: new Map() };
+    const uniqueIds = [...new Set(ids)];
+    if (
+      (await resourceAccessBatch(store, a, uniqueIds, "read", permissionCache))
+        .size !== uniqueIds.length
+    )
+      throw new HttpError(404, "Resource not found");
     const rows = await store.all<Resource>(
-      "SELECT * FROM resources WHERE org_id=? ORDER BY name,id",
+      `SELECT ${downloadResourceColumns} FROM resources WHERE org_id=? ORDER BY name,id`,
       a.orgId,
     );
+    const byId = new Map(rows.map((resource) => [resource.id, resource]));
+    const selected = uniqueIds.map((id) => {
+      const resource = byId.get(id);
+      if (!resource) throw new HttpError(404, "Resource not found");
+      return resource;
+    });
     const candidates = archiveEntries(
       rows,
       selected.map((resource) => resource.id),
     );
-    const limited = createLimiter(8);
-    const readable = await Promise.all(
-      candidates.map(({ resource }) =>
-        limited(async () =>
-          (await resourceAccess(store, a, resource.id)) ? resource : null,
-        ),
-      ),
+    const allowed = await resourceAccessBatch(
+      store,
+      a,
+      candidates.map(({ resource }) => resource.id),
+      "read",
+      permissionCache,
     );
     const entries = archiveEntries(
-      readable.flatMap((resource) => (resource ? [resource] : [])),
+      candidates.flatMap(({ resource }) =>
+        allowed.has(resource.id) ? [resource] : [],
+      ),
       selected.map((resource) => resource.id),
     );
     const documents = entries.filter(
@@ -112,38 +129,54 @@ export function createDownloadRouter(
       "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
       "Cache-Control": "private, no-store",
     });
-    async function* archive() {
-      const chunks: Uint8Array[] = [];
-      const zip = new Zip((error, data) => {
-        if (error) throw error;
-        chunks.push(data);
-      });
-      try {
-        for (const { resource, path } of entries) {
-          await requireResource(store, a, resource.id);
-          const file = new ZipPassThrough(path);
-          zip.add(file);
-          if (resource.kind === "folder") file.push(new Uint8Array(), true);
-          else {
-            const blob = await store.files.read("document", resource.id);
-            if (!blob)
-              throw new HttpError(404, "An original file is unavailable.");
-            await requireResource(store, a, resource.id);
-            for (let offset = 0; offset < blob.body.length; offset += 65536) {
-              file.push(blob.body.subarray(offset, offset + 65536));
-              while (chunks.length) yield chunks.shift()!;
+    await downloads.run(req, res, `user:${a.userId}`, async (signal) => {
+      async function* archive() {
+        const chunks: Uint8Array[] = [];
+        const zip = new Zip((error, data) => {
+          if (error) throw error;
+          chunks.push(data);
+        });
+        try {
+          for (const { resource, path } of entries) {
+            await requireDownloadResource(
+              store,
+              a,
+              resource.id,
+              permissionCache,
+            );
+            const file = new ZipPassThrough(path);
+            zip.add(file);
+            if (resource.kind === "folder") file.push(new Uint8Array(), true);
+            else {
+              const staged = await downloads.stage(resource.id, signal);
+              try {
+                await requireDownloadResource(
+                  store,
+                  a,
+                  resource.id,
+                  permissionCache,
+                );
+                for await (const chunk of createReadStream(staged.path, {
+                  signal,
+                })) {
+                  file.push(chunk);
+                  while (chunks.length) yield chunks.shift()!;
+                }
+                file.push(new Uint8Array(), true);
+              } finally {
+                await staged.dispose();
+              }
             }
-            file.push(new Uint8Array(), true);
+            while (chunks.length) yield chunks.shift()!;
           }
+          zip.end();
           while (chunks.length) yield chunks.shift()!;
+        } finally {
+          zip.terminate();
         }
-        zip.end();
-        while (chunks.length) yield chunks.shift()!;
-      } finally {
-        zip.terminate();
       }
-    }
-    await pipeline(Readable.from(archive()), res);
+      await pipeline(Readable.from(archive()), res, { signal });
+    });
   });
   return router;
 }

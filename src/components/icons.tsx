@@ -3293,3 +3293,17 @@ export const UserKey = icon(
     ></line>
   </g>,
 );
+
+export const Database = icon(
+  <g
+    fill="none"
+    stroke="currentColor"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    strokeWidth="2"
+  >
+    <path d="m4,5.5v9c0,1.3807,2.6863,2.5,6,2.5s6-1.1193,6-2.5V5.5" />
+    <ellipse cx="10" cy="5.5" rx="6" ry="2.5" />
+    <path d="m16,10c0,1.3807-2.6863,2.5-6,2.5s-6-1.1193-6-2.5" />
+  </g>,
+);

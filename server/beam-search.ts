@@ -60,6 +60,7 @@ export function createTraversal<T>(
   ];
   const deferred: Route<T>[] = [];
   const visited = new Set<string>();
+  const expandedNodes = new Set<string>();
   const evidenceVisits = new Map<string, number>();
   let expansions = 0;
   const rank = (a: Route<T>, b: Route<T>) => {
@@ -86,21 +87,33 @@ export function createTraversal<T>(
       beam = [...beam, ...deferred.splice(0)].sort(rank);
       deferred.push(...beam.splice(retrievalLimits.beamWidth));
       while (beam.length && expansions < retrievalLimits.expansions) {
+        const authorized: Route<T>[] = [];
+        let newEvidence = false;
+        for (const route of beam) {
+          if ((await route.node.describe()) === undefined) continue;
+          authorized.push(route);
+          if (!visited.has(route.node.id)) {
+            visited.add(route.node.id);
+            found.push(route);
+            if (hasEvidence(route.node)) {
+              newEvidence = true;
+              if (route.node.scope)
+                evidenceVisits.set(
+                  route.node.scope,
+                  (evidenceVisits.get(route.node.scope) ?? 0) + 1,
+                );
+            }
+          }
+        }
+        beam = authorized;
+        if (newEvidence) return found;
         const prepared: {
           route: Route<T>;
           choices: { id: string; text: string; node: RouteNode<T> }[];
         }[] = [];
         for (const route of beam) {
           if ((await route.node.describe()) === undefined) continue;
-          if (!visited.has(route.node.id)) {
-            visited.add(route.node.id);
-            found.push(route);
-            if (route.node.scope && hasEvidence(route.node))
-              evidenceVisits.set(
-                route.node.scope,
-                (evidenceVisits.get(route.node.scope) ?? 0) + 1,
-              );
-          }
+          expandedNodes.add(route.node.id);
           const children = route.node.loadChildren
             ? await route.node.loadChildren()
             : route.node.children;
@@ -185,7 +198,7 @@ export function createTraversal<T>(
         deferred.push(
           ...ranked
             .slice(retrievalLimits.beamWidth)
-            .filter((route) => !visited.has(route.node.id)),
+            .filter((route) => !expandedNodes.has(route.node.id)),
         );
         deferred.splice(retrievalLimits.expansions);
         if (found.some((route) => hasEvidence(route.node))) return found;

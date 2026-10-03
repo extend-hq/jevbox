@@ -59,11 +59,19 @@ function storeFor(
 ) {
   return {
     store: {
-      all: async () => resources,
+      all: async (sql: string, orgId: string, ids?: string[]) =>
+        sql.startsWith("SELECT id FROM resources")
+          ? resources.filter(
+              (resource) =>
+                resource.org_id === orgId && ids?.includes(resource.id),
+            )
+          : resources,
       one: async (_sql: string, id: string) =>
         resources.find((resource) => resource.id === id),
       permission: async (_actor: Actor, _kind: string, id: string) =>
         allowed.has(id),
+      permissions: async (_actor: Actor, _kind: string, ids: string[]) =>
+        ids.map((id) => allowed.has(id)),
     } as unknown as Store,
     allowed,
   };
@@ -341,6 +349,7 @@ test("library retrieval opens full indexes only for explored outline branches", 
   const { store } = storeFor(resources);
   const reads: string[] = [];
   store.all = async (sql: string) => {
+    if (sql.startsWith("SELECT id FROM resources")) return resources as never;
     assert.match(sql, /search_profile/);
     assert.doesNotMatch(sql, /SELECT \*/);
     return resources.map((resource) => ({
@@ -710,6 +719,67 @@ test("frontier routing batches independent sibling questions and deeper evidence
   assert.ok(b.score > a.score);
 });
 
+test("evidence is yielded before child routing and paused branches resume with fresh access checks", async () => {
+  let allowed = true;
+  let loads = 0;
+  const calls: string[][] = [];
+  const leaf = (id: string): RouteNode<string> => ({
+    id,
+    value: id,
+    children: [],
+    describe: async () => (allowed ? id : undefined),
+  });
+  const makeTraversal = () =>
+    createTraversal(
+      [
+        {
+          ...leaf("parent"),
+          loadChildren: async () => {
+            loads++;
+            return [leaf("first"), leaf("second")];
+          },
+        },
+      ],
+      {
+        choose: async (_query, menus) => {
+          if (menus.length) calls.push(menus.map((menu) => menu.id));
+          return new Map(
+            menus.map((menu) => [
+              menu.id,
+              {
+                ...Object.fromEntries(
+                  menu.choices.map((choice) => [choice.id, 0.5]),
+                ),
+                none: 0,
+              },
+            ]),
+          );
+        },
+      },
+      "question",
+      (node) => !!node.value,
+      true,
+    );
+  const traversal = makeTraversal();
+  assert.ok(
+    (await traversal.walk()).some((route) => route.node.id === "parent"),
+  );
+  assert.equal(loads, 0);
+  assert.deepEqual(calls, []);
+  const children = await traversal.walk();
+  assert.deepEqual(
+    children.map((route) => route.node.id),
+    ["first", "second"],
+  );
+  assert.equal(loads, 1);
+  assert.deepEqual(calls, [["parent"]]);
+  const revoked = makeTraversal();
+  await revoked.walk();
+  allowed = false;
+  assert.deepEqual(await revoked.walk(), []);
+  assert.equal(loads, 1);
+});
+
 test("weak evidence widens exploration into a branch pruned from the initial beam", async () => {
   const resources = Array.from({ length: 6 }, (_, i) =>
     document(`doc-${i}`, `# Section\nEvidence ${i}`),
@@ -932,21 +1002,20 @@ test("category routes stay visible beside grouped top-level documents", async ()
   assert.equal(rootChecked, true);
 });
 
-test("sibling authorization runs concurrently within its bound and preserves menu order", async () => {
+test("sibling authorization uses bulk requests and preserves menu order", async () => {
   const resources = Array.from(
     { length: retrievalLimits.menuSize * 2 },
     (_, i) => document(`doc-${i}`, "# Section\nEvidence"),
   );
   const { store } = storeFor(resources);
-  let active = 0;
-  let peak = 0;
-  let checks = 0;
+  const batches: string[][] = [];
   store.permission = async () => {
-    checks++;
-    peak = Math.max(peak, ++active);
+    throw new Error("Unexpected individual check");
+  };
+  store.permissions = async (_actor, _kind, ids) => {
+    batches.push(ids);
     await new Promise((resolve) => setTimeout(resolve, 1));
-    active--;
-    return true;
+    return ids.map(() => true);
   };
   let checked = false;
   const result = await retrieveDocuments(
@@ -974,9 +1043,9 @@ test("sibling authorization runs concurrently within its bound and preserves men
     },
   );
   assert.ok(checked);
-  assert.ok(peak > 1);
-  assert.ok(peak <= retrievalLimits.authorizationConcurrency);
-  assert.ok(checks > resources.length);
+  assert.ok(batches.some((batch) => batch.length === resources.length));
+  assert.ok(batches.every((batch) => batch.length <= 10000));
+  assert.ok(batches.length < resources.length);
   assert.ok(result.results.length > 0);
 });
 
@@ -1329,13 +1398,15 @@ test("simultaneous checks share only in-flight work and revocation is rechecked 
   const { store, allowed } = storeFor(resources);
   const active = new Map<string, number>();
   const counts = new Map<string, number>();
-  store.permission = async (_actor, _kind, id) => {
-    counts.set(id, (counts.get(id) ?? 0) + 1);
-    active.set(id, (active.get(id) ?? 0) + 1);
-    assert.equal(active.get(id), 1);
+  store.permissions = async (_actor, _kind, ids) => {
+    for (const id of ids) {
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+      active.set(id, (active.get(id) ?? 0) + 1);
+      assert.equal(active.get(id), 1);
+    }
     await new Promise((resolve) => setTimeout(resolve, 1));
-    active.set(id, active.get(id)! - 1);
-    return allowed.has(id);
+    for (const id of ids) active.set(id, active.get(id)! - 1);
+    return ids.map((id) => allowed.has(id));
   };
   const result = await retrieveDocuments(
     store,

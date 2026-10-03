@@ -144,6 +144,8 @@ test("default routing samples source excerpts and rechecks authorization", async
       resources.find((resource) => resource.id === id),
     permission: async (_actor: Actor, _kind: string, id: string) =>
       id === "allowed" && allowed,
+    permissions: async (_actor: Actor, _kind: string, ids: string[]) =>
+      ids.map((id) => id === "allowed" && allowed),
   } as unknown as Store;
   const result = await retrieveDocuments(
     store,

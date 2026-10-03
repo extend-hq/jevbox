@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { configuredLimit } from "./rate-limits";
 import { z } from "zod";
-import { HttpError, requireResource, resourceAccess, type Store } from "./db";
+import {
+  HttpError,
+  requireResource,
+  requireResources,
+  resourceAccessBatch,
+  type Store,
+} from "./db";
 import {
   searchInput,
   type Principal,
@@ -65,7 +71,7 @@ export function createRuns(
   origin: string,
 ) {
   const running = new Map<string, AbortController>();
-  const activeLimit = configuredLimit("RUN_USER_CONCURRENCY", 10_000);
+  const activeLimit = configuredLimit("RUN_USER_CONCURRENCY", 3);
   async function find(principal: Principal, orgId: string, runId: string) {
     await access.actor(principal, orgId);
     const run = await store.one<Run>(
@@ -145,8 +151,12 @@ export function createRuns(
       documentIds: [...new Set(parsed.documentIds)].sort(),
     };
     const actor = await access.actor(principal, input.organizationId);
-    for (const id of input.documentIds) {
-      if ((await requireResource(store, actor, id)).kind !== "document")
+    for (const resource of await requireResources(
+      store,
+      actor,
+      input.documentIds,
+    )) {
+      if (resource.kind !== "document")
         throw new HttpError(404, "Document not found");
     }
     if (
@@ -233,10 +243,14 @@ export function createRuns(
           };
     if (run.kind === "search" && run.result) {
       const actor = await access.actor(principal, run.org_id);
-      const results = [];
-      for (const source of run.result.results)
-        if (await resourceAccess(store, actor, source.documentId))
-          results.push(source);
+      const allowed = await resourceAccessBatch(
+        store,
+        actor,
+        run.result.results.map((source) => source.documentId),
+      );
+      const results = run.result.results.filter((source) =>
+        allowed.has(source.documentId),
+      );
       state.result = { results };
     }
     return {

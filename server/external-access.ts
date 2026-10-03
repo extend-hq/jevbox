@@ -17,10 +17,12 @@ import type { createAuthentication } from "./auth";
 import {
   HttpError,
   requireResource,
-  resourceAccess,
+  requireResources,
+  resourceAccessBatch,
   visibleResources,
   type Actor,
   type Store,
+  type PermissionCache,
 } from "./db";
 import { flatten, withLayoutSections, type ParsedDocument } from "./indexing";
 import type { createProviders } from "./providers";
@@ -274,6 +276,7 @@ export function createExternalAccess(
     for (const [key, max] of [
       [`search:user:${principal.userId}`, searchAllowances.user],
       [`search:key:${principal.credentialId}`, searchAllowances.credential],
+      [`search:org:${orgId}`, searchAllowances.organization],
     ] as const) {
       if ((await searchLimits.increment(key)).totalHits > max)
         throw new HttpError(
@@ -347,8 +350,8 @@ export function createExternalAccess(
     const a = await actor(principal, input.organizationId);
     if (!admitted) await limitSearch(principal, a.orgId);
     let documentIds = input.documentIds;
-    for (const id of documentIds) {
-      if ((await requireResource(store, a, id)).kind !== "document")
+    for (const resource of await requireResources(store, a, documentIds)) {
+      if (resource.kind !== "document")
         throw new HttpError(404, "Document not found");
     }
     if (input.folderId) {
@@ -378,17 +381,26 @@ export function createExternalAccess(
         )
         .map((r) => r.id);
     }
+    const permissionCache: PermissionCache = { values: new Map() };
     const retrieved =
       input.folderId && !documentIds.length
         ? { results: [] }
-        : await providers.retrieve(a, input.query, documentIds, signal);
+        : await providers.retrieve(a, input.query, documentIds, signal, undefined, permissionCache);
     await audit(principal, a.orgId, "api.search");
     const current = await revalidate();
     requireScope(current, "search:read");
     await actor(current, a.orgId);
     const results = [];
-    for (const source of retrieved.results.slice(0, input.limit)) {
-      if (await resourceAccess(store, a, source.documentId))
+    const sources = retrieved.results.slice(0, input.limit);
+    const allowed = await resourceAccessBatch(
+      store,
+      a,
+      sources.map((source) => source.documentId),
+      "read",
+      permissionCache,
+    );
+    for (const source of sources) {
+      if (allowed.has(source.documentId))
         results.push({
           ...source,
           id: `${source.documentId}:${source.passageId}`,

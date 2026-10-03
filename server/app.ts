@@ -1,4 +1,6 @@
+import { organizationStorage } from "./upload-quotas";
 import { createChatRuntime } from "./chat";
+import { createFileDownloads, requireDownloadResource } from "./file-downloads";
 import { createDownloadRouter } from "./downloads";
 import { createLinkSharingRouter } from "./link-sharing";
 import { createExternalAccess } from "./external-access";
@@ -16,7 +18,6 @@ import { describeThumbnail } from "./thumbnails";
 import { createWorkers } from "./workers";
 import { queues, type QueueName } from "./jobs";
 import { authenticateToken as tokenActor, sessionActor } from "./sessions";
-import { asyncFilter } from "./async";
 
 import { availableChatModels, validateProviderURL } from "./ai";
 import { providerCatalog } from "../shared/providers";
@@ -33,6 +34,7 @@ import multer from "multer";
 import {
   createApiRateLimiter,
   createAnonymousRateLimiter,
+  createSignupRateLimiter,
 } from "./rate-limits";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { z } from "zod";
@@ -40,10 +42,12 @@ import {
   createStore,
   HttpError,
   requireResource,
-  resourceAccess,
+  resourceAccessBatch,
+  resourcePermissionsBatch,
   visibleResources,
   type Actor,
   type Resource,
+  type PermissionCache,
 } from "./db";
 import { createProviders, getSettings, type Fetch } from "./providers";
 const digest = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -72,6 +76,7 @@ export async function createApp(options: {
   workers?: QueueName[];
 }) {
   const store = await createStore(options.directory, options.databaseUrl);
+  const downloads = createFileDownloads(store);
   let authentication: ReturnType<typeof createAuthentication>;
   try {
     authentication = createAuthentication(store, options);
@@ -162,7 +167,10 @@ export async function createApp(options: {
           (req) => externalUsers.get(req) ?? actor(req).userId,
         )
       : null;
-  if (anonymousLimit) app.use(["/api/auth", "/api/shared"], anonymousLimit);
+  if (anonymousLimit) {
+    app.use(["/api/auth", "/api/shared"], anonymousLimit);
+    app.use("/api/auth/sign-up/email", createSignupRateLimiter());
+  }
   const audit = async (
     actor: Actor,
     action: string,
@@ -329,7 +337,7 @@ export async function createApp(options: {
     "/mcp",
     createMcpRouter(external, auth, options.origin, uploads, runs),
   );
-  app.use("/api/shared", createLinkSharingRouter(store));
+  app.use("/api/shared", createLinkSharingRouter(store, downloads));
   const githubStars = createGitHubStars();
   app.get("/api/github/stars", async (_req, res) => {
     const stars = await githubStars();
@@ -386,6 +394,10 @@ export async function createApp(options: {
       semanticEnabled: Boolean(settings.jevKey),
       extendEnabled: Boolean(settings.extendKey),
     });
+  });
+  app.get("/api/settings/storage", async (req, res) => {
+    const a = actor(req);
+    res.json(await organizationStorage(store, a.orgId));
   });
   app.get("/api/settings", async (req, res) => {
     const a = await admin(req);
@@ -520,6 +532,7 @@ export async function createApp(options: {
           const allowed = new Set([
             "baseURL",
             "resourceName",
+            "workspaceId",
             "region",
             "project",
             "location",
@@ -535,6 +548,21 @@ export async function createApp(options: {
               400,
               "Unsupported provider configuration field",
             );
+          if (
+            setup.providerConfig.googleAuthOptions &&
+            setup.provider !== "vertex"
+          )
+            throw new HttpError(
+              400,
+              "Google credentials require the Vertex provider",
+            );
+          if (
+            ["accessKeyId", "secretAccessKey", "sessionToken"].some(
+              (key) => key in setup.providerConfig!,
+            ) &&
+            !["bedrock", "anthropic-aws"].includes(setup.provider)
+          )
+            throw new HttpError(400, "AWS credentials require an AWS provider");
           if (setup.providerConfig.baseURL)
             validateProviderURL(z.string().parse(setup.providerConfig.baseURL));
           if (setup.providerConfig.googleAuthOptions) {
@@ -657,47 +685,77 @@ export async function createApp(options: {
       };
     }),
   );
-  async function publicResource(r: Resource, a: Actor) {
-    const {
-      parsed,
-      parse_run,
-      org_id,
-      thumbnail_job_id,
-      thumbnail_key,
-      thumbnail_width,
-      thumbnail_height,
-      thumbnail_pages,
-      ...rest
-    } = r;
-    const filing =
-      r.kind === "document"
-        ? await store.one<{
-            state: string;
-            error: string | null;
-            reason: string | null;
-          }>(
-            "SELECT state,error,outcome->>'reason' AS reason FROM document_filing WHERE resource_id=?",
-            r.id,
-          )
-        : undefined;
-    return {
-      ...rest,
-      thumbnail: describeThumbnail(r),
-      filing,
-      canWrite: await resourceAccess(store, a, r.id, "write"),
-      canShare: await resourceAccess(store, a, r.id, "share"),
-      pages: parsed ? JSON.parse(parsed).pages : 0,
-    };
-  }
-  app.get("/api/resources", async (req, res) =>
-    res.json(
-      await Promise.all(
-        (await visibleResources(store, actor(req))).map(
-          async (r) => await publicResource(r, actor(req)),
+  async function publicResources(
+    resources: Resource[],
+    a: Actor,
+    includeRead = false,
+  ) {
+    const actions = includeRead
+      ? (["read", "write", "share"] as const)
+      : (["write", "share"] as const);
+    const [permissions, filings] = await Promise.all([
+      resourcePermissionsBatch(
+        store,
+        a,
+        resources.flatMap(({ id }) =>
+          actions.map((action) => ({ id, action })),
         ),
       ),
-    ),
-  );
+      store.all<{
+        resource_id: string;
+        state: string;
+        error: string | null;
+        reason: string | null;
+      }>(
+        "SELECT resource_id,state,error,outcome->>'reason' AS reason FROM document_filing WHERE resource_id=ANY(?::text[])",
+        resources
+          .filter((resource) => resource.kind === "document")
+          .map((resource) => resource.id),
+      ),
+    ]);
+    const byId = new Map(
+      filings.map(({ resource_id, ...filing }) => [resource_id, filing]),
+    );
+    return resources.flatMap((r, index) => {
+      const access = permissions.slice(
+        index * actions.length,
+        (index + 1) * actions.length,
+      );
+      if (includeRead && !access[0]) return [];
+      const {
+        parsed,
+        parse_run,
+        org_id,
+        thumbnail_job_id,
+        thumbnail_key,
+        thumbnail_width,
+        thumbnail_height,
+        thumbnail_pages,
+        ...rest
+      } = r;
+      return [
+        {
+          ...rest,
+          thumbnail: describeThumbnail(r),
+          filing: byId.get(r.id),
+          canWrite: access[actions.indexOf("write")],
+          canShare: access[actions.indexOf("share")],
+          pages: parsed ? JSON.parse(parsed).pages : 0,
+        },
+      ];
+    });
+  }
+  async function publicResource(r: Resource, a: Actor) {
+    return (await publicResources([r], a))[0];
+  }
+  app.get("/api/resources", async (req, res) => {
+    const a = actor(req);
+    const resources = await store.all<Resource>(
+      "SELECT * FROM resources WHERE org_id=? ORDER BY created DESC",
+      a.orgId,
+    );
+    res.json(await publicResources(resources, a, true));
+  });
   app.post(
     "/api/folders",
     mutation(async (req, res) => {
@@ -793,36 +851,20 @@ export async function createApp(options: {
       return res.status(304).end();
     res.send(thumbnail.body);
   });
-  app.use("/api/resources", createDownloadRouter(store, actor));
+  app.use("/api/resources", createDownloadRouter(store, actor, downloads));
   app.get("/api/documents/:id/content", async (req, res) => {
-    const r = await requireResource(store, actor(req), id.parse(req.params.id));
-    const body = await store.files.read("document", r.id);
-    if (!body) throw new HttpError(404, "Content not found");
-    res.set({
-      "Content-Type": r.mime,
-      "Content-Security-Policy": "default-src 'none'; sandbox",
-      "Content-Disposition": `${["text/html", "text/xml", "image/svg+xml", "application/octet-stream"].includes(r.mime) ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(r.name)}`,
-    });
-    await requireResource(store, actor(req), r.id);
-    const content = Buffer.from(body.body);
-    res.set("Accept-Ranges", "bytes");
-    const range = req.range(content.length);
-    if (
-      range === -1 ||
-      (Array.isArray(range) && range.type === "bytes" && range.length !== 1)
-    ) {
-      res.status(416).set("Content-Range", `bytes */${content.length}`).end();
-      return;
-    }
-    if (Array.isArray(range) && range.type === "bytes") {
-      const { start, end } = range[0];
-      res
-        .status(206)
-        .set("Content-Range", `bytes ${start}-${end}/${content.length}`)
-        .send(content.subarray(start, end + 1));
-      return;
-    }
-    res.send(content);
+    const r = await requireDownloadResource(
+      store,
+      actor(req),
+      id.parse(req.params.id),
+    );
+    await downloads.send(
+      req,
+      res,
+      r,
+      () => requireDownloadResource(store, actor(req), r.id),
+      actor(req).userId,
+    );
   });
   app.post(
     "/api/documents/:id/filing/retry",
@@ -1301,16 +1343,37 @@ export async function createApp(options: {
   app.post("/api/search", async (req, res) => {
     const a = actor(req);
     const query = z.string().trim().min(1).max(2000).parse(req.body.query);
-    const result = await providers.retrieve(a, query);
-    await authenticate(req);
-    result.results = await asyncFilter(
-      result.results,
-      async (s) => await resourceAccess(store, a, s.documentId),
+    await external.limitSearch(
+      { userId: a.userId, scopes: [], credentialId: `session:${a.userId}` },
+      a.orgId,
     );
-    result.trace = await asyncFilter(
-      result.trace,
-      async (t) =>
-        !t.resourceId || (await resourceAccess(store, a, t.resourceId)),
+    const permissionCache: PermissionCache = { values: new Map() };
+    const result = await providers.retrieve(
+      a,
+      query,
+      [],
+      undefined,
+      undefined,
+      permissionCache,
+    );
+    await authenticate(req);
+    const allowed = await resourceAccessBatch(
+      store,
+      a,
+      [
+        ...result.results.map((source) => source.documentId),
+        ...result.trace.flatMap((step) =>
+          step.resourceId ? [step.resourceId] : [],
+        ),
+      ],
+      "read",
+      permissionCache,
+    );
+    result.results = result.results.filter((source) =>
+      allowed.has(source.documentId),
+    );
+    result.trace = result.trace.filter(
+      (step) => !step.resourceId || allowed.has(step.resourceId),
     );
     res.json(result);
   });

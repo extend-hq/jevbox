@@ -1,3 +1,5 @@
+import { uploadLimits } from "../../shared/uploads";
+
 export async function collectDroppedFiles(dataTransfer: DataTransfer) {
   const items = Array.from(dataTransfer.items ?? [])
     .filter((item) => item.kind === "file")
@@ -8,6 +10,13 @@ export async function collectDroppedFiles(dataTransfer: DataTransfer) {
   const fallback = Array.from(dataTransfer.files);
   const files: File[] = [];
   let hasDirectory = false;
+  function add(file: File) {
+    if (files.length >= uploadLimits.batchFiles)
+      throw new Error(
+        `Choose up to ${uploadLimits.batchFiles} files per upload.`,
+      );
+    files.push(file);
+  }
   async function walk(entry: FileSystemEntry, parentPath = "") {
     const path = `${parentPath}${entry.name}`;
     if (entry.isFile) {
@@ -18,7 +27,7 @@ export async function collectDroppedFiles(dataTransfer: DataTransfer) {
         value: parentPath ? path : "",
         configurable: true,
       });
-      files.push(file);
+      add(file);
     } else if (entry.isDirectory) {
       hasDirectory = true;
       const reader = (entry as FileSystemDirectoryEntry).createReader();
@@ -34,9 +43,9 @@ export async function collectDroppedFiles(dataTransfer: DataTransfer) {
   if (items.length) {
     for (const item of items) {
       if (item.entry) await walk(item.entry);
-      else if (item.file) files.push(item.file);
+      else if (item.file) add(item.file);
     }
-  } else files.push(...fallback);
+  } else fallback.forEach(add);
   return {
     files,
     hasDirectory:

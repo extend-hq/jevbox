@@ -4,11 +4,13 @@ import { createJev } from "./jev";
 import { getSettings } from "./providers";
 import { retrieveDocuments } from "./retrieval";
 import {
-  resourceAccess,
+  resourceAccessBatch,
+  resourcePermissionsBatch,
   HttpError,
   type Actor,
   type Resource,
   type Store,
+  type PermissionCache,
 } from "./db";
 
 type Review = {
@@ -90,14 +92,20 @@ export function createReorganization(
       role: member.role,
       token: "",
     };
+    const permissionCache: PermissionCache = { values: new Map() };
     const signal = AbortSignal.any([job.signal, AbortSignal.timeout(90000)]);
-    const folders: Resource[] = [];
-    for (const folder of await store.all<Resource>(
+    const folderRows = await store.all<Resource>(
       "SELECT * FROM resources WHERE org_id=? AND kind='folder'",
       event.org_id,
-    ))
-      if (await resourceAccess(store, actor, folder.id, "write"))
-        folders.push(folder);
+    );
+    const writable = await resourceAccessBatch(
+      store,
+      actor,
+      folderRows.map((folder) => folder.id),
+      "write",
+      permissionCache,
+    );
+    const folders = folderRows.filter((folder) => writable.has(folder.id));
     function path(id: string | null): Resource[] | undefined {
       const nodes: Resource[] = [];
       const seen = new Set<string>();
@@ -127,20 +135,32 @@ export function createReorganization(
         (await getSettings(store, actor.orgId)).organization?.enabled === false
       )
         throw new HttpError(409, "The organization review changed.");
-      for (const folder of [
+      const selected = [
         ...new Map(focus.flat().map((folder) => [folder.id, folder])).values(),
-      ]) {
-        const current = await store.one<Resource>(
-          "SELECT * FROM resources WHERE id=? AND org_id=?",
-          folder.id,
-          actor.orgId,
-        );
+      ];
+      const currentRows = await store.all<Resource>(
+        "SELECT * FROM resources WHERE org_id=? AND id=ANY(?::text[])",
+        actor.orgId,
+        selected.map((folder) => folder.id),
+      );
+      const currentById = new Map(
+        currentRows.map((folder) => [folder.id, folder]),
+      );
+      const allowed = await resourceAccessBatch(
+        store,
+        actor,
+        selected.map((folder) => folder.id),
+        "write",
+        permissionCache,
+      );
+      for (const folder of selected) {
+        const current = currentById.get(folder.id);
         if (
           !current ||
           current.parent_id !== folder.parent_id ||
           current.name !== folder.name ||
           current.description !== folder.description ||
-          !(await resourceAccess(store, actor, folder.id, "write"))
+          !allowed.has(folder.id)
         )
           throw new HttpError(409, "The affected folders changed.");
       }
@@ -187,6 +207,7 @@ export function createReorganization(
         maxPassages: 24,
         maxResults: 8,
         recoverRoutes: false,
+        permissionCache,
       },
     );
     const selected = [
@@ -251,22 +272,37 @@ export function createReorganization(
             (await store.one(
               "SELECT 1 FROM grants WHERE resource_id=? LIMIT 1",
               document.id,
-            )) ||
-            !(await resourceAccess(store, actor, document.id, "share"))
+            ))
           )
             return false;
+          const currentFolders = await store.all<Resource>(
+            "SELECT * FROM resources WHERE org_id=? AND id=ANY(?::text[])",
+            actor.orgId,
+            dependencies.map((folder) => folder.id),
+          );
+          const currentById = new Map(
+            currentFolders.map((folder) => [folder.id, folder]),
+          );
+          const access = await resourcePermissionsBatch(
+            store,
+            actor,
+            [
+              { id: document.id, action: "share" },
+              ...dependencies.map((folder) => ({
+                id: folder.id,
+                action: "write" as const,
+              })),
+            ],
+            permissionCache,
+          );
+          if (access.some((allowed) => !allowed)) return false;
           for (const folder of dependencies) {
-            const current = await store.one<Resource>(
-              "SELECT * FROM resources WHERE id=? AND org_id=?",
-              folder.id,
-              actor.orgId,
-            );
+            const current = currentById.get(folder.id);
             if (
               !current ||
               current.parent_id !== folder.parent_id ||
               current.name !== folder.name ||
-              current.description !== folder.description ||
-              !(await resourceAccess(store, actor, folder.id, "write"))
+              current.description !== folder.description
             )
               return false;
           }
