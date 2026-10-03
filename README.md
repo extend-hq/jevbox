@@ -127,3 +127,7 @@ This runs on port 4311, creates an isolated PostgreSQL schema, and prints its lo
 UI sources are vendored so this repository builds without sibling checkouts. See [third-party notices](docs/third-party.md).
 
 Email/password sign-in uses Better Auth and requires email verification. Local invitation, verification, and password-reset emails appear in [Mailpit](http://localhost:8025) after `pnpm services:up`. Run `pnpm setup:local` to generate the stable local auth secret. Deployed environments require SMTP settings and `BETTER_AUTH_SECRET`; see the deployment guide. Existing accounts keep their IDs and passwords, but must verify their email and sign in again after migration.
+
+## Contributing
+
+We are not planning to take PRs on this repo, it is more to serve as a starting point/template for a system you can fork and make your own. We encourage you to deploy it in your own infra. If you see a bug or issue though, we would greatly appreciate you filing it on the Issues. Thank you!
