@@ -2513,6 +2513,7 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
     );
     assert.equal(openDocument.target, "_blank");
     assert.equal(sidebar.querySelector(".source-document-heading"), null);
+    await click(button("Source blocks 4", sidebar));
     for (const [label, count] of [
       ["Overview", 3],
       ["Details", 2],
@@ -2520,6 +2521,13 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
     ] as const) {
       await hover(row(sidebarTree, label));
       assert.ok(button(`Source blocks ${count}`, sidebar));
+      assert.equal(
+        button(`Source blocks ${count}`, sidebar)?.getAttribute(
+          "aria-selected",
+        ),
+        "true",
+      );
+      assert.equal(sidebar.querySelectorAll(".parsed-block").length, count);
       assert.equal(row(sidebarTree, label).getAttribute("data-active"), "true");
       assert.equal(
         openDocument.getAttribute("href"),
@@ -2528,6 +2536,21 @@ test("hovering retrieval paths narrows an open preview without opening a closed 
     }
     await act(async () => row(sidebarTree, "Document").parentElement?.focus());
     assert.ok(button("Source blocks 4", sidebar));
+    assert.equal(
+      button("Source blocks 4", sidebar)?.getAttribute("aria-selected"),
+      "true",
+    );
+    await click(button("Preview", sidebar));
+    await hover(row(sidebarTree, "Details"));
+    assert.equal(
+      button("Preview", sidebar)?.getAttribute("aria-selected"),
+      "true",
+    );
+    await hover(row(messageTree, "Passage"));
+    assert.equal(
+      button("Preview", sidebar)?.getAttribute("aria-selected"),
+      "true",
+    );
     await click(sidebarTree.querySelector(".retrieval-trigger"));
     assert.equal(
       sidebarTree

@@ -302,7 +302,6 @@ export function DocumentView({
     else if (focusPage) pdf.current?.scrollToPage(focusPage);
     else if (target) pdf.current?.scrollToPage(target.page);
     else if (!initialNode) pdf.current?.scrollToPage(1);
-    if (embedded) setSourceView("preview");
   }, [
     initialNode,
     doc?.id,
