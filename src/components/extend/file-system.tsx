@@ -9,6 +9,7 @@ import {
   resourceAccessOptions,
 } from "@/components/resource-access-badge";
 import type { Resource } from "@/lib/api";
+import { FINDER_DRAG_TYPE, finderEntryPath } from "@/lib/finder-drag";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import {
   ContextMenu,
@@ -100,6 +101,8 @@ import {
 } from "@/components/ui/tooltip";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FileThumbnail } from "@/components/extend/file-thumbnail";
+import { isDocumentProcessing } from "@/components/document-processing-overlay";
+import { Spinner } from "@/components/coss/spinner";
 import { FOLDER_GLYPH_SVG } from "@/components/extend/folder-glyph";
 import type { SpatialDocumentStructure } from "@/components/library-spatial-view";
 function ArrowDown01Glyph(props: InlineRegistryIconProps) {
@@ -1211,6 +1214,7 @@ function scrollIndexIntoView({
   itemSize,
   itemStride,
   leadingPx = 0,
+  trailingPx = 0,
   viewport,
 }: {
   horizontal?: boolean;
@@ -1218,15 +1222,17 @@ function scrollIndexIntoView({
   itemSize: number;
   itemStride: number;
   leadingPx?: number;
+  trailingPx?: number;
   viewport: HTMLDivElement | null;
 }) {
   if (!viewport || index < 0) return;
   const start = leadingPx + index * itemStride;
   const end = start + itemSize;
   const scrollStart = horizontal ? viewport.scrollLeft : viewport.scrollTop;
-  const viewportSize = horizontal
-    ? viewport.clientWidth
-    : viewport.clientHeight;
+  const viewportSize = Math.max(
+    itemSize,
+    (horizontal ? viewport.clientWidth : viewport.clientHeight) - trailingPx,
+  );
   let nextScrollStart: number | null = null;
   if (start < scrollStart) {
     nextScrollStart = start;
@@ -1249,6 +1255,7 @@ function FileVisual({
   previewAspectRatio,
   previewClassName,
   renderFilePreview,
+  showProcessingOverlay = true,
 }: {
   file: FileEntry;
   className?: string;
@@ -1261,6 +1268,7 @@ function FileVisual({
   previewAspectRatio?: number;
   previewClassName?: string;
   renderFilePreview?: (file: FileSystemFileItem) => React.ReactNode;
+  showProcessingOverlay?: boolean;
 }) {
   const previewUrls = filePreviewUrls(file);
   const canLoadLazily = Boolean(loadPreviewImageUrl);
@@ -1343,6 +1351,9 @@ function FileVisual({
       )}
       previewImageUrl={previewUrl ?? undefined}
       isLoading={isLazyPagePending}
+      isProcessing={
+        showProcessingOverlay && isDocumentProcessing(file.metadata?.Index)
+      }
       previewContent={
         previewUrl || isLazyPagePending
           ? undefined
@@ -1480,6 +1491,7 @@ export function FileSystem({
       index.files.get(selectedPath) ?? index.folders.get(selectedPath) ?? null
     );
   }, [index, selectedPath]);
+  const [spatialSidebarWidth, setSpatialSidebarWidth] = React.useState(280);
   const [searchInput, setSearchInput] = React.useState("");
   const searchInputRef = React.useRef<HTMLInputElement | null>(null);
   const [isSearchExpanded, setIsSearchExpanded] = React.useState(false);
@@ -2085,6 +2097,40 @@ export function FileSystem({
       ref={rootRef}
       tabIndex={-1}
       data-slot="file-system"
+      onDragStartCapture={(event) => {
+        const path = finderEntryPath(event.nativeEvent, currentPath);
+        const entry = path
+          ? (index.files.get(path) ??
+            index.folders.get(normalizeFolderPath(path)))
+          : null;
+        if (!entry || !onMove || !getMoveDestinations) {
+          event.preventDefault();
+          return;
+        }
+        const paths = selectedPaths.has(entry.path)
+          ? [...selectedPaths]
+          : [entry.path];
+        const dragged = paths.filter(
+          (path) =>
+            !paths.some(
+              (parent) =>
+                parent !== path &&
+                parent.endsWith("/") &&
+                path.startsWith(parent),
+            ),
+        );
+        if (
+          dragged.some((path) => {
+            const item = index.files.get(path) ?? index.folders.get(path);
+            return !item || !getMoveDestinations(item).length;
+          })
+        ) {
+          event.preventDefault();
+          return;
+        }
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData(FINDER_DRAG_TYPE, JSON.stringify(dragged));
+      }}
       onKeyDown={(event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "f") {
           event.preventDefault();
@@ -2275,6 +2321,8 @@ export function FileSystem({
       <ContextMenu>
         <ContextMenuTrigger
           className="relative min-h-0 flex-1"
+          data-drop-folder-path={currentPath}
+          data-drop-kind="area"
           onContextMenuCapture={(event) => {
             let entry: FileSystemEntry | null = null;
             for (const target of event.nativeEvent.composedPath()) {
@@ -2320,53 +2368,64 @@ export function FileSystem({
                 }
               />
             ) : view === "spatial" ? (
-              <Group orientation="horizontal" className="size-full">
-                <Panel
-                  id="spatial-scene"
-                  minSize="30%"
-                  className="relative min-h-0 min-w-0"
-                >
+              <div className="relative size-full">
+                <div className="absolute inset-0">
                   <LazySpatialView
                     items={Array.from(sortedIndex.children.values()).flat()}
                     scope={currentPath}
                     selectedPath={selectedPath}
+                    sidebarWidth={selectedEntry ? spatialSidebarWidth : 0}
                     onSelect={selectAndPrefetchEntry}
                     onOpen={openEntry}
                     loadPreviewImageUrl={loadPreviewImageUrl}
                     loadDetailThumbnail={loadDetailThumbnail}
                     loadDocumentStructure={loadStructure}
                   />
-                </Panel>
-                {selectedEntry ? (
-                  <>
-                    <Separator
-                      aria-label="Resize information panel"
-                      className="relative w-px bg-border outline-none transition-colors after:absolute after:inset-y-0 after:-inset-x-1 hover:bg-ring focus-visible:bg-ring"
-                    />
-                    <Panel
-                      id="spatial-information"
-                      defaultSize={280}
-                      minSize={190}
-                      maxSize="60%"
-                    >
-                      <FileSystemInformationSidebar
-                        entry={selectedEntry}
-                        index={sortedIndex}
-                        loadPreviewImageUrl={loadPreviewImageUrl}
-                        onOpen={openEntry}
-                        renderFilePreview={renderFilePreview}
+                </div>
+                <Group
+                  orientation="horizontal"
+                  className="pointer-events-none relative size-full"
+                >
+                  <Panel
+                    id="spatial-scene"
+                    minSize="30%"
+                    className="pointer-events-none min-h-0 min-w-0"
+                  />
+                  {selectedEntry ? (
+                    <>
+                      <Separator
+                        aria-label="Resize information panel"
+                        className="pointer-events-auto relative z-30 w-px bg-border outline-none transition-colors after:absolute after:inset-y-0 after:-inset-x-1 hover:bg-ring focus-visible:bg-ring"
+                      />
+                      <Panel
+                        id="spatial-information"
+                        defaultSize={280}
+                        minSize={190}
+                        maxSize="60%"
+                        className="finder-glass pointer-events-auto relative z-20"
+                        onResize={(size) =>
+                          setSpatialSidebarWidth(size.inPixels)
+                        }
                       >
-                        {selectedEntry.kind === "file" && loadStructure ? (
-                          <FileSystemStructureSummary
-                            file={selectedEntry}
-                            loadStructure={loadStructure}
-                          />
-                        ) : null}
-                      </FileSystemInformationSidebar>
-                    </Panel>
-                  </>
-                ) : null}
-              </Group>
+                        <FileSystemInformationSidebar
+                          entry={selectedEntry}
+                          index={sortedIndex}
+                          loadPreviewImageUrl={loadPreviewImageUrl}
+                          onOpen={openEntry}
+                          renderFilePreview={renderFilePreview}
+                        >
+                          {selectedEntry.kind === "file" && loadStructure ? (
+                            <FileSystemStructureSummary
+                              file={selectedEntry}
+                              loadStructure={loadStructure}
+                            />
+                          ) : null}
+                        </FileSystemInformationSidebar>
+                      </Panel>
+                    </>
+                  ) : null}
+                </Group>
+              </div>
             ) : view === "icons" ? (
               <FileSystemIconsView {...viewProps} />
             ) : view === "list" ? (
@@ -3647,6 +3706,16 @@ const ICON_TILE_GAP_X = 4;
 const ICON_TILE_HEIGHT = 102;
 const ICON_ROW_GAP = 12;
 const ICON_ROW_STRIDE = ICON_TILE_HEIGHT + ICON_ROW_GAP;
+function FileProcessingStatus() {
+  return (
+    <Spinner
+      data-document-processing-status=""
+      aria-label="Processing document"
+      aria-hidden={false}
+      style={{ width: 14, height: 14, flexShrink: 0 }}
+    />
+  );
+}
 function FileIndexStatus({ file }: { file: FileSystemFileItem }) {
   return (
     <IndexStatusControl
@@ -3956,6 +4025,7 @@ function FileSystemIconsView({
               <div key={entry.path} className="relative">
                 <button
                   data-entry-path={entry.path}
+                  draggable
                   type="button"
                   role="option"
                   aria-label={entry.name}
@@ -4084,22 +4154,15 @@ function FileSystemListView({
 }: FileSystemViewProps) {
   const relativePaths = React.useMemo(() => {
     const paths: string[] = [];
-    if (!fileFilter) {
-      for (const path of index.folders.keys()) {
-        if (path.startsWith(currentPath) && path !== currentPath)
-          paths.push(path.slice(currentPath.length));
-      }
-    }
-    for (const [path, file] of index.files) {
-      if (currentPath === "" || path.startsWith(currentPath)) {
-        const relativePath = path.slice(currentPath.length);
-        if (!relativePath) continue;
-        if (fileFilter && !fileFilter(file)) continue;
-        paths.push(relativePath);
+    for (const entries of index.children.values()) {
+      for (const entry of entries) {
+        if (entry.path === currentPath) continue;
+        if (currentPath && !entry.path.startsWith(currentPath)) continue;
+        paths.push(entry.path.slice(currentPath.length));
       }
     }
     return paths.sort();
-  }, [currentPath, fileFilter, index]);
+  }, [currentPath, index]);
   if (relativePaths.length === 0) {
     return (
       <FileSystemEmptyState
@@ -4140,7 +4203,7 @@ function FileSystemListView({
       <FileSystemPierreTree
         key={currentPath}
         currentPath={currentPath}
-        hasActiveFilters={fileFilter !== null}
+        hasActiveFilters={fileFilter !== null || searchQuery.length > 0}
         index={index}
         loadPreviewImageUrl={loadPreviewImageUrl}
         pageUrlCache={pageUrlCache}
@@ -4154,7 +4217,6 @@ function FileSystemListView({
         selectedPaths={selectedPaths}
         onSelectEntries={onSelectEntries}
         relativePaths={relativePaths}
-        searchQuery={searchQuery}
         sort={sort}
         treeExpansionRef={treeExpansionRef}
       />
@@ -4174,7 +4236,6 @@ function FileSystemPierreTree({
   selectedPaths,
   onSelectEntries,
   relativePaths,
-  searchQuery,
   sort,
   treeExpansionRef,
 }: {
@@ -4196,7 +4257,6 @@ function FileSystemPierreTree({
     focused?: FileSystemEntry | null,
   ) => void;
   relativePaths: string[];
-  searchQuery: string;
   sort: FileSystemSortState;
   treeExpansionRef: React.RefObject<Map<string, readonly string[]>>;
 }) {
@@ -4272,7 +4332,7 @@ function FileSystemPierreTree({
       if (!coverUrl) continue;
       const symbolId = `file-system-thumbnail-${symbols.length}`;
       symbols.push(
-        `<symbol id="${symbolId}" viewBox="0 0 16 16"><clipPath id="${symbolId}-clip"><rect width="16" height="16" rx="2.5"/></clipPath><image href="${escapeXmlAttribute(coverUrl)}" width="16" height="16" preserveAspectRatio="xMidYMid slice" clip-path="url(#${symbolId}-clip)"/></symbol>`,
+        `<symbol id="${symbolId}" viewBox="0 0 16 16"><clipPath id="${symbolId}-clip"><rect width="16" height="16" rx="4"/></clipPath><image href="${escapeXmlAttribute(coverUrl)}" width="16" height="16" preserveAspectRatio="xMidYMid slice" clip-path="url(#${symbolId}-clip)"/></symbol>`,
       );
       byFileName[baseName] = { name: symbolId, viewBox: "0 0 16 16" };
     }
@@ -4306,7 +4366,6 @@ function FileSystemPierreTree({
     flattenEmptyDirectories: false,
     icons,
     initialExpansion: "closed",
-    initialSearchQuery: searchQuery || null,
     initialSelectedPaths: initialSelectedPath ? [initialSelectedPath] : [],
     itemHeight: 28,
     overscan: 12,
@@ -4332,6 +4391,10 @@ function FileSystemPierreTree({
       return { text: formatByteSize(entry.size) ?? "—", title: dateColumn };
     },
     unsafeCSS: `
+      @keyframes loader-line-opacity { from { opacity: 1; } to { opacity: 0; } }
+      [data-document-processing-status] .loader-lines > line { animation: loader-line-opacity 1s steps(8, end) infinite; }
+      ${Array.from({ length: 7 }, (_, index) => `[data-document-processing-status] .loader-lines > line:nth-child(${index + 2}) { animation-delay: -${(index + 1) / 8}s; }`).join("\n")}
+      @media (prefers-reduced-motion: reduce) { [data-document-processing-status] .loader-lines > line { animation: none; } }
       svg[data-icon-name] {
         width: 14px;
         height: 14px;
@@ -4339,8 +4402,10 @@ function FileSystemPierreTree({
       button[data-type='item']:not([data-item-selected]):hover {
         background: color-mix(in oklab, var(--color-accent) 50%, transparent);
       }
-      button[data-type='item'][data-item-selected] {
+      button[data-type='item'][data-item-selected],
+      button[data-type='item'][data-finder-drop-target='row'] {
         background: var(--color-primary);
+        box-shadow: none;
         color: var(--color-primary-foreground);
         /* The primary surface is the opposite of the mode's background, so
            the row's light-dark() icon colors resolve against the opposite
@@ -4348,8 +4413,14 @@ function FileSystemPierreTree({
            vice versa. */
         color-scheme: var(--fs-selected-color-scheme, normal);
       }
+      button[data-type='item'][data-finder-drop-target='row'] {
+        outline: 1px solid var(--color-primary);
+        outline-offset: -1px;
+      }
       button[data-type='item'][data-item-selected] *:not([data-icon-token]):not([data-icon-token] *),
-      button[data-type='item'][data-item-selected] [data-item-section]::before {
+      button[data-type='item'][data-item-selected] [data-item-section]::before,
+      button[data-type='item'][data-finder-drop-target='row'] *:not([data-icon-token]):not([data-icon-token] *),
+      button[data-type='item'][data-finder-drop-target='row'] [data-item-section]::before {
         color: var(--color-primary-foreground) !important;
       }
       [data-item-section='decoration'] > span {
@@ -4400,7 +4471,7 @@ function FileSystemPierreTree({
     },
   });
   const [statusHosts, setStatusHosts] = React.useState<
-    { item: FileSystemEntry; host: HTMLSpanElement }[]
+    { item: FileSystemEntry; host: HTMLSpanElement; processing: boolean }[]
   >([]);
   React.useEffect(() => {
     const container =
@@ -4420,7 +4491,7 @@ function FileSystemPierreTree({
     shadow.appendChild(layer);
     const hosts = new Map<
       HTMLElement,
-      { item: FileSystemEntry; host: HTMLSpanElement }
+      { item: FileSystemEntry; host: HTMLSpanElement; processing: boolean }
     >();
     const sync = () => {
       const rect = container.getBoundingClientRect();
@@ -4432,11 +4503,17 @@ function FileSystemPierreTree({
         const path = `${currentPath}${row.dataset.itemPath}`;
         const item =
           indexFiles.get(path) ?? indexFolders.get(normalizeFolderPath(path));
+        if (item) {
+          row.draggable = true;
+          row.dataset.entryPath = item.path;
+        }
+        const processing =
+          item?.kind === "file" && isDocumentProcessing(item.metadata?.Index);
         if (
           !item ||
           !(item.kind === "folder"
             ? item.pinned
-            : needsIndexAttention(item.metadata?.Index))
+            : processing || needsIndexAttention(item.metadata?.Index))
         )
           continue;
         const content = row.querySelector<HTMLElement>(
@@ -4449,22 +4526,22 @@ function FileSystemPierreTree({
           const host = document.createElement("span");
           Object.assign(host.style, {
             position: "absolute",
-            pointerEvents: "auto",
+            pointerEvents: processing ? "none" : "auto",
             display: "flex",
           });
           layer.appendChild(host);
           host.dataset.entryPath = item.path;
-          entry = { item, host };
+          entry = { item, host, processing };
           hosts.set(row, entry);
-          content.style.paddingRight = "24px";
+          content.style.paddingRight = processing ? "20px" : "24px";
           changed = true;
         }
         const bounds = content.getBoundingClientRect();
         const rowBounds = row.getBoundingClientRect();
         const label = content.firstElementChild?.getBoundingClientRect();
         const right =
-          item.kind === "folder" && label
-            ? Math.min(label.right + 6, bounds.right - 22)
+          (processing || item.kind === "folder") && label
+            ? Math.min(label.right + 6, bounds.right - (processing ? 14 : 22))
             : bounds.right - 22;
         entry.host.style.left = `${right - rect.left}px`;
         entry.host.style.top = `${rowBounds.top - rect.top + (rowBounds.height - 20) / 2}px`;
@@ -4641,12 +4718,12 @@ function FileSystemPierreTree({
     } else {
       expandedPaths = collectExpandedDirectories(previousPreparedInput.paths);
     }
-    const searchValue = model.getSearchValue();
+    syncingSelection.current = true;
     model.resetPaths({
       initialExpandedPaths: expandedPaths,
       preparedInput,
     });
-    if (searchValue) model.setSearch(searchValue);
+    syncingSelection.current = false;
   }, [collectExpandedDirectories, hasActiveFilters, model, preparedInput]);
   React.useLayoutEffect(() => {
     const expansionStore = treeExpansionRef.current;
@@ -4674,9 +4751,6 @@ function FileSystemPierreTree({
     treeExpansionRef,
   ]);
   React.useEffect(() => {
-    model.setSearch(searchQuery || null);
-  }, [model, searchQuery]);
-  React.useEffect(() => {
     syncingSelection.current = true;
     const desired = new Set(
       [...selectedPaths]
@@ -4689,7 +4763,7 @@ function FileSystemPierreTree({
     for (const path of desired)
       if (!model.getItem(path)?.isSelected()) model.getItem(path)?.select();
     syncingSelection.current = false;
-  }, [model, selectedPaths, currentPath]);
+  }, [model, selectedPaths, currentPath, preparedInput]);
   const entryFromEvent = (event: React.SyntheticEvent) => {
     for (const target of event.nativeEvent.composedPath()) {
       if (!(target instanceof HTMLElement)) continue;
@@ -4793,9 +4867,11 @@ function FileSystemPierreTree({
           } as React.CSSProperties
         }
       />
-      {statusHosts.map(({ item, host }) =>
+      {statusHosts.map(({ item, host, processing }) =>
         createPortal(
-          item.kind === "file" ? (
+          processing ? (
+            <FileProcessingStatus />
+          ) : item.kind === "file" ? (
             <FileIndexStatus file={item} />
           ) : (
             <span
@@ -4946,6 +5022,7 @@ function FileSystemColumnsView(props: FileSystemViewProps) {
         {columnPaths.map((columnPath, columnIndex) => (
           <FileSystemColumn
             key={columnPath || "(root)"}
+            path={columnPath}
             entries={index.children.get(columnPath) ?? []}
             index={index}
             loadPreviewImageUrl={loadPreviewImageUrl}
@@ -5017,6 +5094,7 @@ const COLUMN_ROW_HEIGHT = 28;
 const COLUMN_ROW_GAP = 1;
 const COLUMN_ROW_STRIDE = COLUMN_ROW_HEIGHT + COLUMN_ROW_GAP;
 const FileSystemColumn = React.memo(function FileSystemColumn({
+  path,
   entries,
   index,
   loadPreviewImageUrl,
@@ -5030,6 +5108,7 @@ const FileSystemColumn = React.memo(function FileSystemColumn({
   tabStopChildPath,
   trailChildPath,
 }: {
+  path: string;
   entries: FileSystemEntry[];
   index: FileSystemIndex;
   loadPreviewImageUrl: FileSystemViewProps["loadPreviewImageUrl"];
@@ -5068,7 +5147,9 @@ const FileSystemColumn = React.memo(function FileSystemColumn({
   return (
     <InlineScrollArea2
       orientation="vertical"
-      className="w-60 shrink-0 border-r"
+      className="relative w-60 shrink-0 border-r"
+      data-drop-folder-path={path}
+      data-drop-kind="column"
       viewportRef={viewportRef}
       viewportClassName="p-1.5"
       viewportProps={{ "aria-label": "Files", role: "listbox" }}
@@ -5098,6 +5179,7 @@ const FileSystemColumn = React.memo(function FileSystemColumn({
                 <div key={entry.path} className="relative">
                   <button
                     data-entry-path={entry.path}
+                    draggable
                     type="button"
                     role="option"
                     aria-label={entry.name}
@@ -5132,7 +5214,8 @@ const FileSystemColumn = React.memo(function FileSystemColumn({
                     ) : (
                       <FileVisual
                         file={entry}
-                        className="size-4 shrink-0 rounded-[3px]"
+                        className="size-4 shrink-0 rounded-[25%]"
+                        showProcessingOverlay={false}
                         previewClassName="size-full"
                         loadPreviewImageUrl={loadPreviewImageUrl}
                         pageUrlCache={pageUrlCache}
@@ -5147,6 +5230,10 @@ const FileSystemColumn = React.memo(function FileSystemColumn({
                     )}
                     <span className="flex min-w-0 flex-1 items-center gap-1.5">
                       <span className="min-w-0 truncate">{entry.name}</span>
+                      {entry.kind === "file" &&
+                        isDocumentProcessing(entry.metadata?.Index) && (
+                          <FileProcessingStatus />
+                        )}
                       {entry.kind === "folder" && entry.pinned && (
                         <FolderPinBadge />
                       )}
@@ -5381,6 +5468,7 @@ const GALLERY_STRIP_PADDING = 8;
 const GALLERY_TILE_SIZE = 56;
 const GALLERY_TILE_GAP = 6;
 const GALLERY_TILE_STRIDE = GALLERY_TILE_SIZE + GALLERY_TILE_GAP;
+const GALLERY_STRIP_HEIGHT = GALLERY_TILE_SIZE + GALLERY_STRIP_PADDING * 2 + 1;
 const GALLERY_STAGE_POOL_SIZE = 4;
 const GALLERY_STAGE_ATTACHED_COUNT = 3;
 function FileSystemGalleryStage({
@@ -5417,6 +5505,18 @@ function FileSystemGalleryStage({
     "size-full",
     !isDialog && "overflow-hidden rounded-lg border",
   );
+  if (!isDialog && isDocumentProcessing(file.metadata?.Index)) {
+    return (
+      <FileVisual
+        file={file}
+        className="w-56 max-w-full"
+        loadPreviewImageUrl={loadPreviewImageUrl}
+        pageUrlCache={pageUrlCache}
+        previewAspectRatio={0.78}
+        renderFilePreview={renderFilePreview}
+      />
+    );
+  }
   if (viewerKind && isResolving) {
     return <BoxLoader />;
   }
@@ -5525,6 +5625,7 @@ function FileSystemGalleryStage({
 function FileSystemGalleryView(props: FileSystemViewProps) {
   const {
     attachedStagePaths,
+    currentPath,
     entries,
     index,
     onOpen,
@@ -5540,10 +5641,35 @@ function FileSystemGalleryView(props: FileSystemViewProps) {
   const stripRefs = React.useRef(new Map<string, HTMLButtonElement>());
   const stripViewportRef = React.useRef<HTMLDivElement | null>(null);
   const typeAhead = useEntryTypeAhead();
+  const initializedPath = React.useRef<string | null>(null);
   const activeEntry =
     selectedEntry && entries.some((entry) => entry.path === selectedEntry.path)
       ? selectedEntry
-      : (entries[0] ?? null);
+      : (entries.find((entry) => entry.kind === "file") ?? entries[0] ?? null);
+  React.useEffect(() => {
+    if (initializedPath.current !== currentPath) {
+      initializedPath.current = currentPath;
+      const defaultFile =
+        selectedEntry?.kind === "file" &&
+        entries.some((entry) => entry.path === selectedEntry.path)
+          ? selectedEntry
+          : entries.find((entry) => entry.kind === "file");
+      if (defaultFile && selectedEntry?.path !== defaultFile.path) {
+        onSelect(defaultFile);
+        return;
+      }
+    }
+    if (activeEntry && !selectedPaths.has(activeEntry.path))
+      onSelect(activeEntry);
+  }, [
+    activeEntry,
+    currentPath,
+    entries,
+    onSelect,
+    selectedEntry,
+    selectedPaths,
+  ]);
+  const [informationWidth, setInformationWidth] = React.useState(280);
   const activeFile = activeEntry?.kind === "file" ? activeEntry : null;
   const settledPath = useSettledValue(activeEntry?.path ?? null, 200);
   React.useEffect(() => {
@@ -5603,104 +5729,126 @@ function FileSystemGalleryView(props: FileSystemViewProps) {
       itemSize: GALLERY_TILE_SIZE,
       itemStride: GALLERY_TILE_STRIDE,
       leadingPx: GALLERY_STRIP_PADDING,
+      trailingPx: activeEntry ? informationWidth : 0,
       viewport: stripViewportRef.current,
     });
-  }, [activePath, entries]);
+  }, [activePath, entries, informationWidth, activeEntry]);
   return (
-    <div className="flex size-full flex-col" onKeyDown={handleKeyDown}>
-      <InlineScrollArea2
-        orientation="horizontal"
-        className="order-last h-auto w-full shrink-0 border-t"
-        viewportRef={stripViewportRef}
-        viewportClassName="p-2"
+    <div className="relative size-full" onKeyDown={handleKeyDown}>
+      <div
+        className="absolute inset-x-0 bottom-0 z-10 border-t"
+        style={{ height: GALLERY_STRIP_HEIGHT }}
       >
-        <div
-          className="relative h-14 min-w-full"
-          style={{
-            width: entries.length
-              ? entries.length * GALLERY_TILE_STRIDE - GALLERY_TILE_GAP
-              : undefined,
-          }}
+        <InlineScrollArea2
+          orientation="horizontal"
+          className="h-full w-full"
+          viewportRef={stripViewportRef}
+          viewportClassName="p-2"
+          viewportProps={{ style: { padding: GALLERY_STRIP_PADDING } }}
         >
           <div
-            role="listbox"
-            aria-label="Files"
-            className="absolute inset-y-0 flex items-center gap-1.5"
-            style={{ left: stripStart * GALLERY_TILE_STRIDE }}
+            className="relative min-w-full"
+            style={{
+              height: GALLERY_TILE_SIZE,
+              width: entries.length
+                ? entries.length * GALLERY_TILE_STRIDE -
+                  GALLERY_TILE_GAP +
+                  (activeEntry ? informationWidth : 0)
+                : undefined,
+            }}
           >
-            {entries.slice(stripStart, stripEnd).map((entry) => {
-              const isActive =
-                entry.path === (activeEntry?.path ?? selectedPath);
-              return (
-                <div key={entry.path} className="relative">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        data-entry-path={entry.path}
-                        type="button"
-                        role="option"
-                        aria-label={entry.name}
-                        aria-selected={selectedPaths.has(entry.path)}
-                        tabIndex={isActive ? 0 : -1}
-                        ref={(element) => {
-                          if (element) {
-                            stripRefs.current.set(entry.path, element);
-                          } else {
-                            stripRefs.current.delete(entry.path);
-                          }
-                        }}
-                        onClick={(event) => onSelect(entry, event, entries)}
-                        onDoubleClick={() => onOpen(entry)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") onOpen(entry);
-                        }}
-                        className={cn(
-                          "flex size-14 shrink-0 items-center justify-center rounded-md border border-transparent p-1 outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          selectedPaths.has(entry.path) &&
-                            "border-ring/40 bg-accent",
-                        )}
+            <div
+              role="listbox"
+              aria-label="Files"
+              className="absolute inset-y-0 flex items-center"
+              style={{
+                left: stripStart * GALLERY_TILE_STRIDE,
+                gap: GALLERY_TILE_GAP,
+              }}
+            >
+              {entries.slice(stripStart, stripEnd).map((entry) => {
+                const isActive =
+                  entry.path === (activeEntry?.path ?? selectedPath);
+                return (
+                  <div key={entry.path} className="relative">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          data-entry-path={entry.path}
+                          draggable
+                          type="button"
+                          role="option"
+                          aria-label={entry.name}
+                          aria-selected={selectedPaths.has(entry.path)}
+                          tabIndex={isActive ? 0 : -1}
+                          ref={(element) => {
+                            if (element) {
+                              stripRefs.current.set(entry.path, element);
+                            } else {
+                              stripRefs.current.delete(entry.path);
+                            }
+                          }}
+                          onClick={(event) => onSelect(entry, event, entries)}
+                          onDoubleClick={() => onOpen(entry)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") onOpen(entry);
+                          }}
+                          className={cn(
+                            "flex shrink-0 items-center justify-center rounded-md border border-transparent p-1 outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            selectedPaths.has(entry.path) &&
+                              "border-primary bg-primary text-primary-foreground",
+                          )}
+                          style={{
+                            width: GALLERY_TILE_SIZE,
+                            height: GALLERY_TILE_SIZE,
+                          }}
+                        >
+                          {entry.kind === "folder" ? (
+                            <FileSystemFolderGlyph className="h-9 w-auto" />
+                          ) : (
+                            <span
+                              className="block shrink-0"
+                              style={{
+                                width: `min(2.875rem, calc((2.875rem - 2px) * ${entry.previewAspectRatio ?? 0.78} + 2px))`,
+                              }}
+                            >
+                              <FileVisual
+                                file={entry}
+                                className="w-full rounded-sm"
+                                previewAspectRatio={0.78}
+                                renderFilePreview={renderFilePreview}
+                                loadPreviewImageUrl={loadPreviewImageUrl}
+                              />
+                            </span>
+                          )}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="top"
+                        className="max-w-80 break-words"
                       >
-                        {entry.kind === "folder" ? (
-                          <FileSystemFolderGlyph className="h-9 w-auto" />
-                        ) : (
-                          <span
-                            className="block shrink-0"
-                            style={{
-                              width: `min(2.875rem, calc((2.875rem - 2px) * ${entry.previewAspectRatio ?? 0.78} + 2px))`,
-                            }}
-                          >
-                            <FileVisual
-                              file={entry}
-                              className="w-full rounded-sm"
-                              previewAspectRatio={0.78}
-                              renderFilePreview={renderFilePreview}
-                              loadPreviewImageUrl={loadPreviewImageUrl}
-                            />
-                          </span>
-                        )}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-80 break-words">
-                      {entry.name}
-                    </TooltipContent>
-                  </Tooltip>
-                  {entry.kind === "file" &&
-                    needsIndexAttention(entry.metadata?.Index) && (
-                      <span className="absolute bottom-1 right-1">
-                        <FileIndexStatus file={entry} />
-                      </span>
-                    )}
-                </div>
-              );
-            })}
+                        {entry.name}
+                      </TooltipContent>
+                    </Tooltip>
+                    {entry.kind === "file" &&
+                      needsIndexAttention(entry.metadata?.Index) && (
+                        <span className="absolute bottom-1 right-1">
+                          <FileIndexStatus file={entry} />
+                        </span>
+                      )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      </InlineScrollArea2>
-      <Group orientation="horizontal" className="min-h-0 flex-1">
+        </InlineScrollArea2>
+      </div>
+      <Group orientation="horizontal" className="size-full">
         <Panel
           id="gallery-preview"
           minSize="25%"
           className="relative flex min-h-0 min-w-0 items-center justify-center p-3"
+          style={{ paddingBottom: GALLERY_STRIP_HEIGHT + 12 }}
         >
           {activeEntry?.kind === "folder" ? (
             <FileSystemFolderGlyph className="h-40 max-h-full w-auto drop-shadow-md" />
@@ -5716,9 +5864,10 @@ function FileSystemGalleryView(props: FileSystemViewProps) {
                 ref={stageHostRefs.get(path)}
                 inert={!isActiveStage || undefined}
                 className={cn(
-                  "absolute inset-0 flex items-center justify-center p-3",
+                  "absolute inset-x-0 top-0 flex items-center justify-center p-3",
                   !isActiveStage && "invisible opacity-0",
                 )}
+                style={{ bottom: GALLERY_STRIP_HEIGHT }}
               />
             );
           })}
@@ -5727,13 +5876,15 @@ function FileSystemGalleryView(props: FileSystemViewProps) {
           <>
             <Separator
               aria-label="Resize information panel"
-              className="relative w-px bg-border outline-none transition-colors after:absolute after:inset-y-0 after:-inset-x-1 hover:bg-ring focus-visible:bg-ring"
+              className="relative z-30 w-px bg-border outline-none transition-colors after:absolute after:inset-y-0 after:-inset-x-1 hover:bg-ring focus-visible:bg-ring"
             />
             <Panel
               id="gallery-information"
               defaultSize={280}
               minSize={190}
               maxSize="60%"
+              className="finder-glass relative z-20"
+              onResize={(size) => setInformationWidth(size.inPixels)}
             >
               <FileSystemInformationSidebar
                 entry={activeEntry}

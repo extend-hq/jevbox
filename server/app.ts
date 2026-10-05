@@ -22,6 +22,8 @@ import { authenticateToken as tokenActor, sessionActor } from "./sessions";
 
 import { availableChatModels, validateProviderURL } from "./ai";
 import { providerCatalog } from "../shared/providers";
+import { cloudflareModels, decisionProviders } from "../shared/decision-model";
+import { getDecisionConnection } from "./decision-provider";
 import express, {
   type Request,
   type Response,
@@ -391,7 +393,8 @@ export async function createApp(options: {
             model.provider === settings.provider &&
             model.model === settings.model,
         ) ?? availableChatModels(settings)[0],
-      semanticEnabled: Boolean(settings.jevKey),
+      semanticEnabled: Boolean(getDecisionConnection(settings)),
+      decisionProvider: settings.decisionProvider ?? "typesafe",
       extendEnabled: Boolean(settings.extendKey),
     });
   });
@@ -410,9 +413,13 @@ export async function createApp(options: {
         model: s.organization?.model ?? null,
       },
       chatModels: availableChatModels(s),
+      decisionProvider: s.decisionProvider ?? "typesafe",
+      cloudflareAccountId: s.cloudflareAccountId ?? "",
+      cloudflareModel: s.cloudflareModel ?? "clef",
       configured: {
         extendKey: Boolean(s.extendKey),
         jevKey: Boolean(s.jevKey),
+        cloudflareKey: Boolean(s.cloudflareKey),
       },
       providers: Object.fromEntries(
         Object.entries(s.credentials ?? {}).map(([key, value]) => [
@@ -483,6 +490,17 @@ export async function createApp(options: {
       const common = {
         extendKey: z.string().max(1000).optional(),
         jevKey: z.string().max(1000).optional(),
+        decisionProvider: z.enum(decisionProviders).optional(),
+        cloudflareKey: z.string().max(1000).optional(),
+        cloudflareAccountId: z
+          .string()
+          .trim()
+          .refine(
+            (value) => value === "" || /^[a-fA-F0-9]{32}$/.test(value),
+            "Enter a valid Cloudflare account ID (32 hexadecimal characters).",
+          )
+          .optional(),
+        cloudflareModel: z.enum(cloudflareModels).optional(),
         organization: z
           .object({
             enabled: z.boolean(),
@@ -581,6 +599,14 @@ export async function createApp(options: {
       const s = await getSettings(store, a.orgId);
       if (input.extendKey !== undefined) s.extendKey = input.extendKey.trim();
       if (input.jevKey !== undefined) s.jevKey = input.jevKey.trim();
+      if (input.decisionProvider !== undefined)
+        s.decisionProvider = input.decisionProvider;
+      if (input.cloudflareKey !== undefined)
+        s.cloudflareKey = input.cloudflareKey.trim();
+      if (input.cloudflareAccountId !== undefined)
+        s.cloudflareAccountId = input.cloudflareAccountId;
+      if (input.cloudflareModel !== undefined)
+        s.cloudflareModel = input.cloudflareModel;
       s.credentials ??= {};
       if ("removedProviders" in input) {
         for (const provider of input.removedProviders ?? []) {
@@ -947,10 +973,10 @@ export async function createApp(options: {
         a.orgId,
         documents.map((document) => document.parent_id),
       );
-      if (!(await getSettings(store, a.orgId)).jevKey)
+      if (!getDecisionConnection(await getSettings(store, a.orgId)))
         throw new HttpError(
           409,
-          "Connect TypeSafe in organization settings to organize documents.",
+          "Connect TypeSafe or Cloudflare in organization settings to organize documents.",
         );
       const claims = [];
       for (const document of documents) {

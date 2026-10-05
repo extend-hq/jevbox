@@ -16,6 +16,7 @@ import { Button } from "@/components/coss/button";
 import { Input } from "@/components/coss/input";
 import { Switch } from "@/components/ui/switch";
 import { Form } from "@/components/coss/form";
+import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/coss/tabs";
 import {
   Field,
   FieldLabel,
@@ -29,6 +30,10 @@ import {
   validateLength,
 } from "@/lib/form-validation";
 import { providerCatalog } from "../../shared/providers";
+import type {
+  CloudflareModel,
+  DecisionProvider,
+} from "../../shared/decision-model";
 import { Choice, Loading, useAction } from "./common";
 export function SettingsView({
   me,
@@ -44,6 +49,11 @@ export function SettingsView({
   const [providerDrafts, setProviderDrafts] = useState<ProviderDraft[]>([]);
   const [removedProviders, setRemovedProviders] = useState<string[]>([]);
   const [keys, setKeys] = useState<Record<string, string>>({});
+  const [decisionProvider, setDecisionProvider] =
+    useState<DecisionProvider>("typesafe");
+  const [cloudflareAccountId, setCloudflareAccountId] = useState("");
+  const [cloudflareModel, setCloudflareModel] =
+    useState<CloudflareModel>("clef");
   const [autoFile, setAutoFile] = useState(true);
   const [folderModel, setFolderModel] = useState("");
   const [invitation, setInvitation] = useState("");
@@ -52,12 +62,20 @@ export function SettingsView({
   const [remove, setRemove] = useState("");
   const action = useAction();
   const isAdmin = me.role === "admin";
+  const decisionConfigured = Boolean(
+    decisionProvider === "typesafe"
+      ? settings?.configured.jevKey
+      : settings?.configured.cloudflareKey && settings?.cloudflareAccountId,
+  );
   const refresh = async () => {
     const m = await organizationMembers(me.organization.id);
     setMembers(m);
     if (isAdmin) {
       const s = await api("/settings");
       setSettings(s);
+      setDecisionProvider(s.decisionProvider ?? "typesafe");
+      setCloudflareAccountId(s.cloudflareAccountId ?? "");
+      setCloudflareModel(s.cloudflareModel ?? "clef");
       setAutoFile(s.organization?.enabled !== false);
       setFolderModel(
         s.organization?.model
@@ -88,7 +106,12 @@ export function SettingsView({
   useEffect(() => {
     void action.run(refresh);
   }, []);
-  const field = (key: string, label: string, configured: boolean) => (
+  const field = (
+    key: string,
+    label: string,
+    configured: boolean,
+    placeholder = "Paste your API key",
+  ) => (
     <Field
       name={key}
       validate={(value) =>
@@ -103,9 +126,7 @@ export function SettingsView({
           maxLength={key === "providerKey" ? 10000 : 1000}
           autoComplete="off"
           placeholder={
-            configured
-              ? "Configured · leave blank to keep"
-              : "Paste your API key"
+            configured ? "Configured · leave blank to keep" : placeholder
           }
           value={keys[key] ?? ""}
           onChange={(e) => {
@@ -120,7 +141,10 @@ export function SettingsView({
         <button
           className="text-link"
           type="button"
-          onClick={() => setKeys({ ...keys, [key]: "" })}
+          onClick={() => {
+            setSaved(false);
+            setKeys({ ...keys, [key]: "" });
+          }}
         >
           Clear on save
         </button>
@@ -171,6 +195,9 @@ export function SettingsView({
                     method: "PUT",
                     body: JSON.stringify({
                       ...keys,
+                      decisionProvider,
+                      cloudflareAccountId,
+                      cloudflareModel,
                       organization: {
                         enabled: autoFile,
                         ...(folderModel
@@ -241,29 +268,117 @@ export function SettingsView({
               </div>
               <div className="settings-section">
                 <div className="settings-section-title">
-                  <span className="integration-mark">
-                    <ProviderLogo provider="typesafe" size={22} />
+                  <span
+                    className={`integration-mark ${decisionProvider === "typesafe" ? "[&_.provider-logo]:scale-70" : ""}`}
+                  >
+                    <ProviderLogo provider={decisionProvider} size={22} />
                   </span>
                   <div>
-                    <h2>TypeSafe</h2>
-                    <p>Find relevant sources across your document hierarchy.</p>
+                    <h2>Decision model</h2>
+                    <p>Find relevant sources and organize your documents.</p>
                   </div>
                   <span
-                    className={`connection-state ${settings.configured.jevKey ? "connected" : ""}`}
+                    className={`connection-state ${decisionConfigured ? "connected" : ""}`}
                   >
-                    {settings.configured.jevKey
-                      ? "Connected"
-                      : "Not configured"}
+                    {decisionConfigured ? "Connected" : "Not configured"}
                   </span>
                 </div>
-                {field(
-                  "jevKey",
-                  "TypeSafe API key",
-                  settings.configured.jevKey,
-                )}
+                <Tabs
+                  value={decisionProvider}
+                  onValueChange={(value) => {
+                    if (value === "typesafe" || value === "cloudflare") {
+                      setDecisionProvider(value);
+                      setSaved(false);
+                    }
+                  }}
+                >
+                  <TabsList aria-label="Decision model provider">
+                    <TabsTab
+                      value="typesafe"
+                      type="button"
+                      className="[&_.provider-logo]:scale-70"
+                    >
+                      <ProviderLogo provider="typesafe" size={16} />
+                      TypeSafe
+                    </TabsTab>
+                    <TabsTab value="cloudflare" type="button">
+                      <ProviderLogo provider="cloudflare" size={16} />
+                      Cloudflare
+                    </TabsTab>
+                  </TabsList>
+                  <TabsPanel value="typesafe" className="space-y-4 pt-3">
+                    {field(
+                      "jevKey",
+                      "TypeSafe API key",
+                      settings.configured.jevKey,
+                    )}
+                  </TabsPanel>
+                  <TabsPanel value="cloudflare" className="space-y-4 pt-3">
+                    <Field
+                      name="cloudflareAccountId"
+                      validate={(value) =>
+                        value && !/^[a-fA-F0-9]{32}$/.test(String(value).trim())
+                          ? "Enter a 32-character Cloudflare account ID."
+                          : null
+                      }
+                    >
+                      <FieldLabel>Cloudflare account ID</FieldLabel>
+                      <Input
+                        name="cloudflareAccountId"
+                        type="text"
+                        autoComplete="off"
+                        placeholder="Paste your account ID"
+                        maxLength={32}
+                        value={cloudflareAccountId}
+                        onChange={(event) => {
+                          setCloudflareAccountId(event.target.value.trim());
+                          setSaved(false);
+                        }}
+                      />
+                      <FieldError />
+                    </Field>
+                    {field(
+                      "cloudflareKey",
+                      "Cloudflare API token",
+                      settings.configured.cloudflareKey,
+                      "Paste your API token",
+                    )}
+                    <Field name="cloudflareModel">
+                      <FieldLabel>Model</FieldLabel>
+                      <Choice
+                        label="Cloudflare decision model"
+                        value={cloudflareModel}
+                        onChange={(value) => {
+                          if (value === "clef" || value === "clef-flash") {
+                            setCloudflareModel(value);
+                            setSaved(false);
+                          }
+                        }}
+                        options={[
+                          { value: "clef", label: "Clef" },
+                          { value: "clef-flash", label: "Clef Flash" },
+                        ]}
+                      />
+                    </Field>
+                    <p className="field-note">
+                      Use a Workers AI API token with Read and Edit permissions.
+                      Get your token and account ID from the{" "}
+                      <a
+                        className="text-link"
+                        href="https://dash.cloudflare.com/?to=/:account/ai/workers-ai"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Cloudflare dashboard
+                      </a>
+                      .
+                    </p>
+                  </TabsPanel>
+                </Tabs>
                 <p className="field-note">
-                  Connect TypeSafe to enable tree navigation and evidence
-                  filtering for search and document questions.
+                  Save to use this provider for search, evidence scoring, and
+                  automatic filing across your organization. Both providers’
+                  credentials are kept when you switch.
                 </p>
               </div>
               <div className="settings-section">

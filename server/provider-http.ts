@@ -21,6 +21,10 @@ export async function jsonRequest(
   });
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
+    if (response.status === 413)
+      throw new ProviderResponseError(
+        "The provider rejected this request because it exceeds its size or context limit. Use a smaller document scope or selection.",
+      );
     const message = `Provider request failed (${response.status}). Check your key and account limits.`;
     if (response.status < 500 && response.status !== 429)
       throw new ProviderResponseError(message);

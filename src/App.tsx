@@ -1,3 +1,4 @@
+import { decisionProviderLabels } from "../shared/decision-model";
 import { StorageSettings } from "./components/storage-settings";
 import { AdminUsersView } from "./components/admin-users";
 import { Database } from "./components/icons";
@@ -445,16 +446,17 @@ export default function App() {
   useEffect(() => {
     setMobileNav(false);
   }, [page, directory, documentId, settingsSection]);
-  async function upload(files: FileList | File[]) {
-    const destinations = new Map<string, string | null>([
-      ["", currentFolder?.id ?? null],
-    ]);
+  async function upload(
+    files: FileList | File[],
+    destinationId = currentFolder?.id ?? null,
+  ) {
+    const destinations = new Map<string, string | null>([["", destinationId]]);
     try {
       await uploadBatch(files, async (file) => {
         setUploading(file.name);
         const segments = file.webkitRelativePath?.split("/").slice(0, -1) ?? [];
         let path = "";
-        let parentId = currentFolder?.id ?? null;
+        let parentId = destinationId;
         for (const name of segments) {
           path += `${name}/`;
           if (!destinations.has(path)) {
@@ -660,8 +662,9 @@ export default function App() {
                 size: 29,
               },
               {
-                provider: "typesafe",
-                label: "TypeSafe",
+                provider: me.decisionProvider ?? "typesafe",
+                label:
+                  decisionProviderLabels[me.decisionProvider ?? "typesafe"],
                 connected: me.semanticEnabled,
                 issue: false,
                 size: 22,
@@ -969,17 +972,20 @@ export default function App() {
                       <ProviderLogo provider="extend" size={34} />
                     </span>
                     <span>
-                      <ProviderLogo provider="typesafe" size={22} />
+                      <ProviderLogo
+                        provider={me.decisionProvider ?? "typesafe"}
+                        size={22}
+                      />
                     </span>
                   </span>
                   <div>
                     <strong>Connect your document library</strong>
                     <p>
                       {!me.semanticEnabled && !me.extendEnabled
-                        ? "Connect Extend to parse documents and TypeSafe to find the right sources."
+                        ? `Connect Extend to parse documents and ${decisionProviderLabels[me.decisionProvider ?? "typesafe"]} to find the right sources.`
                         : !me.extendEnabled
                           ? "Connect Extend to parse PDFs, Office documents, and images."
-                          : "Connect TypeSafe to find sources across your document hierarchy."}
+                          : `Connect ${decisionProviderLabels[me.decisionProvider ?? "typesafe"]} to find sources across your document hierarchy.`}
                     </p>
                   </div>
                   <Button
@@ -1005,9 +1011,38 @@ export default function App() {
                 }}
               />
               <FinderDropZone
-                onFiles={(files) => {
-                  void action.run(() => upload(files));
+                currentPath={currentFolder ? pathFor(currentFolder) : ""}
+                destinations={[
+                  { path: "", id: null, name: "Library", writable: true },
+                  ...folders.map((folder) => ({
+                    path: pathFor(folder),
+                    id: folder.id,
+                    name: folder.name,
+                    writable: Boolean(folder.canWrite),
+                  })),
+                ]}
+                onFiles={(files, parentId) => {
+                  void action.run(() => upload(files, parentId));
                 }}
+                onMoveItems={(paths, parentId) =>
+                  void action.run(async () => {
+                    try {
+                      for (const path of paths) {
+                        const resource = resources.find(
+                          (resource) => pathFor(resource) === path,
+                        );
+                        if (!resource || resource.parent_id === parentId)
+                          continue;
+                        await api(`/resources/${resource.id}/move`, {
+                          method: "POST",
+                          body: JSON.stringify({ parentId }),
+                        });
+                      }
+                    } finally {
+                      await refresh();
+                    }
+                  })
+                }
               >
                 <div className="finder-wrap">
                   <Finder

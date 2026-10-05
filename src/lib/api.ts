@@ -1,4 +1,5 @@
 import type { ParsedBlock } from "../../shared/parsed-blocks";
+import type { DecisionProvider } from "../../shared/decision-model";
 import type { RetrievalStep } from "../../shared/retrieval";
 import type { Thumbnail } from "../../shared/thumbnails";
 import { mutationSuccessMessage, notifySuccess } from "./notifications";
@@ -126,6 +127,7 @@ export type Me = {
   chatModels: { provider: string; providerLabel: string; model: string }[];
   defaultChatModel: { provider: string; model: string };
   semanticEnabled: boolean;
+  decisionProvider?: DecisionProvider;
   extendEnabled: boolean;
 };
 export type Member = {

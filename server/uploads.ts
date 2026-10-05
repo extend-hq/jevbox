@@ -7,6 +7,7 @@ import { uploadLimits } from "../shared/uploads";
 import { HttpError, requireResource, type Actor, type Store } from "./db";
 import { enqueueIndex } from "./indexing-jobs";
 import { enqueueThumbnail } from "./thumbnails";
+import { hasPinnedFolders } from "./folder-pinning";
 import { checkStoredDocumentQuota, uploadScopes } from "./upload-quotas";
 import { createLimiter } from "./async";
 import {
@@ -383,10 +384,13 @@ export function createUploads(
       await store.files.write("document", id, body, mime);
       signal?.throwIfAborted();
       await enqueueThumbnail(store, id);
+      const pinned = await hasPinnedFolders(store, current.orgId, [parentId]);
       await store.run(
-        "INSERT INTO document_filing(resource_id,scope_id) VALUES(?,?)",
+        "INSERT INTO document_filing(resource_id,scope_id,state,outcome) VALUES(?,?,?,?)",
         id,
         parentId,
+        pinned ? "disabled" : "pending",
+        JSON.stringify(pinned ? { reason: "pinned" } : {}),
       );
       await enqueueIndex(store, id);
       await store.run(

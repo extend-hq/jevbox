@@ -1,4 +1,5 @@
 .library-space {
+  --spatial-corner-inset: 16px;
   position: relative;
   width: 100%;
   height: 100%;
@@ -22,6 +23,24 @@
   display: block;
   touch-action: none;
 }
+.library-space-processing-thumbnails {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.library-space-processing-thumbnail {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 225px;
+  height: 300px;
+  visibility: hidden;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
 .library-space-block-badges {
   position: absolute;
   inset: 0;
@@ -43,8 +62,8 @@
 }
 .library-space-tools {
   position: absolute;
-  top: 14px;
-  right: 16px;
+  top: var(--spatial-corner-inset);
+  right: calc(var(--spatial-corner-inset) + var(--spatial-sidebar-width, 0px));
   z-index: 1300;
   display: flex;
   align-items: center;
@@ -52,8 +71,8 @@
   gap: 2px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--background) 85%, transparent);
-  backdrop-filter: blur(8px);
+  background: var(--finder-glass-background);
+  backdrop-filter: blur(var(--finder-glass-blur));
 }
 .library-space-tools button {
   width: 28px;
@@ -80,42 +99,20 @@
 }
 .library-space-guide {
   position: absolute;
-  bottom: 14px;
-  right: 16px;
+  bottom: var(--spatial-corner-inset);
+  right: calc(var(--spatial-corner-inset) + var(--spatial-sidebar-width, 0px));
+  max-width: calc(
+    100% - var(--spatial-sidebar-width, 0px) - var(--spatial-corner-inset) * 2
+  );
   display: flex;
-  gap: 14px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
   color: var(--muted-foreground);
   font-size: 10px;
+  line-height: 1.4;
+  text-align: right;
   pointer-events: none;
-}
-.library-space-block-controls {
-  position: absolute;
-  bottom: 40px;
-  left: 16px;
-  right: 16px;
-  z-index: 1300;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: fit-content;
-  max-width: calc(100% - 32px);
-  flex-wrap: wrap;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--background) 90%, transparent);
-  backdrop-filter: blur(8px);
-  font-size: 11px;
-  color: var(--muted-foreground);
-}
-.library-space-block-controls button {
-  padding: 3px 6px;
-  border-radius: 5px;
-  color: var(--foreground);
-  cursor: pointer;
-}
-.library-space-block-controls button:hover {
-  background: var(--accent);
 }
 .library-space-unavailable {
   position: absolute;

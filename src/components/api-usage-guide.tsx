@@ -229,7 +229,7 @@ export function ApiUsageGuide({
         <p>
           Search allows 10,000 requests per minute per user and key, with no
           organization-wide cap. Search uses the organization’s configured
-          TypeSafe connection and indexed documents.
+          decision model connection and indexed documents.
         </p>
         <p>
           Uploads allow 10,000 attempts per minute and 100,000 per hour per user

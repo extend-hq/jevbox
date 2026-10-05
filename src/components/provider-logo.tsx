@@ -5,6 +5,7 @@ const logos = new Set([
   "zai",
   "huggingface",
   "typesafe",
+  "cloudflare",
   "xai",
   "vertex",
   "groq",

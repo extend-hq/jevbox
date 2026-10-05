@@ -334,7 +334,7 @@ export function SearchView({
               {result.results.length} source
               {result.results.length !== 1 ? "s" : ""} found
             </h2>
-            <span>Ranked by JEV</span>
+            <span>Ranked by relevance</span>
           </div>
           {result.results.map((s: Source, i: number) => (
             <article

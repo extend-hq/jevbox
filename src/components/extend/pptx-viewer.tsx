@@ -554,7 +554,7 @@ function PptxSidebarThumbnail({
       isLoading={status !== "ready" && status !== "error"}
       hasError={status === "error"}
       className={cn(
-        "w-full rounded-sm border-0 shadow-xs ring-0 transition-shadow duration-150",
+        "w-full max-w-[112px] rounded-sm border-0 shadow-xs ring-0 transition-shadow duration-150",
         isActive && "shadow-sm",
       )}
     />

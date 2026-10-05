@@ -10,19 +10,22 @@ import { PermanentJobError } from "./jobs";
 import { buildIndex } from "./indexing";
 import { retrieveDocuments } from "./retrieval";
 import { jsonRequest } from "./provider-http";
+import {
+  getDecisionConnection,
+  type DecisionSettings,
+} from "./decision-provider";
 import type { SearchFilters } from "../shared/search-filters";
 import { documentAnswerPolicy } from "./answer-policy";
 import {
   citationPromptSource,
   createCitationLocator,
 } from "./citation-sources";
-export type Settings = {
+export type Settings = DecisionSettings & {
   organization?: {
     enabled: boolean;
     model?: { provider: string; model: string };
   };
   extendKey?: string;
-  jevKey?: string;
   provider?: string;
   model?: string;
   credentials?: Record<
@@ -185,7 +188,7 @@ export function createProviders(store: Store, fetcher: Fetch = fetch) {
       store,
       actor,
       query,
-      settings.jevKey,
+      getDecisionConnection(settings),
       fetcher,
       documentIds,
       signal,

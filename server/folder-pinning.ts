@@ -21,13 +21,13 @@ export function pinnedFolderIds(folders: readonly Folder[]) {
   return pinned;
 }
 
-export async function requireUnpinnedFolders(
+export async function hasPinnedFolders(
   store: Store,
   orgId: string,
   folderIds: (string | null)[],
 ) {
   const ids = folderIds.filter((id): id is string => id !== null);
-  if (!ids.length) return;
+  if (!ids.length) return false;
   const pinned = await store.one(
     `WITH RECURSIVE ancestors AS (
       SELECT id,parent_id,pinned FROM resources WHERE org_id=? AND kind='folder' AND id=ANY(?::text[])
@@ -38,7 +38,15 @@ export async function requireUnpinnedFolders(
     ids,
     orgId,
   );
-  if (pinned)
+  return Boolean(pinned);
+}
+
+export async function requireUnpinnedFolders(
+  store: Store,
+  orgId: string,
+  folderIds: (string | null)[],
+) {
+  if (await hasPinnedFolders(store, orgId, folderIds))
     throw new HttpError(
       409,
       "Pinned folders are locked. Unpin the folder before filing documents into or out of it.",

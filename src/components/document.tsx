@@ -1074,7 +1074,7 @@ export function DocumentView({
                                 {doc.filing.error ??
                                   filingNote ??
                                   (doc.filing.state === "awaiting_key"
-                                    ? "Connect TypeSafe in organization settings. The document is already indexed."
+                                    ? "Connect TypeSafe or Cloudflare in organization settings. The document is already indexed."
                                     : "The document is indexed and available while its folder is selected.")}
                               </p>
                               {doc.canShare &&

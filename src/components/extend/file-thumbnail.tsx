@@ -1,5 +1,7 @@
 "use client";
 import * as React from "react";
+import { cn } from "@/lib/utils";
+import { DocumentProcessingOverlay } from "../document-processing-overlay";
 export type ThumbnailFile = {
   name: string;
   type: string;
@@ -12,14 +14,12 @@ export type FileThumbnailProps = {
   previewContent?: React.ReactNode;
   previewImageUrl?: string | null;
   isLoading?: boolean;
+  isProcessing?: boolean;
   hasError?: boolean;
   onPreviewError?: () => void;
   onPreviewLoad?: (image: HTMLImageElement) => void;
   imageLoading?: "eager" | "lazy";
 };
-function cx(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
-}
 const revealedPreviewImageUrls = new Set<string>();
 function FileThumbnailLoadingOverlay() {
   return (
@@ -39,6 +39,7 @@ export function FileThumbnail({
   previewContent,
   previewImageUrl,
   isLoading = false,
+  isProcessing = false,
   hasError = false,
   onPreviewError,
   onPreviewLoad,
@@ -107,13 +108,13 @@ export function FileThumbnail({
   }, [markImageLoaded, previewImageUrl]);
   return (
     <div
-      className={cx(
+      className={cn(
         "group overflow-hidden rounded-lg border bg-background text-foreground",
         className,
       )}
     >
       <div
-        className={cx(
+        className={cn(
           "relative aspect-square overflow-hidden bg-muted [contain:layout_paint]",
           previewClassName,
         )}
@@ -131,7 +132,7 @@ export function FileThumbnail({
             draggable={false}
             loading={imageLoading}
             decoding="async"
-            className={cx(
+            className={cn(
               "absolute inset-0 block size-full object-cover transition-[opacity,filter] duration-[160ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
               showLoading ? "opacity-0 blur-sm" : "blur-0 opacity-100",
             )}
@@ -153,7 +154,7 @@ export function FileThumbnail({
         ) : null}
         {previewContent ? (
           <div
-            className={cx(
+            className={cn(
               "absolute inset-0 size-full transition-[opacity,filter] duration-[160ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
               showLoading ? "opacity-0 blur-sm" : "blur-0 opacity-100",
             )}
@@ -165,6 +166,7 @@ export function FileThumbnail({
         {showFallback ? (
           <div className="absolute inset-0 bg-muted" aria-hidden="true" />
         ) : null}
+        {isProcessing ? <DocumentProcessingOverlay /> : null}
       </div>
     </div>
   );

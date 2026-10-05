@@ -9,6 +9,10 @@ import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js
 import { Maximize, Minus, Plus } from "./icons";
 import { FolderPinBadge } from "./folder-pin-badge";
 import {
+  DocumentProcessingOverlay,
+  isDocumentProcessing,
+} from "./document-processing-overlay";
+import {
   IndexStatusControl,
   needsIndexAttention,
 } from "./index-status-control";
@@ -17,6 +21,7 @@ import type { IndexNode } from "@/lib/api";
 import type { ParsedBlock } from "../../shared/parsed-blocks";
 import type { FileSystemEntry, FileSystemFileItem } from "./extend/file-system";
 import { FOLDER_GLYPH_SVG } from "./extend/folder-glyph";
+import { FINDER_DRAG_TYPE } from "../lib/finder-drag";
 import { layoutSpatialTree, type SpatialNode } from "../lib/spatial-tree";
 import { occludesSpatialFocus } from "../lib/spatial-focus";
 import {
@@ -56,6 +61,7 @@ type Props = {
   items: Entry[];
   scope: string;
   selectedPath: string | null;
+  sidebarWidth?: number;
   onSelect: (entry: Entry | null) => void;
   onOpen: (entry: Entry) => void;
   loadPreviewImageUrl?: (
@@ -539,6 +545,7 @@ export function LibrarySpatialView(props: Props) {
   >([]);
   const badgeElements = useRef(new Map<string, HTMLSpanElement>());
   const statusElements = useRef(new Map<string, HTMLSpanElement>());
+  const processingElements = useRef(new Map<string, HTMLSpanElement>());
   const [outlineRows, setOutlineRows] = useState<{
     path: string;
     rows: SpatialOutlineRow[];
@@ -2017,6 +2024,26 @@ export function LibrarySpatialView(props: Props) {
     let reducedMotion = motionPreference.matches;
     const projected = new THREE.Vector3();
     const badgeCenter = new THREE.Vector3();
+    const processingProjection = new THREE.Matrix4();
+    const processingScreen = new THREE.Matrix4();
+    const processingLocal = new THREE.Matrix4().set(
+      0.01,
+      0,
+      0,
+      -SHEET_WIDTH / 2,
+      0,
+      -0.01,
+      0,
+      SHEET_HEIGHT / 2,
+      0,
+      0,
+      1,
+      0.002,
+      0,
+      0,
+      0,
+      1,
+    );
     const badgeTop = new THREE.Vector3();
     const badgeRight = new THREE.Vector3();
     const worldPoint = new THREE.Vector3();
@@ -2740,6 +2767,43 @@ export function LibrarySpatialView(props: Props) {
       renderer.render(scene, camera);
       renderer.setRenderTarget(null);
       quad.render(renderer);
+      processingScreen.set(
+        width() / 2,
+        0,
+        0,
+        width() / 2,
+        0,
+        -height() / 2,
+        0,
+        height() / 2,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+      );
+      for (const [path, element] of processingElements.current) {
+        const floater = floaters.get(path);
+        const cover = floater?.cover;
+        if (!floater || !cover || floater.occluded || floater.opacity < 1) {
+          element.style.visibility = "hidden";
+          continue;
+        }
+        projected.set(0, 0, 0).applyMatrix4(cover.matrixWorld).project(camera);
+        const visible =
+          floater.group.visible && projected.z > -1 && projected.z < 1;
+        element.style.visibility = visible ? "visible" : "hidden";
+        if (!visible) continue;
+        processingProjection
+          .multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+          .multiply(cover.matrixWorld)
+          .multiply(processingLocal)
+          .premultiply(processingScreen);
+        element.style.transform = `matrix3d(${processingProjection.elements.join(",")})`;
+      }
       for (const [path, element] of statusElements.current) {
         const floater = floaters.get(path);
         if (!floater) {
@@ -3001,6 +3065,8 @@ export function LibrarySpatialView(props: Props) {
     raycaster.params.Line2 = { threshold: 6 };
     const pointer = new THREE.Vector2();
     let down: { x: number; y: number } | null = null;
+    let doubleClickTarget: ReturnType<typeof hit> | null = null;
+    let draggingItem = false;
     function pointerRay(event: PointerEvent | MouseEvent | WheelEvent) {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.set(
@@ -3092,11 +3158,33 @@ export function LibrarySpatialView(props: Props) {
       down = { x: event.clientX, y: event.clientY };
       flight = null;
       interacted = true;
+      const target = hit(event);
+      const dragPath =
+        event.pointerType !== "touch" &&
+        event.button === 0 &&
+        !event.altKey &&
+        !target.treePart &&
+        !target.previewBlock &&
+        typeof target.rowIndex !== "number"
+          ? target.path
+          : undefined;
+      renderer.domElement.draggable = Boolean(dragPath);
+      if (dragPath) renderer.domElement.dataset.entryPath = dragPath;
+      else delete renderer.domElement.dataset.entryPath;
+      controls.enabled = !dragPath;
+      if (dragPath) {
+        moving = false;
+        updateHover(dragPath);
+        return;
+      }
       moving = true;
       updateHover(undefined);
       invalidate();
     }
     function pointerUp(event: PointerEvent) {
+      controls.enabled = true;
+      renderer.domElement.draggable = false;
+      delete renderer.domElement.dataset.entryPath;
       moving = false;
       invalidate();
       if (
@@ -3127,8 +3215,52 @@ export function LibrarySpatialView(props: Props) {
       updateHover(undefined);
       invalidate();
     }
-    function doubleClick(event: MouseEvent) {
+    function dragStart(event: DragEvent) {
+      if (
+        event.defaultPrevented ||
+        !event.dataTransfer?.types.includes(FINDER_DRAG_TYPE)
+      )
+        return;
+      draggingItem = true;
+      down = null;
+      moving = false;
+      controls.enabled = false;
+    }
+    function dragOver(event: DragEvent) {
+      if (
+        !event.dataTransfer ||
+        !Array.from(event.dataTransfer.types).some(
+          (type) => type === FINDER_DRAG_TYPE || type === "Files",
+        )
+      )
+        return;
       const target = hit(event);
+      const folder = latest.current.items.find(
+        (item) => item.path === target.path && item.kind === "folder",
+      );
+      if (folder) renderer.domElement.dataset.entryPath = folder.path;
+      else delete renderer.domElement.dataset.entryPath;
+      updateHover(folder?.path);
+    }
+    function dragEnd() {
+      draggingItem = false;
+      down = null;
+      moving = false;
+      controls.enabled = true;
+      renderer.domElement.draggable = false;
+      delete renderer.domElement.dataset.entryPath;
+      updateHover(undefined);
+    }
+    function pointerCancel() {
+      if (!draggingItem) dragEnd();
+    }
+    function mouseDown(event: MouseEvent) {
+      if (event.button === 0 && event.detail === 1)
+        doubleClickTarget = hit(event);
+    }
+    function doubleClick(event: MouseEvent) {
+      const target = doubleClickTarget ?? hit(event);
+      doubleClickTarget = null;
       const path = target.path;
       if (target.treePart || typeof target.rowIndex === "number") return;
       const entry = latest.current.items.find((item) => item.path === path);
@@ -3194,11 +3326,19 @@ export function LibrarySpatialView(props: Props) {
     };
     controls.addEventListener("change", changed);
     controls.addEventListener("start", start);
-    renderer.domElement.addEventListener("pointerdown", pointerDown);
+    renderer.domElement.addEventListener("pointerdown", pointerDown, true);
     renderer.domElement.addEventListener("pointerup", pointerUp);
     renderer.domElement.addEventListener("pointermove", pointerMove);
     renderer.domElement.addEventListener("pointerleave", pointerLeave);
+    renderer.domElement.addEventListener("pointercancel", pointerCancel);
+    renderer.domElement.addEventListener("dragstart", dragStart);
+    renderer.domElement.addEventListener("dragover", dragOver);
+    renderer.domElement.addEventListener("drop", dragOver);
+    window.addEventListener("dragend", dragEnd);
+    window.addEventListener("drop", dragEnd);
+    window.addEventListener("blur", dragEnd);
     renderer.domElement.addEventListener("dblclick", doubleClick);
+    renderer.domElement.addEventListener("mousedown", mouseDown);
     renderer.domElement.addEventListener("wheel", wheel, { passive: false });
     container.addEventListener("keydown", keyDown);
     container.addEventListener("keyup", keyUp);
@@ -3232,11 +3372,19 @@ export function LibrarySpatialView(props: Props) {
       activePreview?.pages.forEach((page) => page.release());
       resize.disconnect();
       controls.dispose();
-      renderer.domElement.removeEventListener("pointerdown", pointerDown);
+      renderer.domElement.removeEventListener("pointerdown", pointerDown, true);
       renderer.domElement.removeEventListener("pointerup", pointerUp);
       renderer.domElement.removeEventListener("pointermove", pointerMove);
       renderer.domElement.removeEventListener("pointerleave", pointerLeave);
+      renderer.domElement.removeEventListener("pointercancel", pointerCancel);
+      renderer.domElement.removeEventListener("dragstart", dragStart);
+      renderer.domElement.removeEventListener("dragover", dragOver);
+      renderer.domElement.removeEventListener("drop", dragOver);
+      window.removeEventListener("dragend", dragEnd);
+      window.removeEventListener("drop", dragEnd);
+      window.removeEventListener("blur", dragEnd);
       renderer.domElement.removeEventListener("dblclick", doubleClick);
+      renderer.domElement.removeEventListener("mousedown", mouseDown);
       renderer.domElement.removeEventListener("wheel", wheel);
       container.removeEventListener("keydown", keyDown);
       container.removeEventListener("keyup", keyUp);
@@ -3268,6 +3416,11 @@ export function LibrarySpatialView(props: Props) {
   return (
     <section
       className="library-space"
+      style={
+        {
+          "--spatial-sidebar-width": `${props.sidebarWidth ?? 0}px`,
+        } as React.CSSProperties
+      }
       aria-label="3D library"
       onKeyDown={(event) => {
         if (
@@ -3322,6 +3475,28 @@ export function LibrarySpatialView(props: Props) {
         aria-label="Interactive library space"
         aria-describedby="spatial-controls-help"
       >
+        <div className="library-space-processing-thumbnails">
+          {props.items
+            .filter(
+              (item) =>
+                item.kind === "file" &&
+                isDocumentProcessing(item.metadata?.Index),
+            )
+            .map((item) => (
+              <span
+                key={item.path}
+                className="library-space-processing-thumbnail"
+                ref={(element) => {
+                  if (element)
+                    processingElements.current.set(item.path, element);
+                  else processingElements.current.delete(item.path);
+                  handle.current?.invalidate();
+                }}
+              >
+                <DocumentProcessingOverlay />
+              </span>
+            ))}
+        </div>
         <div className="library-space-index-statuses">
           {props.items
             .filter((item) =>
@@ -3426,51 +3601,6 @@ export function LibrarySpatialView(props: Props) {
           ))}
         </ul>
       )}
-      {expandedRow?.path === props.selectedPath && (
-        <div
-          className="library-space-block-controls"
-          aria-label="OCR block previews"
-        >
-          <span role="status">
-            {expandedRow.loading
-              ? "Loading blocks…"
-              : expandedRow.total
-                ? `${expandedRow.title} · ${expandedRow.offset + 1}–${Math.min(expandedRow.total, expandedRow.offset + SPATIAL_BLOCK_BATCH)} of ${expandedRow.total} blocks`
-                : "No OCR blocks in this section"}
-          </span>
-          {expandedRow.offset > 0 && (
-            <button
-              type="button"
-              onClick={() =>
-                handle.current?.selectRow(
-                  expandedRow.path,
-                  expandedRow.index,
-                  Math.max(0, expandedRow.offset - SPATIAL_BLOCK_BATCH),
-                )
-              }
-            >
-              Previous blocks
-            </button>
-          )}
-          {expandedRow.offset + SPATIAL_BLOCK_BATCH < expandedRow.total && (
-            <button
-              type="button"
-              onClick={() =>
-                handle.current?.selectRow(
-                  expandedRow.path,
-                  expandedRow.index,
-                  expandedRow.offset + SPATIAL_BLOCK_BATCH,
-                )
-              }
-            >
-              Next blocks
-            </button>
-          )}
-          <button type="button" onClick={() => handle.current?.collapseRow()}>
-            Collapse
-          </button>
-        </div>
-      )}
       <div className="library-space-tools" aria-label="Camera controls">
         <button
           type="button"
@@ -3499,7 +3629,7 @@ export function LibrarySpatialView(props: Props) {
         </button>
       </div>
       <div className="library-space-guide" id="spatial-controls-help">
-        <span>Drag to look around</span>
+        <span>Drag items to move · Drag the background to look around</span>
         <span>Scroll or WASD to float</span>
         <span>Click a document, then a row to preview its blocks</span>
       </div>

@@ -50,7 +50,7 @@ pnpm dev
 On later days, start Docker and run `pnpm services:up` followed by `pnpm dev`. Open http://localhost:4310, create an organization, and configure **Settings → Connections**:
 
 - **Extend API key** for parsing PDFs, Office documents, and images. Plain text, Markdown, code, JSON, HTML, and CSV index locally.
-- **TypeSafe API key** for hierarchical beam search through categories, documents, and sections, followed by independent usefulness scoring of source passages. Search and document questions require this connection; there is no keyword or embedding fallback.
+- **Decision model: TypeSafe or Cloudflare Clef** for hierarchical beam search through categories, documents, and sections, followed by independent usefulness scoring of source passages. Search and document questions require this connection; there is no keyword or embedding fallback.
 - **Chat providers** and model IDs for answers with page and section citations. Indexing stores the parsed structure, heading outlines, and original source passages without generative summaries. Automatic filing can use a separately selected model for occasional folder names and descriptions. Members can choose among administrator-configured models and attach up to eight accessible, indexed documents to scope an answer.
 
 Keys are encrypted on the server and never sent back to the browser. Leave a key blank to retain it, or use **Clear on save**. Configure additional provider options through the encrypted advanced JSON field.

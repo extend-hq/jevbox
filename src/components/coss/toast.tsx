@@ -27,7 +27,7 @@ function ToastList() {
           >
             <Toast.Content className="pointer-events-auto flex items-center gap-2 overflow-hidden px-3.5 py-3 text-sm transition-opacity duration-250 data-behind:not-data-expanded:pointer-events-none data-behind:opacity-0 data-expanded:opacity-100">
               {toast.type === "loading" ? (
-                <LoaderCircle className="size-4 shrink-0 text-muted-foreground motion-safe:animate-spin" />
+                <LoaderCircle className="size-4 shrink-0 text-muted-foreground" />
               ) : toast.type === "error" ? (
                 <TriangleWarningFilled className="size-4 shrink-0 text-destructive" />
               ) : (

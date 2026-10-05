@@ -578,7 +578,7 @@ export function McpConnectionGuide({
         </p>
         <p>
           For sign-in errors, authenticate again or check that your API key is
-          active. Search also requires your organization’s TypeSafe connection
+          active. Search also requires your organization’s decision model connection
           and indexed documents. Manage keys in{" "}
           <RouteLink href={paths.settings("api-keys")}>API keys</RouteLink> or
           disconnect OAuth apps below.

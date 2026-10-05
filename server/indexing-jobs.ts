@@ -2,6 +2,7 @@ import { HttpError, resourceAccess, type Resource, type Store } from "./db";
 import { createProviders } from "./providers";
 import { queues, PermanentJobError, type BackgroundJob } from "./jobs";
 import { checkStoredDocumentQuota } from "./upload-quotas";
+import { hasPinnedFolders } from "./folder-pinning";
 
 export async function enqueueIndex(
   store: Store,
@@ -117,10 +118,28 @@ export function createIndexHandler(
           document.id,
           job.id,
         );
-        const filing = await store.one<{ job_id: string | null }>(
-          "SELECT job_id FROM document_filing WHERE resource_id=? AND state='pending'",
+        const filing = await store.one<{
+          job_id: string | null;
+          scope_id: string | null;
+          parent_id: string | null;
+        }>(
+          "SELECT f.job_id,f.scope_id,r.parent_id FROM document_filing f JOIN resources r ON r.id=f.resource_id WHERE f.resource_id=? AND f.state='pending'",
           document.id,
         );
+        if (
+          filing &&
+          (await hasPinnedFolders(store, document.org_id, [
+            filing.parent_id,
+            filing.scope_id,
+          ]))
+        ) {
+          await store.run(
+            "UPDATE document_filing SET state='disabled',outcome=?,error=NULL,attempt_id=NULL WHERE resource_id=? AND state='pending'",
+            JSON.stringify({ reason: "pinned" }),
+            document.id,
+          );
+          return;
+        }
         if (filing && !filing.job_id) {
           const filingId = await store.jobs.send(
             queues.filing,

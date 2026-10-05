@@ -1,6 +1,12 @@
 import { createLimiter } from "./async";
 import { createTraversal, type RouteNode } from "./beam-search";
 import { createJev, retrievalLimits } from "./jev";
+import type { DecisionConnection } from "./decision-provider";
+import {
+  createClefImages,
+  withClefVisualPassages,
+  type ClefImage,
+} from "./clef-images";
 import {
   HttpError,
   type Actor,
@@ -51,7 +57,7 @@ export async function retrieveDocuments(
   store: Store,
   actor: Actor,
   query: string,
-  key: string | undefined,
+  connection: string | DecisionConnection | undefined,
   fetcher: typeof fetch,
   documentIds: string[] = [],
   signal?: AbortSignal,
@@ -64,10 +70,10 @@ export async function retrieveDocuments(
     permissionCache?: PermissionCache;
   },
 ) {
-  if (!key)
+  if (!connection)
     throw new HttpError(
       409,
-      "Connect TypeSafe in organization settings to enable search.",
+      "Connect TypeSafe or Cloudflare in organization settings to enable search.",
     );
   signal?.throwIfAborted();
   const canRead = createResourceAccessReader(
@@ -265,6 +271,12 @@ export async function retrieveDocuments(
   }
   const eligible = new Set(docs.map((doc) => doc.id));
   const documentNodes = new Map<string, RouteNode<Value>>();
+  const clef =
+    typeof connection !== "string" && connection.provider === "cloudflare";
+  const visualDocuments = new Map<
+    string,
+    { document: Resource; parsed: ParsedDocument }
+  >();
   function resourceNode(
     resource: Resource & { outline_only?: boolean },
   ): RouteNode<Value> | undefined {
@@ -291,9 +303,13 @@ export async function retrieveDocuments(
             !(await canRead(resource.id))
           )
             return [];
-          const parsed = withSearchPassages(
+          let parsed = withSearchPassages(
             JSON.parse(current.parsed) as ParsedDocument,
           );
+          if (clef) {
+            parsed = withClefVisualPassages(parsed);
+            visualDocuments.set(current.id, { document: current, parsed });
+          }
           const previews = buildSectionPreviews(parsed.nodes, query);
           children = bounded(
             [...parsed.nodes, searchMetadata(parsed, query)].map((node) =>
@@ -432,193 +448,236 @@ export async function retrieveDocuments(
   }
   const traversal = createTraversal(
     bounded(roots, "library"),
-    createJev(key, fetcher, signal),
+    createJev(connection, fetcher, signal),
     query,
     (node) => Boolean(node.value?.sources.length),
     options?.recoverRoutes ?? true,
   );
-  const jev = createJev(key, fetcher, signal);
+  const jev = createJev(connection, fetcher, signal);
   const results: RetrievedSource[] = [];
   const trace: RetrievalStep[] = [];
   const candidates: Omit<RetrievedSource, "score">[] = [];
   const passageCounts = new Map<string, number>();
   let scored = 0;
   let coverageChecked = "";
-  while ((!traversal.exhausted || candidates.length) && scored < maxPassages) {
-    signal?.throwIfAborted();
-    const routes = traversal.exhausted ? [] : await traversal.walk();
-    for (const route of routes) {
-      if (!route.node.value) continue;
-      const { step, sources } = route.node.value;
-      if (
-        step.stage === "document" &&
-        route.path.some((node) => node.id === "metadata-candidates")
-      ) {
-        const ancestors: Resource[] = [];
-        const seen = new Set<string>();
-        let parent = step.parentId;
-        while (parent && !seen.has(parent)) {
-          seen.add(parent);
-          const resource = byId.get(parent);
-          if (!resource || !(await canRead(resource.id))) break;
-          ancestors.unshift(resource);
-          parent = resource.parent_id;
-        }
-        for (const ancestor of ancestors)
-          if (
-            !trace.some(
-              (item) =>
-                item.stage === "category" && item.resourceId === ancestor.id,
-            )
-          )
-            trace.push({
-              stage: "category",
-              label: ancestor.name,
-              resourceId: ancestor.id,
-              parentId: ancestor.parent_id,
-            });
-      }
-      trace.push({
-        ...step,
-        probability: route.probability,
-        routeScore: route.score,
-      });
-      for (const source of sources)
-        candidates.push({ ...source, routeScore: route.score });
-    }
-    const batch: typeof candidates = [];
+  const visuals = clef ? createClefImages(store, actor, signal) : undefined;
+  try {
     while (
-      candidates.length &&
-      batch.length <
-        Math.min(retrievalLimits.evidenceBatchSize, maxPassages - scored)
+      (!traversal.exhausted || candidates.length) &&
+      scored < maxPassages
     ) {
-      const rounds = (source: (typeof candidates)[number]) =>
-        Math.floor(
-          (passageCounts.get(source.documentId) ?? 0) /
-            retrievalLimits.sectionsPerDocument,
-        );
-      candidates.sort(
-        (a, b) => rounds(a) - rounds(b) || b.routeScore - a.routeScore,
-      );
-      const source = candidates.shift()!;
-      batch.push(source);
-      passageCounts.set(
-        source.documentId,
-        (passageCounts.get(source.documentId) ?? 0) + 1,
-      );
-    }
-    const filtered = await evidenceSlot(async () => {
       signal?.throwIfAborted();
-      const approved = await readable(batch, (source) => source.documentId);
-      if (!approved.length) return [];
-      scored += approved.length;
-      trace.push(
-        ...approved.map((source) => ({
-          stage: "passage" as const,
-          label: source.title,
-          resourceId: source.documentId,
-          nodeId: source.nodeId,
-          page: source.page,
-          routeScore: source.routeScore,
-        })),
-      );
-      const scores = await jev.scorePassages(
-        query,
-        approved.map(
-          (source) =>
-            `Source: ${source.name}\nSection: ${source.title}\nPages: ${source.page}–${source.endPage}\n\n${source.content}`,
-        ),
-      );
-      signal?.throwIfAborted();
-      return readable(
-        approved.flatMap((source, index) =>
-          scores[index] >= retrievalLimits.minimumScore
-            ? [{ ...source, score: scores[index] }]
-            : [],
-        ),
-        (source) => source.documentId,
-      );
-    }, signal);
-    results.push(...filtered);
-    const accessible = await readable(results, (source) => source.documentId);
-    if (options?.recoverRoutes === false) {
-      if (accessible.length >= retrievalLimits.minimumUsefulResults) break;
-    } else if (
-      accessible.some(
-        (source) => source.score >= retrievalLimits.sufficientScore,
-      )
-    ) {
-      break;
-    } else if (accessible.length >= retrievalLimits.minimumUsefulResults) {
-      const evidence = accessible
-        .toSorted((a, b) => b.score - a.score || b.routeScore - a.routeScore)
-        .slice(0, maxResults);
-      const identity = evidence
-        .map((source) => `${source.documentId}:${source.passageId}`)
-        .join("|");
-      if (identity !== coverageChecked) {
-        coverageChecked = identity;
-        const score = await evidenceSlot(async () => {
-          signal?.throwIfAborted();
-          const approved = await readable(
-            evidence,
-            (source) => source.documentId,
-          );
-          if (!approved.length) return 0;
-          return jev.score(
-            query,
-            approved
-              .map(
-                (source) =>
-                  `Source: ${source.name}\nSection: ${source.title}\nPages: ${source.page}–${source.endPage}\n${source.content}`,
+      const routes = traversal.exhausted ? [] : await traversal.walk();
+      for (const route of routes) {
+        if (!route.node.value) continue;
+        const { step, sources } = route.node.value;
+        if (
+          step.stage === "document" &&
+          route.path.some((node) => node.id === "metadata-candidates")
+        ) {
+          const ancestors: Resource[] = [];
+          const seen = new Set<string>();
+          let parent = step.parentId;
+          while (parent && !seen.has(parent)) {
+            seen.add(parent);
+            const resource = byId.get(parent);
+            if (!resource || !(await canRead(resource.id))) break;
+            ancestors.unshift(resource);
+            parent = resource.parent_id;
+          }
+          for (const ancestor of ancestors)
+            if (
+              !trace.some(
+                (item) =>
+                  item.stage === "category" && item.resourceId === ancestor.id,
               )
-              .join("\n\n")
-              .slice(0, retrievalLimits.contextCharacters),
+            )
+              trace.push({
+                stage: "category",
+                label: ancestor.name,
+                resourceId: ancestor.id,
+                parentId: ancestor.parent_id,
+              });
+        }
+        trace.push({
+          ...step,
+          probability: route.probability,
+          routeScore: route.score,
+        });
+        for (const source of sources)
+          candidates.push({ ...source, routeScore: route.score });
+      }
+      const batch: typeof candidates = [];
+      while (
+        candidates.length &&
+        batch.length <
+          Math.min(retrievalLimits.evidenceBatchSize, maxPassages - scored)
+      ) {
+        const rounds = (source: (typeof candidates)[number]) =>
+          Math.floor(
+            (passageCounts.get(source.documentId) ?? 0) /
+              retrievalLimits.sectionsPerDocument,
           );
-        }, signal);
-        if (score >= retrievalLimits.sufficientScore) break;
+        candidates.sort(
+          (a, b) => rounds(a) - rounds(b) || b.routeScore - a.routeScore,
+        );
+        const source = candidates.shift()!;
+        batch.push(source);
+        passageCounts.set(
+          source.documentId,
+          (passageCounts.get(source.documentId) ?? 0) + 1,
+        );
+      }
+      const filtered = await evidenceSlot(async () => {
+        signal?.throwIfAborted();
+        const approved = await readable(batch, (source) => source.documentId);
+        if (!approved.length) return [];
+        scored += approved.length;
+        trace.push(
+          ...approved.map((source) => ({
+            stage: "passage" as const,
+            label: source.title,
+            resourceId: source.documentId,
+            nodeId: source.nodeId,
+            page: source.page,
+            routeScore: source.routeScore,
+          })),
+        );
+        const images: ClefImage[][] | undefined = visuals ? [] : undefined;
+        if (visuals)
+          for (const source of approved) {
+            const value = visualDocuments.get(source.documentId);
+            images!.push(
+              value
+                ? await visuals.passage(
+                    value.document,
+                    value.parsed,
+                    source.blockIds,
+                  )
+                : [],
+            );
+          }
+        const scorer = visuals
+          ? createJev(
+              connection,
+              async (input, init) => {
+                for (const id of new Set(
+                  approved.map((source) => source.documentId),
+                )) {
+                  const value = visualDocuments.get(id);
+                  if (value) await visuals.check(value.document);
+                  else if (!(await canRead(id)))
+                    throw new HttpError(404, "Document not found");
+                }
+                return fetcher(input, init);
+              },
+              signal,
+            )
+          : jev;
+        const scores = await scorer.scorePassages(
+          query,
+          approved.map(
+            (source) =>
+              `Source: ${source.name}\nSection: ${source.title}\nPages: ${source.page}–${source.endPage}\n\n${source.content}`,
+          ),
+          images,
+        );
+        signal?.throwIfAborted();
+        return readable(
+          approved.flatMap((source, index) =>
+            scores[index] >= retrievalLimits.minimumScore
+              ? [{ ...source, score: scores[index] }]
+              : [],
+          ),
+          (source) => source.documentId,
+        );
+      }, signal);
+      results.push(...filtered);
+      const accessible = await readable(results, (source) => source.documentId);
+      if (options?.recoverRoutes === false) {
+        if (accessible.length >= retrievalLimits.minimumUsefulResults) break;
+      } else if (
+        accessible.some(
+          (source) => source.score >= retrievalLimits.sufficientScore,
+        )
+      ) {
+        break;
+      } else if (accessible.length >= retrievalLimits.minimumUsefulResults) {
+        const evidence = accessible
+          .toSorted((a, b) => b.score - a.score || b.routeScore - a.routeScore)
+          .slice(0, maxResults);
+        const identity = evidence
+          .map((source) => `${source.documentId}:${source.passageId}`)
+          .join("|");
+        if (identity !== coverageChecked) {
+          coverageChecked = identity;
+          const score = await evidenceSlot(async () => {
+            signal?.throwIfAborted();
+            const approved = await readable(
+              evidence,
+              (source) => source.documentId,
+            );
+            if (!approved.length) return 0;
+            return jev.score(
+              query,
+              approved
+                .map(
+                  (source) =>
+                    `Source: ${source.name}\nSection: ${source.title}\nPages: ${source.page}–${source.endPage}\n${source.content}`,
+                )
+                .join("\n\n")
+                .slice(0, retrievalLimits.contextCharacters),
+            );
+          }, signal);
+          if (score >= retrievalLimits.sufficientScore) break;
+        }
       }
     }
-  }
-  const accessible = await readable(
-    [
-      ...results.map((source) => source.documentId),
-      ...trace.flatMap((step) => (step.resourceId ? [step.resourceId] : [])),
-    ],
-    (id) => id,
-  );
-  const allowed = new Set(accessible);
-  const ranked = results
-    .filter((source) => allowed.has(source.documentId))
-    .sort((a, b) => b.score - a.score || b.routeScore - a.routeScore);
-  const context: RetrievedSource[] = [];
-  let characters = 0;
-  for (const source of ranked) {
-    if (context.length >= maxResults) break;
-    if (characters + source.content.length > retrievalLimits.contextCharacters)
-      continue;
-    if (
-      context.some(
-        (existing) =>
-          existing.documentId === source.documentId &&
-          existing.nodeId === source.nodeId &&
-          existing.content.includes(source.content),
+    const accessible = await readable(
+      [
+        ...results.map((source) => source.documentId),
+        ...trace.flatMap((step) => (step.resourceId ? [step.resourceId] : [])),
+      ],
+      (id) => id,
+    );
+    const allowed = new Set(accessible);
+    const ranked = results
+      .filter((source) => allowed.has(source.documentId))
+      .sort((a, b) => b.score - a.score || b.routeScore - a.routeScore);
+    const context: RetrievedSource[] = [];
+    let characters = 0;
+    for (const source of ranked) {
+      if (context.length >= maxResults) break;
+      if (
+        characters + source.content.length >
+        retrievalLimits.contextCharacters
       )
-    )
-      continue;
-    context.push(source);
-    characters += source.content.length;
+        continue;
+      if (
+        context.some(
+          (existing) =>
+            existing.documentId === source.documentId &&
+            existing.nodeId === source.nodeId &&
+            existing.content.includes(source.content),
+        )
+      )
+        continue;
+      context.push(source);
+      characters += source.content.length;
+    }
+    return {
+      mode: "jev" as const,
+      results: context,
+      trace: trace.filter(
+        (step) => !step.resourceId || allowed.has(step.resourceId),
+      ),
+      limited:
+        traversal.limited ||
+        !traversal.exhausted ||
+        candidates.length > 0 ||
+        scored >= maxPassages,
+    };
+  } finally {
+    await visuals?.close();
   }
-  return {
-    mode: "jev" as const,
-    results: context,
-    trace: trace.filter(
-      (step) => !step.resourceId || allowed.has(step.resourceId),
-    ),
-    limited:
-      traversal.limited ||
-      !traversal.exhausted ||
-      candidates.length > 0 ||
-      scored >= maxPassages,
-  };
 }

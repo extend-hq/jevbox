@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { File, Virtualizer } from "@pierre/diffs/react";
 import { preloadHighlighter, type FileOptions } from "@pierre/diffs";
 import { useTheme } from "./theme";
 import { Loading } from "./common";
+import { ShapeTriangle } from "./icons";
+import { JSON_LANGUAGE, JSON_THEMES } from "@/lib/json-highlighting";
 import {
   createJsonFoldingModel,
   createVisibleJsonDocument,
   findJsonFoldRangeStartingOnLine,
   mapVisibleJsonLineToOriginal,
 } from "@/lib/json-folding";
+
+const FOLD_DISCLOSURE_ICON = renderToStaticMarkup(<ShapeTriangle size={10} />);
 
 export function JsonCodeViewer({ value }: { value: unknown }) {
   const { dark } = useTheme();
@@ -26,8 +31,8 @@ export function JsonCodeViewer({ value }: { value: unknown }) {
   useEffect(() => {
     let active = true;
     void preloadHighlighter({
-      themes: ["github-light", "github-dark"],
-      langs: ["json"],
+      themes: Object.values(JSON_THEMES),
+      langs: [JSON_LANGUAGE],
     })
       .then(() => {
         if (active) setReady(true);
@@ -54,12 +59,14 @@ export function JsonCodeViewer({ value }: { value: unknown }) {
   );
   const options = useMemo<FileOptions<undefined, undefined>>(
     () => ({
-      theme: { light: "github-light", dark: "github-dark" },
+      theme: JSON_THEMES,
       themeType: dark ? "dark" : "light",
       disableFileHeader: true,
       overflow: "wrap",
       unsafeCSS: `[data-column-number] { position: relative; padding-left: 22px; }
-      [data-json-fold] { position: absolute; left: 2px; top: 2px; width: 18px; height: 18px; border: 0; border-radius: 3px; background: transparent; color: inherit; cursor: pointer; }
+      [data-json-fold] { position: absolute; left: 2px; top: calc((var(--diffs-line-height, 20px) - 18px) / 2); display: grid; place-items: center; box-sizing: border-box; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: inherit; cursor: pointer; }
+      [data-json-fold] svg { display: block; width: 10px; height: 10px; transform: rotate(90deg); pointer-events: none; }
+      [data-json-fold][aria-expanded="true"] svg { transform: rotate(180deg); }
       [data-json-fold]:hover, [data-json-fold]:focus-visible { background: color-mix(in srgb, currentColor 12%, transparent); }
       [data-json-fold-summary] { opacity: .65; }`,
       onPostRender(host, _instance, phase) {
@@ -83,7 +90,7 @@ export function JsonCodeViewer({ value }: { value: unknown }) {
             button.type = "button";
             button.dataset.jsonFold = String(range.key);
             const expanded = !collapsed.has(range.key);
-            button.textContent = expanded ? "⌄" : "›";
+            button.innerHTML = FOLD_DISCLOSURE_ICON;
             button.setAttribute("aria-expanded", String(expanded));
             button.setAttribute(
               "aria-label",
@@ -111,7 +118,11 @@ export function JsonCodeViewer({ value }: { value: unknown }) {
     [dark, visible, model, collapsed, toggle],
   );
   const file = useMemo(
-    () => ({ name: "parsed.json", contents: visible.contents }),
+    () => ({
+      name: "parsed.json",
+      lang: JSON_LANGUAGE,
+      contents: visible.contents,
+    }),
     [visible.contents],
   );
   return (
