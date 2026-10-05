@@ -1,4 +1,5 @@
 import { BoxLoader } from "@/components/box-loader";
+import { FolderPinBadge } from "@/components/folder-pin-badge";
 import {
   IndexStatusControl,
   needsIndexAttention,
@@ -43,6 +44,7 @@ import {
   LayoutGrid,
   Search,
   LockFilled,
+  PinTack,
   X,
 } from "@/components/icons";
 ("use client");
@@ -150,6 +152,7 @@ export type FileSystemView =
   "icons" | "list" | "columns" | "gallery" | "spatial";
 export type FileSystemFolderItem = {
   kind: "folder";
+  pinned?: boolean;
   access?: Resource["access"];
   path: string;
   name?: string;
@@ -211,6 +214,8 @@ export type FileSystemProps = {
   onShare?: (item: FileSystemItem) => void;
   onShareItems?: (items: FileSystemItem[]) => void;
   canShare?: (item: FileSystemItem) => boolean;
+  onPin?: (item: FileSystemFolderItem, pinned: boolean) => void;
+  canPin?: (item: FileSystemFolderItem) => boolean;
   onDelete?: (item: FileSystemItem) => void;
   onDeleteItems?: (items: FileSystemItem[]) => void;
   onDownloadItems?: (items: FileSystemItem[]) => void;
@@ -1414,6 +1419,8 @@ export function FileSystem({
   onShare,
   onShareItems,
   canShare,
+  onPin,
+  canPin,
   onDelete,
   onDeleteItems,
   onDownloadItems,
@@ -2120,8 +2127,9 @@ export function FileSystem({
           >
             <ChevronRight className="size-4.5" />
           </button>
-          <span className="ml-1.5 truncate text-sm font-semibold">
-            {currentFolderName}
+          <span className="ml-1.5 flex min-w-0 items-center gap-1.5 text-sm font-semibold">
+            <span className="truncate">{currentFolderName}</span>
+            {index.folders.get(currentPath)?.pinned && <FolderPinBadge />}
           </span>
         </div>
         {headerLayout !== "full" || isBelowIpadWidth ? (
@@ -2422,6 +2430,20 @@ export function FileSystem({
               <Share2 /> Share
             </ContextMenuItem>
           )}
+          {contextEntry?.kind === "folder" && onPin && (
+            <ContextMenuItem
+              disabled={canPin && !canPin(contextEntry)}
+              onClick={() =>
+                onPin(
+                  contextEntry,
+                  !index.folders.get(contextEntry.path)?.pinned,
+                )
+              }
+            >
+              <PinTack />{" "}
+              {index.folders.get(contextEntry.path)?.pinned ? "Unpin" : "Pin"}
+            </ContextMenuItem>
+          )}
           {onOrganizeItems && (
             <>
               <ContextMenuSeparator className="my-1 h-px bg-border" />
@@ -2523,7 +2545,13 @@ export function FileSystem({
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{informationEntry?.name}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              {informationEntry?.name}
+              {informationEntry?.kind === "folder" &&
+                index.folders.get(informationEntry.path)?.pinned && (
+                  <FolderPinBadge />
+                )}
+            </DialogTitle>
           </DialogHeader>
           <div className="px-6 pb-6">
             {informationEntry && (
@@ -3975,15 +4003,18 @@ function FileSystemIconsView({
                   </span>
                   <span
                     className={cn(
-                      "max-w-full rounded-sm px-1.5 py-px text-center text-xs leading-tight break-words",
+                      "flex max-w-full items-center gap-1 rounded-sm px-1.5 py-px text-center text-xs leading-tight break-words",
                       isSelected
                         ? "bg-primary text-primary-foreground"
                         : "text-foreground",
                     )}
                   >
-                    <span className="block truncate" title={entry.name}>
+                    <span className="min-w-0 truncate" title={entry.name}>
                       {entry.name}
                     </span>
+                    {entry.kind === "folder" && entry.pinned && (
+                      <FolderPinBadge size={12} />
+                    )}
                   </span>
                 </button>
                 {entry.kind === "file" &&
@@ -4369,7 +4400,7 @@ function FileSystemPierreTree({
     },
   });
   const [statusHosts, setStatusHosts] = React.useState<
-    { file: FileEntry; host: HTMLSpanElement }[]
+    { item: FileSystemEntry; host: HTMLSpanElement }[]
   >([]);
   React.useEffect(() => {
     const container =
@@ -4389,7 +4420,7 @@ function FileSystemPierreTree({
     shadow.appendChild(layer);
     const hosts = new Map<
       HTMLElement,
-      { file: FileEntry; host: HTMLSpanElement }
+      { item: FileSystemEntry; host: HTMLSpanElement }
     >();
     const sync = () => {
       const rect = container.getBoundingClientRect();
@@ -4398,8 +4429,16 @@ function FileSystemPierreTree({
       for (const row of shadow.querySelectorAll<HTMLElement>(
         "button[data-type='item'][data-item-path]",
       )) {
-        const file = indexFiles.get(`${currentPath}${row.dataset.itemPath}`);
-        if (!file || !needsIndexAttention(file.metadata?.Index)) continue;
+        const path = `${currentPath}${row.dataset.itemPath}`;
+        const item =
+          indexFiles.get(path) ?? indexFolders.get(normalizeFolderPath(path));
+        if (
+          !item ||
+          !(item.kind === "folder"
+            ? item.pinned
+            : needsIndexAttention(item.metadata?.Index))
+        )
+          continue;
         const content = row.querySelector<HTMLElement>(
           "[data-item-section='content']",
         );
@@ -4414,15 +4453,24 @@ function FileSystemPierreTree({
             display: "flex",
           });
           layer.appendChild(host);
-          entry = { file, host };
+          host.dataset.entryPath = item.path;
+          entry = { item, host };
           hosts.set(row, entry);
           content.style.paddingRight = "24px";
           changed = true;
         }
         const bounds = content.getBoundingClientRect();
         const rowBounds = row.getBoundingClientRect();
-        entry.host.style.left = `${bounds.right - rect.left - 22}px`;
+        const label = content.firstElementChild?.getBoundingClientRect();
+        const right =
+          item.kind === "folder" && label
+            ? Math.min(label.right + 6, bounds.right - 22)
+            : bounds.right - 22;
+        entry.host.style.left = `${right - rect.left}px`;
         entry.host.style.top = `${rowBounds.top - rect.top + (rowBounds.height - 20) / 2}px`;
+        entry.host.style.color = getComputedStyle(row).color;
+        entry.host.style.alignItems = "center";
+        entry.host.style.height = "20px";
       }
       for (const [row, entry] of hosts)
         if (!rows.has(row)) {
@@ -4443,7 +4491,7 @@ function FileSystemPierreTree({
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["data-item-path"],
+      attributeFilter: ["data-item-path", "data-item-selected"],
     });
     const resize = new ResizeObserver(sync);
     resize.observe(container);
@@ -4461,7 +4509,7 @@ function FileSystemPierreTree({
       layer.remove();
       container.style.position = previousPosition;
     };
-  }, [currentPath, indexFiles, model, treeId]);
+  }, [currentPath, indexFiles, indexFolders, model, treeId]);
   React.useEffect(() => {
     const container =
       model.getFileTreeContainer() ?? document.getElementById(treeId);
@@ -4594,7 +4642,7 @@ function FileSystemPierreTree({
       expandedPaths = collectExpandedDirectories(previousPreparedInput.paths);
     }
     const searchValue = model.getSearchValue();
-    model.resetPaths(undefined as unknown as readonly string[], {
+    model.resetPaths({
       initialExpandedPaths: expandedPaths,
       preparedInput,
     });
@@ -4745,8 +4793,22 @@ function FileSystemPierreTree({
           } as React.CSSProperties
         }
       />
-      {statusHosts.map(({ file, host }) =>
-        createPortal(<FileIndexStatus file={file} />, host, file.path),
+      {statusHosts.map(({ item, host }) =>
+        createPortal(
+          item.kind === "file" ? (
+            <FileIndexStatus file={item} />
+          ) : (
+            <span
+              style={{ display: "flex" }}
+              onClick={(event) => onSelect(item, event)}
+              onDoubleClick={() => onOpen(item)}
+            >
+              <FolderPinBadge />
+            </span>
+          ),
+          host,
+          item.path,
+        ),
       )}
     </>
   );
@@ -5083,8 +5145,11 @@ const FileSystemColumn = React.memo(function FileSystemColumn({
                         )}
                       />
                     )}
-                    <span className="min-w-0 flex-1 truncate">
-                      {entry.name}
+                    <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                      <span className="min-w-0 truncate">{entry.name}</span>
+                      {entry.kind === "folder" && entry.pinned && (
+                        <FolderPinBadge />
+                      )}
                     </span>
                     {entry.kind === "folder" &&
                     folderHasChildren(index, entry) ? (
@@ -5217,8 +5282,9 @@ function FileSystemInformationSidebar({
               <FileSystemFolderGlyph className="h-8 w-auto shrink-0" />
             )}
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold break-words">
-                {entry.name}
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <span className="min-w-0 break-words">{entry.name}</span>
+                {entry.kind === "folder" && entry.pinned && <FolderPinBadge />}
               </div>
               <div className="text-xs text-muted-foreground">
                 {file ? fileKindLabel(file) : "Folder"}

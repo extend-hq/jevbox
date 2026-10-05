@@ -45,6 +45,48 @@
   --radius-lg: 9px;
   --radius-xl: 12px;
 }
+
+html[data-theme-sampling],
+html[data-theme-sampling] *,
+html[data-theme-sampling] *::before,
+html[data-theme-sampling] *::after {
+  transition: none !important;
+}
+
+html[data-theme-transition] [data-theme-lit],
+html[data-theme-transition][data-theme-lit] {
+  background-image: radial-gradient(
+    circle farthest-corner at var(--theme-sun-x) var(--theme-sun-y),
+    color-mix(
+        in srgb,
+        var(--theme-sunset-color) var(--theme-glow-near),
+        transparent
+      )
+      0%,
+    color-mix(
+        in srgb,
+        var(--theme-sunset-color) var(--theme-glow-middle),
+        transparent
+      )
+      45%,
+    color-mix(
+        in srgb,
+        var(--theme-sunset-color) var(--theme-glow-far),
+        transparent
+      )
+      100%
+  ) !important;
+  background-attachment: fixed !important;
+  background-repeat: no-repeat !important;
+  background-size: 100vw 100vh !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme-transition] [data-theme-lit],
+  html[data-theme-transition][data-theme-lit] {
+    background-image: none !important;
+  }
+}
 @theme {
   --color-blue-50: oklch(96.7% 0.015 266);
   --color-blue-100: oklch(93% 0.035 266.5);

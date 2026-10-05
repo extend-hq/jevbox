@@ -1,2 +1,12 @@
 patchedDependencies:
   metal-fx@2.0.11: patches/metal-fx@2.0.11.patch
+allowBuilds:
+  esbuild: true
+overrides:
+  '@pierre/trees>@pierre/theming': 1.0.1
+minimumReleaseAgeExclude:
+  - '@modelcontextprotocol/client@2.3.1'
+  - '@modelcontextprotocol/core@2.3.1'
+  - '@modelcontextprotocol/server@2.3.1'
+  - '@pierre/diffs@1.5.2'
+  - nodemailer@10.0.15

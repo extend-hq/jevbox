@@ -7,6 +7,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import { Maximize, Minus, Plus } from "./icons";
+import { FolderPinBadge } from "./folder-pin-badge";
 import {
   IndexStatusControl,
   needsIndexAttention,
@@ -35,6 +36,15 @@ import {
   smallThumbnailCandidates,
 } from "../lib/detail-thumbnail-queue";
 import type { SpatialThumbnail } from "../lib/spatial-thumbnail-renderer";
+import {
+  registerThemeSun,
+  subscribeThemeTransition,
+  themeProgressAt,
+  themeSunDirection,
+  themeSunset,
+  THEME_SKY_COLORS,
+  THEME_SUN_COLORS,
+} from "../lib/theme-transition";
 import "./library-spatial-view.css";
 
 type Entry = FileSystemEntry;
@@ -390,6 +400,7 @@ function labelTexture(
   title: string,
   subtitle: string | undefined,
   dark: boolean,
+  pinned = false,
 ) {
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d")!;
@@ -397,7 +408,8 @@ function labelTexture(
   const subtitleFont = `400 30px Inter, system-ui, sans-serif`;
   context.font = titleFont;
   const text = fitText(context, title, 760);
-  let width = context.measureText(text).width;
+  const titleWidth = context.measureText(text).width;
+  let width = titleWidth + (pinned ? 48 : 0);
   if (subtitle) {
     context.font = subtitleFont;
     width = Math.max(width, context.measureText(subtitle).width);
@@ -419,7 +431,7 @@ function labelTexture(
   context.fillStyle = dark ? "#eef0f6" : "#1c2233";
   context.fillText(
     text,
-    canvas.width / 2,
+    canvas.width / 2 - (pinned ? 24 : 0),
     subtitle ? 44 : canvas.height / 2 + 1,
   );
   if (subtitle) {
@@ -430,7 +442,12 @@ function labelTexture(
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
-  return { texture, aspect: canvas.width / canvas.height };
+  return {
+    texture,
+    aspect: canvas.width / canvas.height,
+    pinX: (titleWidth / 2 + 4) / canvas.height,
+    pinY: (canvas.height / 2 - 44) / canvas.height,
+  };
 }
 
 function roundedRectPath<T extends THREE.Path>(
@@ -534,11 +551,11 @@ export function LibrarySpatialView(props: Props) {
     total: number;
     loading: boolean;
   } | null>(null);
-  const themeTarget = useRef(
-    document.documentElement.classList.contains("dark"),
-  );
   const structure = props.items
-    .map((item) => `${item.kind}:${item.path}`)
+    .map(
+      (item) =>
+        `${item.kind}:${item.path}:${item.kind === "folder" && !!item.pinned}`,
+    )
     .join("\n");
   const nodes = useMemo(
     () => layoutSpatialTree(latest.current.items, props.scope),
@@ -550,23 +567,10 @@ export function LibrarySpatialView(props: Props) {
   );
 
   useEffect(() => {
-    themeTarget.current = document.documentElement.classList.contains("dark");
-    const observer = new MutationObserver(() => {
-      themeTarget.current = document.documentElement.classList.contains("dark");
-      handle.current?.invalidate();
-    });
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
     const container = host.current;
     if (!container) return;
     setPreviewBadges([]);
-    const dark = themeTarget.current;
+    const dark = themeProgressAt() >= 0.5;
     let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({
@@ -585,11 +589,7 @@ export function LibrarySpatialView(props: Props) {
     renderer.domElement.setAttribute("aria-hidden", "true");
     container.appendChild(renderer.domElement);
 
-    const palettes = {
-      day: { haze: "#d7e0e7", top: "#b3c4d2", bottom: "#eef0f2" },
-      dusk: { haze: "#bd9aa2", top: "#687da9", bottom: "#e5b593" },
-      night: { haze: "#080d17", top: "#101b2d", bottom: "#04070d" },
-    };
+    const palettes = THEME_SKY_COLORS;
     const palette = dark ? palettes.night : palettes.day;
     const skyColors = Object.fromEntries(
       Object.entries(palettes).map(([name, colors]) => [
@@ -601,9 +601,7 @@ export function LibrarySpatialView(props: Props) {
         },
       ]),
     );
-    let themeProgress = dark ? 1 : 0;
-    let themeTransition: { from: number; to: number; start: number } | null =
-      null;
+    let themeProgress = themeProgressAt();
     const themeNight = { value: themeProgress };
     const outlineTime = { value: 0 };
     const scene = new THREE.Scene();
@@ -692,6 +690,9 @@ export function LibrarySpatialView(props: Props) {
             top: { value: new THREE.Color(palette.top) },
             middle: { value: new THREE.Color(palette.haze) },
             bottom: { value: new THREE.Color(palette.bottom) },
+            sunDirection: { value: new THREE.Vector3() },
+            sunColor: { value: new THREE.Color(THEME_SUN_COLORS.dusk) },
+            sunset: { value: 0 },
           },
           vertexShader: /* glsl */ `
             varying vec3 vDirection;
@@ -703,12 +704,17 @@ export function LibrarySpatialView(props: Props) {
             uniform vec3 top;
             uniform vec3 middle;
             uniform vec3 bottom;
+            uniform vec3 sunDirection;
+            uniform vec3 sunColor;
+            uniform float sunset;
             varying vec3 vDirection;
             void main() {
               float h = vDirection.y;
               vec3 color = h > 0.0
                 ? mix(middle, top, smoothstep(0.0, 0.7, h))
                 : mix(middle, bottom, smoothstep(0.0, 0.7, -h));
+              float sunFacing = max(dot(normalize(vDirection), normalize(sunDirection)), 0.0);
+              color = mix(color, sunColor, pow(sunFacing, 6.0) * sunset * 0.35);
               gl_FragColor = vec4(color, 1.0);
               #include <colorspace_fragment>
             }`,
@@ -931,6 +937,7 @@ export function LibrarySpatialView(props: Props) {
       width: number;
       frame?: THREE.Mesh;
       label: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+      pinPosition: THREE.Vector3;
       /** The first page, on top of a static stack of the rest. */
       cover?: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
       sheets: THREE.Mesh[];
@@ -971,12 +978,15 @@ export function LibrarySpatialView(props: Props) {
       group.add(body);
       group.position.set(...node.position);
       group.userData.path = node.path;
+      const entry = itemsByPath.get(node.path);
+      const pinned = entry?.kind === "folder" && entry.pinned;
       const nameplate = labelTexture(
         node.name,
         node.kind === "file"
           ? undefined
           : `${node.descendants} ${node.descendants === 1 ? "document" : "documents"}`,
         false,
+        pinned,
       );
       const labelHeight =
         node.kind === "file" ? LABEL_HEIGHT : FOLDER_LABEL_HEIGHT;
@@ -998,12 +1008,18 @@ export function LibrarySpatialView(props: Props) {
               ? undefined
               : `${node.descendants} ${node.descendants === 1 ? "document" : "documents"}`,
             true,
+            pinned,
           ).texture,
         ),
       );
       group.add(label);
       pickables.push(label);
       const floater: Floater = {
+        pinPosition: new THREE.Vector3(
+          nameplate.pinX * labelHeight,
+          nameplate.pinY * labelHeight,
+          0.01,
+        ),
         node,
         group,
         body,
@@ -1995,9 +2011,10 @@ export function LibrarySpatialView(props: Props) {
     const attempted = new Set<string>();
     let activeLoads = 0;
     const textureLoader = new THREE.TextureLoader();
-    const reducedMotion = window.matchMedia(
+    const motionPreference = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
-    ).matches;
+    );
+    let reducedMotion = motionPreference.matches;
     const projected = new THREE.Vector3();
     const badgeCenter = new THREE.Vector3();
     const badgeTop = new THREE.Vector3();
@@ -2230,8 +2247,8 @@ export function LibrarySpatialView(props: Props) {
       skyLightNight = new THREE.Color("#c9d6e8");
     const groundDay = new THREE.Color("#c7cdd2"),
       groundNight = new THREE.Color("#7c8ba4");
-    const sunDay = new THREE.Color("#fff0d4"),
-      sunDusk = new THREE.Color("#ffb879");
+    const sunDay = new THREE.Color(THEME_SUN_COLORS.day),
+      sunDusk = new THREE.Color(THEME_SUN_COLORS.dusk);
     const lanternDay = new THREE.Color("#fff3df"),
       lanternNight = new THREE.Color("#bccfff");
     const paperDay = new THREE.Color("#fbfaf6"),
@@ -2414,25 +2431,11 @@ export function LibrarySpatialView(props: Props) {
       lastTime = now;
       const time = reducedMotion ? 0 : now / 1000;
       outlineTime.value = time;
-      const nextTheme = themeTarget.current ? 1 : 0;
-      if (nextTheme !== (themeTransition?.to ?? themeProgress))
-        themeTransition = { from: themeProgress, to: nextTheme, start: now };
-      if (themeTransition) {
-        const progress = reducedMotion
-          ? 1
-          : Math.min(1, (now - themeTransition.start) / 500);
-        const eased = progress * progress * (3 - 2 * progress);
-        themeProgress = THREE.MathUtils.lerp(
-          themeTransition.from,
-          themeTransition.to,
-          eased,
-        );
-        if (progress === 1) themeTransition = null;
-      }
+      themeProgress = themeProgressAt(now);
       if (appliedTheme !== themeProgress) {
         appliedTheme = themeProgress;
         themeNight.value = themeProgress;
-        const sunset = Math.sin(Math.PI * themeProgress) ** 2;
+        const sunset = themeSunset(themeProgress);
         const daylight =
           1 - THREE.MathUtils.smoothstep(themeProgress, 0.2, 0.85);
         const moonrise = THREE.MathUtils.smoothstep(themeProgress, 0.45, 1);
@@ -2458,7 +2461,10 @@ export function LibrarySpatialView(props: Props) {
         hemisphere.intensity = 1.6 + 0.1 * themeProgress;
         key.color.lerpColors(sunDay, sunDusk, sunset);
         key.intensity = 1.0 * daylight;
-        key.position.set(-0.8, 1.4 - 3.2 * themeProgress, 0.7);
+        key.position.set(...themeSunDirection(themeProgress));
+        sky.material.uniforms.sunDirection.value.copy(key.position);
+        sky.material.uniforms.sunColor.value.copy(key.color);
+        sky.material.uniforms.sunset.value = sunset;
         rim.intensity = 0.15 + moonrise * 1.35;
         rim.position.set(0.7, 1.7, 1.4);
         lantern.color.lerpColors(lanternDay, lanternNight, themeProgress);
@@ -2740,9 +2746,12 @@ export function LibrarySpatialView(props: Props) {
           element.style.visibility = "hidden";
           continue;
         }
-        const corner = floater.group
+        const pinned = floater.node.kind === "folder";
+        const corner = (pinned ? floater.label : floater.group)
           .localToWorld(
-            badgeCenter.set(floater.width / 2, -floater.height / 2, 0.01),
+            pinned
+              ? badgeCenter.copy(floater.pinPosition)
+              : badgeCenter.set(floater.width / 2, -floater.height / 2, 0.01),
           )
           .project(camera);
         const visible =
@@ -2752,7 +2761,19 @@ export function LibrarySpatialView(props: Props) {
           Math.abs(corner.x) < 1 &&
           Math.abs(corner.y) < 1;
         element.style.visibility = visible ? "visible" : "hidden";
-        element.style.transform = `translate(${(corner.x * 0.5 + 0.5) * width()}px, ${(-corner.y * 0.5 + 0.5) * height()}px) translate(-100%, -100%)`;
+        element.style.opacity = String(floater.opacity);
+        let pinScale = 1;
+        if (pinned) {
+          badgeTop.copy(floater.pinPosition);
+          badgeTop.y += (floater.label.geometry.parameters.height * 20) / 124;
+          const top = floater.label.localToWorld(badgeTop).project(camera);
+          pinScale =
+            Math.hypot(
+              (top.x - corner.x) * width(),
+              (top.y - corner.y) * height(),
+            ) / 20;
+        }
+        element.style.transform = `translate(${(corner.x * 0.5 + 0.5) * width()}px, ${(-corner.y * 0.5 + 0.5) * height()}px) translate(${pinned ? "-50%, -50%" : "-100%, -100%"}) scale(${pinScale})`;
       }
       if (activePreview) {
         for (const badge of activePreview.badges) {
@@ -3142,6 +3163,31 @@ export function LibrarySpatialView(props: Props) {
       invalidate();
       scheduleThumbnails();
     };
+    const sunView = new THREE.Vector3();
+    const unregisterSun = registerThemeSun((progress) => {
+      const rect = container.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+      camera.updateMatrixWorld();
+      sunView
+        .set(...themeSunDirection(progress))
+        .transformDirection(camera.matrixWorldInverse);
+      const depth = Math.max(0.15, -sunView.z);
+      const vertical =
+        depth * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+      const x = sunView.x / (vertical * camera.aspect);
+      const y = sunView.y / vertical;
+      const edge = Math.max(1, Math.abs(x), Math.abs(y));
+      return {
+        x: rect.left + ((x / edge) * 0.5 + 0.5) * rect.width,
+        y: rect.top + ((-y / edge) * 0.5 + 0.5) * rect.height,
+      };
+    });
+    const unsubscribeTheme = subscribeThemeTransition(invalidate);
+    const motionChanged = () => {
+      reducedMotion = motionPreference.matches;
+      invalidate();
+    };
+    motionPreference.addEventListener("change", motionChanged);
     const start = () => {
       flight = null;
       interacted = true;
@@ -3173,6 +3219,9 @@ export function LibrarySpatialView(props: Props) {
     invalidate();
     scheduleThumbnails();
     return () => {
+      unregisterSun();
+      unsubscribeTheme();
+      motionPreference.removeEventListener("change", motionChanged);
       disposed = true;
       handle.current = null;
       cancelAnimationFrame(frame);
@@ -3275,26 +3324,44 @@ export function LibrarySpatialView(props: Props) {
       >
         <div className="library-space-index-statuses">
           {props.items
-            .filter(
-              (item): item is FileSystemEntry & FileSystemFileItem =>
-                item.kind === "file" &&
-                needsIndexAttention(item.metadata?.Index),
+            .filter((item) =>
+              item.kind === "folder"
+                ? item.pinned
+                : needsIndexAttention(item.metadata?.Index),
             )
             .map((item) => (
               <span
                 key={item.path}
                 className="library-space-index-status"
+                data-entry-path={item.path}
+                style={
+                  item.kind === "folder"
+                    ? { display: "flex", alignItems: "center" }
+                    : undefined
+                }
+                onClick={
+                  item.kind === "folder"
+                    ? () => props.onSelect(item)
+                    : undefined
+                }
+                onDoubleClick={
+                  item.kind === "folder" ? () => props.onOpen(item) : undefined
+                }
                 ref={(element) => {
                   if (element) statusElements.current.set(item.path, element);
                   else statusElements.current.delete(item.path);
                   handle.current?.invalidate();
                 }}
               >
-                <IndexStatusControl
-                  status={item.metadata?.Index ?? ""}
-                  error={item.indexError}
-                  onRetry={item.onRetryIndex}
-                />
+                {item.kind === "folder" ? (
+                  <FolderPinBadge size={20} />
+                ) : (
+                  <IndexStatusControl
+                    status={item.metadata?.Index ?? ""}
+                    error={item.indexError}
+                    onRetry={item.onRetryIndex}
+                  />
+                )}
               </span>
             ))}
         </div>

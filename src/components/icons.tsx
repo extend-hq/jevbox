@@ -20,6 +20,32 @@ function icon(content: ReactNode) {
     );
   });
 }
+export const PinTack = icon(
+  <g
+    fill="none"
+    stroke="currentColor"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    strokeWidth="2"
+  >
+    <line x1="10" x2="10" y1="17" y2="13" />
+    <path d="m10,13h6c-.0526-.5187-.2012-1.346-.6667-2.25-.4304-.8359-.962-1.4079-1.3333-1.75v-3c0-1.6569-1.3431-3-3-3h-1s-1,0-1,0c-1.6569,0-3,1.3431-3,3v3c-.3713.3421-.903.9141-1.3333,1.75-.4655.904-.6141,1.7313-.6667,2.25h6Z" />
+  </g>,
+);
+export const PinTackFilled = icon(
+  <g
+    stroke="currentColor"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    strokeWidth="2"
+  >
+    <line fill="none" x1="10" x2="10" y1="17" y2="13" />
+    <path
+      fill="currentColor"
+      d="m10,13h6c-.0526-.5187-.2012-1.346-.6667-2.25-.4304-.8359-.962-1.4079-1.3333-1.75v-3c0-1.6569-1.3431-3-3-3h-1s-1,0-1,0c-1.6569,0-3,1.3431-3,3v3c-.3713.3421-.903.9141-1.3333,1.75-.4655.904-.6141,1.7313-.6667,2.25h6Z"
+    />
+  </g>,
+);
 export const Compose2 = icon(
   <>
     <path

@@ -1,10 +1,12 @@
 import {
   createContext,
   useContext,
-  useEffect,
+  useLayoutEffect,
   useState,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
+import { transitionTheme } from "@/lib/theme-transition";
 const ThemeContext = createContext({ dark: false, toggle: () => {} });
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [dark, setDark] = useState(() => {
@@ -13,7 +15,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       ? preference === "dark"
       : matchMedia("(prefers-color-scheme: dark)").matches;
   });
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
     document.documentElement.style.colorScheme = dark ? "dark" : "light";
   }, [dark]);
@@ -21,11 +23,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     <ThemeContext.Provider
       value={{
         dark,
-        toggle: () =>
-          setDark((current) => {
-            localStorage.setItem("jevbox-theme", current ? "light" : "dark");
-            return !current;
-          }),
+        toggle: () => {
+          const next = !dark;
+          localStorage.setItem("jevbox-theme", next ? "dark" : "light");
+          transitionTheme(next, () => flushSync(() => setDark(next)));
+        },
       }}
     >
       {children}

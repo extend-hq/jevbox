@@ -9,6 +9,7 @@ import { createRuns } from "./runs";
 import { createGitHubStars } from "./github-stars";
 import { apiScopes } from "../shared/api-access";
 import { createUploads } from "./uploads";
+import { requireUnpinnedFolders } from "./folder-pinning";
 import { uploadLimits } from "../shared/uploads";
 import { isAuthPage, loginRedirect } from "../shared/auth-navigation";
 import { oauthProviderAuthServerMetadata } from "@better-auth/oauth-provider";
@@ -790,6 +791,31 @@ export async function createApp(options: {
       };
     }),
   );
+  app.patch(
+    "/api/folders/:id/pin",
+    mutation(async (req) => {
+      const a = actor(req);
+      const folder = await requireResource(
+        store,
+        a,
+        id.parse(req.params.id),
+        "write",
+      );
+      if (folder.kind !== "folder")
+        throw new HttpError(400, "Only folders can be pinned");
+      const { pinned } = z
+        .object({ pinned: z.boolean() })
+        .strict()
+        .parse(req.body);
+      await store.run(
+        "UPDATE resources SET pinned=? WHERE id=?",
+        pinned,
+        folder.id,
+      );
+      await audit(a, pinned ? "folder.pin" : "folder.unpin", folder.id);
+      return { status: 200, body: { pinned } };
+    }),
+  );
   app.post(
     "/api/documents",
     uploads.multipart(authenticate),
@@ -876,6 +902,7 @@ export async function createApp(options: {
       );
       if (r.kind !== "document" || r.status !== "ready")
         throw new HttpError(409, "Wait for indexing before retrying filing.");
+      await requireUnpinnedFolders(store, r.org_id, [r.parent_id]);
       await store.run(
         "INSERT INTO document_filing(resource_id,scope_id,outcome) VALUES(?,?,?) ON CONFLICT(resource_id) DO UPDATE SET scope_id=excluded.scope_id,state='pending',is_review=false,outcome=excluded.outcome,error=NULL,attempt_id=NULL",
         r.id,
@@ -915,6 +942,11 @@ export async function createApp(options: {
           );
         documents.push(document);
       }
+      await requireUnpinnedFolders(
+        store,
+        a.orgId,
+        documents.map((document) => document.parent_id),
+      );
       if (!(await getSettings(store, a.orgId)).jevKey)
         throw new HttpError(
           409,

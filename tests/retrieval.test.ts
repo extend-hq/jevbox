@@ -33,6 +33,7 @@ function document(
     owner_id: "user",
     parent_id,
     kind: "document",
+    pinned: false,
     name: id,
     description: "",
     access: "restricted",

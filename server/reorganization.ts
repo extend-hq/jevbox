@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createJev } from "./jev";
 import { getSettings } from "./providers";
 import { retrieveDocuments } from "./retrieval";
+import { pinnedFolderIds } from "./folder-pinning";
 import {
   resourceAccessBatch,
   resourcePermissionsBatch,
@@ -105,7 +106,10 @@ export function createReorganization(
       "write",
       permissionCache,
     );
-    const folders = folderRows.filter((folder) => writable.has(folder.id));
+    const pinned = pinnedFolderIds(folderRows);
+    const folders = folderRows.filter(
+      (folder) => writable.has(folder.id) && !pinned.has(folder.id),
+    );
     function path(id: string | null): Resource[] | undefined {
       const nodes: Resource[] = [];
       const seen = new Set<string>();
@@ -160,6 +164,7 @@ export function createReorganization(
           current.parent_id !== folder.parent_id ||
           current.name !== folder.name ||
           current.description !== folder.description ||
+          current.pinned ||
           !allowed.has(folder.id)
         )
           throw new HttpError(409, "The affected folders changed.");
@@ -302,7 +307,8 @@ export function createReorganization(
               !current ||
               current.parent_id !== folder.parent_id ||
               current.name !== folder.name ||
-              current.description !== folder.description
+              current.description !== folder.description ||
+              current.pinned
             )
               return false;
           }

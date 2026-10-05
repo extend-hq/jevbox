@@ -561,6 +561,7 @@ export type Resource = {
   owner_id: string;
   parent_id: string | null;
   kind: "folder" | "document";
+  pinned: boolean;
   name: string;
   description: string;
   access: "restricted" | "organization" | "inherit" | "link";

@@ -34,7 +34,7 @@ Switch between visual browsing, a compact outline, folder columns, and full-page
 
 ## Run locally
 
-Requires Node 24.6+, pnpm 10.15.1, and a running Docker engine with Compose.
+Requires Node 24.6+, pnpm 12.9.1, and a running Docker engine with Compose.
 
 For the first run, from the repository root:
 

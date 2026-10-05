@@ -7,6 +7,7 @@ import { availableChatModels, generateAnswer } from "./ai";
 import { getSettings } from "./providers";
 import { flatten, type ParsedDocument } from "./indexing";
 import { createReorganization, enqueueReorganization } from "./reorganization";
+import { pinnedFolderIds, requireUnpinnedFolders } from "./folder-pinning";
 import {
   resourceAccessBatch,
   resourcePermissionsBatch,
@@ -17,7 +18,9 @@ import {
   HttpError,
 } from "./db";
 
-type Folder = Pick<Resource, "id" | "name" | "description" | "parent_id">;
+type Folder = Pick<Resource, "id" | "name" | "description" | "parent_id"> & {
+  pinned?: boolean;
+};
 type Branch = { name: string; description: string };
 type Trace = { parentId: string | null; probabilities: Record<string, number> };
 export type FilingPlan = {
@@ -65,6 +68,13 @@ export async function planFiling(options: {
     existing: Folder[],
   ) => Promise<string | undefined>;
 }): Promise<FilingPlan> {
+  const pinned = pinnedFolderIds(options.folders);
+  if (options.scopeId && pinned.has(options.scopeId))
+    throw new HttpError(
+      409,
+      "The filing folder is pinned. Unpin it to organize documents.",
+    );
+  const folders = options.folders.filter((folder) => !pinned.has(folder.id));
   const trace: Trace[] = [];
   let parentId = options.scopeId;
   type Candidate = {
@@ -94,7 +104,7 @@ export async function planFiling(options: {
   }
   function children(id: string | null) {
     return grouped(
-      options.folders
+      folders
         .filter((folder) => folder.parent_id === id)
         .map((folder) => ({
           id: folder.id,
@@ -113,7 +123,7 @@ export async function planFiling(options: {
     trace,
   });
   for (let depth = 0; depth < 32; depth++) {
-    const parent = options.folders.find((folder) => folder.id === parentId);
+    const parent = folders.find((folder) => folder.id === parentId);
     const choices = [
       ...candidates.map(({ id, text }) => ({ id, text })),
       ...(!group && parentId
@@ -145,7 +155,7 @@ export async function planFiling(options: {
     }
     if (winner === "here") return result("existing");
     if (winner === "none") {
-      const existing = options.folders.filter(
+      const existing = folders.filter(
         (folder) => folder.parent_id === parentId,
       );
       const proposed = await options.propose(parentId, existing);
@@ -192,7 +202,7 @@ export async function planFiling(options: {
       ]);
       trace.push({ parentId, probabilities: verification });
       const verified = Object.entries(verification).sort((a, b) => b[1] - a[1]);
-      const existingWinner = options.folders.find(
+      const existingWinner = folders.find(
         (folder) =>
           folder.id === verified[0][0] && folder.parent_id === parentId,
       );
@@ -317,6 +327,10 @@ export function createOrganization(
     const signal = AbortSignal.any([job.signal, AbortSignal.timeout(90000)]);
     async function check() {
       signal.throwIfAborted();
+      await requireUnpinnedFolders(store, actor.orgId, [
+        document.parent_id,
+        scopeId,
+      ]);
       const current = await store.one<Resource>(
         "SELECT * FROM resources WHERE id=? AND org_id=?",
         document.id,
@@ -378,8 +392,9 @@ export function createOrganization(
       "write",
       permissionCache,
     );
-    const folders: Folder[] = folderRows.filter((folder) =>
-      writable.has(folder.id),
+    const pinned = pinnedFolderIds(folderRows);
+    const folders: Folder[] = folderRows.filter(
+      (folder) => writable.has(folder.id) && !pinned.has(folder.id),
     );
     const eligible = new Set<string>();
     const isDescendant = (folder: Folder) => {
@@ -424,6 +439,7 @@ export function createOrganization(
           current.parent_id !== folder.parent_id ||
           current.name !== folder.name ||
           current.description !== folder.description ||
+          current.pinned ||
           !allowed.has(folder.id)
         )
           throw new HttpError(409, "Folders changed. Retry filing.");
@@ -555,6 +571,7 @@ export function createOrganization(
         return;
       }
       let parentId = plan.parentId;
+      await requireUnpinnedFolders(store, actor.orgId, [parentId]);
       if (
         parentId &&
         !(
@@ -590,6 +607,7 @@ export function createOrganization(
         );
         const existing = matching.find((sibling) => writable.has(sibling.id));
         if (existing) {
+          await requireUnpinnedFolders(store, actor.orgId, [existing.id]);
           parentId = existing.id;
           continue;
         }
@@ -608,6 +626,7 @@ export function createOrganization(
         created.push(id);
         parentId = id;
       }
+      await requireUnpinnedFolders(store, actor.orgId, [parentId]);
       await store.run(
         "UPDATE resources SET parent_id=? WHERE id=? AND org_id=?",
         parentId,

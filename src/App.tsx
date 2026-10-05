@@ -328,7 +328,7 @@ export default function App() {
   };
   const items: FileSystemItem[] = resources.map((r) =>
     r.kind === "folder"
-      ? { kind: "folder", path: pathFor(r), access: r.access }
+      ? { kind: "folder", path: pathFor(r), access: r.access, pinned: r.pinned }
       : {
           kind: "file",
           key: r.id,
@@ -1066,10 +1066,48 @@ export default function App() {
                           ?.canShare,
                       )
                     }
+                    canPin={(item) =>
+                      !action.busy &&
+                      Boolean(
+                        resources.find(
+                          (resource) => pathFor(resource) === item.path,
+                        )?.canWrite,
+                      )
+                    }
+                    onPin={(item, pinned) =>
+                      void action.run(async () => {
+                        const resource = resources.find(
+                          (resource) => pathFor(resource) === item.path,
+                        );
+                        if (!resource) return;
+                        await api(`/folders/${resource.id}/pin`, {
+                          method: "PATCH",
+                          body: JSON.stringify({ pinned }),
+                        });
+                        setResources((current) =>
+                          current.map((entry) =>
+                            entry.id === resource.id
+                              ? { ...entry, pinned }
+                              : entry,
+                          ),
+                        );
+                        await refresh();
+                      })
+                    }
                     canOrganize={(item) => {
                       const resource = resources.find(
                         (r) => pathFor(r) === item.path,
                       );
+                      let parentId = resource?.parent_id;
+                      const seen = new Set<string>();
+                      while (parentId && !seen.has(parentId)) {
+                        seen.add(parentId);
+                        const parent = folders.find(
+                          (folder) => folder.id === parentId,
+                        );
+                        if (parent?.pinned) return false;
+                        parentId = parent?.parent_id;
+                      }
                       return Boolean(
                         !action.busy &&
                         me.semanticEnabled &&

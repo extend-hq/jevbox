@@ -65,6 +65,7 @@ export function createLinkSharingRouter(
       name: resource.name,
       description: resource.description,
       kind: resource.kind,
+      pinned: resource.pinned,
       mime: resource.mime,
       size: resource.size,
       created: resource.created,
