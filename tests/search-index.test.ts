@@ -322,3 +322,47 @@ test("several partial matches do not stop exploration before complete evidence",
     ),
   );
 });
+
+test("indexing keeps all source blocks and geometry independent of section markdown", () => {
+  const block = {
+    id: "b1",
+    type: "table",
+    content: "Cell content",
+    metadata: { page: { number: 2, width: 1000, height: 2000 } },
+    boundingBox: { left: 100, top: 400, right: 500, bottom: 1000 },
+  };
+  const parsed = buildIndex(
+    [
+      { content: "# Heading\nCombined output", blocks: [block] },
+      {
+        content: "Continued output",
+        blocks: [
+          block,
+          {
+            id: "b2",
+            type: "figure",
+            content: "",
+            metadata: { page: { number: 3, width: 100, height: 200 } },
+            polygon: [
+              { x: 10, y: 20 },
+              { x: 40, y: 20 },
+              { x: 40, y: 60 },
+              { x: 10, y: 60 },
+            ],
+          },
+        ],
+      },
+    ],
+    "extend",
+    { pages: [{ number: 2, rotationApplied: 90 }] },
+  );
+  assert.equal(parsed.pages, 3);
+  assert.equal(parsed.blocks.length, 2);
+  assert.equal(parsed.blocks[0].rotationApplied, 90);
+  assert.deepEqual(parsed.blocks[1].boundingBox, {
+    left: 10,
+    top: 20,
+    right: 40,
+    bottom: 60,
+  });
+});
