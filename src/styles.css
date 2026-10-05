@@ -6490,7 +6490,6 @@ details[open] > .triangle-summary .disclosure-triangle {
 }
 .storage-meter-track {
   height: 16px;
-  padding: 2px;
   overflow: hidden;
   border-radius: 999px;
   background: var(--input);
@@ -6498,8 +6497,8 @@ details[open] > .triangle-summary .disclosure-triangle {
 }
 .storage-meter-fill {
   height: 100%;
-  border: 1px solid;
-  border-radius: 999px;
+  border-radius: inherit;
+  box-shadow: none;
   transition: width 200ms ease;
 }
 .storage-breakdown {
