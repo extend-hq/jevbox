@@ -380,6 +380,7 @@ export async function createApp(options: {
       },
       organization: organizations.find(({ id }) => id === a.orgId),
       role: a.role,
+      isOwner: authentication.isOwner(current.user.id),
       organizations,
       chatEnabled: availableChatModels(settings).length > 0,
       chatModels: availableChatModels(settings),
@@ -1409,7 +1410,12 @@ export async function createApp(options: {
       req.headers.accept?.includes("text/html");
     if (!pageRequest) return next();
     try {
-      await authenticate(req);
+      const current = await authenticate(req);
+      if (
+        /^\/settings\/users(?:\/|$)/.test(req.path) &&
+        !authentication.isOwner(current.userId)
+      )
+        throw new HttpError(403, "Deployment owner access required");
     } catch (error) {
       if (error instanceof HttpError && error.status === 401)
         return res.redirect(302, loginRedirect(url));

@@ -131,3 +131,7 @@ Email/password sign-in uses Better Auth and requires email verification. Local i
 ## Contributing
 
 We are not planning to take PRs on this repo, it is more to serve as a starting point/template for a system you can fork and make your own. We encourage you to deploy it in your own infra. If you see a bug or issue though, we would greatly appreciate you filing it on the Issues. Thank you!
+
+## License
+
+Jevbox's original code is licensed under the [MIT License](LICENSE). Third-party code and assets retain their respective licenses. The Nucleo icon artwork is excluded from MIT and remains governed by the [Nucleo license notice](licenses/nucleo.txt). See [third-party notices](docs/third-party.md) for details.

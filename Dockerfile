@@ -16,6 +16,7 @@ COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/server ./server
 COPY --from=build --chown=node:node /app/shared ./shared
 COPY --from=build --chown=node:node /app/package.json ./package.json
+COPY --from=build --chown=node:node /app/LICENSE ./LICENSE
 COPY --from=build --chown=node:node /app/licenses ./licenses
 COPY --from=build --chown=node:node /app/infra/render/start-app.sh ./infra/render/start-app.sh
 RUN node node_modules/playwright/cli.js install --with-deps --only-shell chromium && chmod -R a+rX /opt/playwright && rm -rf /var/lib/apt/lists/*

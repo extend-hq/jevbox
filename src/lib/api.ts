@@ -116,6 +116,7 @@ export type Me = {
     name: string;
   };
   role: string;
+  isOwner: boolean;
   organizations: {
     id: string;
     name: string;

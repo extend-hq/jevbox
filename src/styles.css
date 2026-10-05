@@ -1124,6 +1124,59 @@ label textarea {
   max-width: 800px;
   margin: auto;
 }
+.admin-users-search,
+.admin-users-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.admin-users-count {
+  margin-top: 24px;
+}
+.admin-users-list {
+  list-style: none;
+  padding: 0;
+}
+.admin-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 18px 0;
+  border-bottom: var(--hairline) solid var(--border);
+}
+.admin-user-row .person-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-basis: 220px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.admin-user-row .person-identity span {
+  color: var(--muted-foreground);
+  font-size: var(--type-caption);
+  white-space: normal;
+}
+.admin-user-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.admin-user-details time {
+  color: var(--muted-foreground);
+  font-size: var(--type-caption);
+}
+.admin-users-pagination {
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.admin-users-pagination > span {
+  flex: 1;
+  white-space: nowrap;
+}
 .api-keys-heading,
 .api-key-row,
 .api-key-actions,

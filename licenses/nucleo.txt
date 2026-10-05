@@ -1,6 +1,10 @@
 Copyright © Nucleo
 
+Version 1.3, January 3, 2024
+
 Nucleo Icons
+
+https://nucleoapp.com/
 
 - Redistribution of icons is prohibited.
 - Icons are restricted for use only within the product they are bundled with.
@@ -9,7 +13,7 @@ Nucleo Micro Bold icons are licensed commercial assets from Nucleo (https://nucl
 The application includes 98 unique icon designs obtained from the owner's licensed local collection. Export aliases and inline SVG sprites reuse these designs.
 These assets remain governed by the Nucleo license:
 https://nucleoapp.com/license
-They are not relicensed under the licenses of other source code in this repository.
+The repository's root MIT License does not apply to this icon artwork.
 
 Included unique icon definitions (outline and filled designs counted separately):
 BranchOut

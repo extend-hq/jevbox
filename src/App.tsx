@@ -1,4 +1,5 @@
 import { StorageSettings } from "./components/storage-settings";
+import { AdminUsersView } from "./components/admin-users";
 import { Database } from "./components/icons";
 import { toastManager } from "./components/coss/toast";
 import { authClient } from "./lib/auth-client";
@@ -521,15 +522,17 @@ export default function App() {
             { label: "Settings", href: paths.settings() },
             {
               label:
-                settingsSection === "storage"
-                  ? "Storage"
-                  : settingsSection === "mcp"
-                    ? "MCP"
-                    : settingsSection === "api-keys"
-                      ? "API keys"
-                      : settingsSection === "connections"
-                        ? "Connections"
-                        : "Members",
+                settingsSection === "users"
+                  ? "All users"
+                  : settingsSection === "storage"
+                    ? "Storage"
+                    : settingsSection === "mcp"
+                      ? "MCP"
+                      : settingsSection === "api-keys"
+                        ? "API keys"
+                        : settingsSection === "connections"
+                          ? "Connections"
+                          : "Members",
               href: paths.settings(settingsSection),
             },
           ]
@@ -793,6 +796,9 @@ export default function App() {
                 { id: "storage", title: "Storage", icon: Database },
                 { id: "api-keys", title: "API keys", icon: UserKey },
                 { id: "mcp", title: "MCP", icon: McpIcon },
+                ...(me.isOwner
+                  ? [{ id: "users", title: "All users", icon: Users }]
+                  : []),
               ]
             : [
                 { id: "library", title: "Library", icon: Library },
@@ -908,7 +914,18 @@ export default function App() {
             />
           ) : page === "settings" ? (
             <ScrollArea scrollFade>
-              {settingsSection === "storage" ? (
+              {settingsSection === "users" ? (
+                me.isOwner ? (
+                  <AdminUsersView key={me.user.id} />
+                ) : (
+                  <div className="settings-page">
+                    <header className="settings-heading">
+                      <h1>Access restricted</h1>
+                      <p>This page is available to the deployment owner.</p>
+                    </header>
+                  </div>
+                )
+              ) : settingsSection === "storage" ? (
                 <StorageSettings key={me.organization.id} />
               ) : settingsSection === "api-keys" ? (
                 <ApiKeysView key={me.user.id} me={me} />

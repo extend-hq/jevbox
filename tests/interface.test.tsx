@@ -92,6 +92,7 @@ const { ChatThinking } = await import("../src/components/loading-state");
 const { RetrievalTree } = await import("../src/components/retrieval-tree");
 const { FileSystem } = await import("../src/components/extend/file-system");
 const { Sharing } = await import("../src/components/sharing");
+const { AdminUsersView } = await import("../src/components/admin-users");
 const { ToastProvider } = await import("../src/components/coss/toast");
 const { ParsedBlocks } = await import("../src/components/parsed-blocks");
 const { FinderDropZone } = await import("../src/components/finder-drop-zone");
@@ -133,6 +134,72 @@ async function click(element: Element | null | undefined) {
     ),
   );
 }
+test("owner user directory paginates and resets pagination when searching", async () => {
+  const requests: URL[] = [];
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input), location.origin);
+    requests.push(url);
+    const offset = Number(url.searchParams.get("offset"));
+    const searching = url.searchParams.has("searchValue");
+    return Response.json({
+      total: searching ? 0 : 51,
+      users: searching
+        ? []
+        : Array.from({ length: offset ? 1 : 50 }, (_, index) => ({
+            id: String(offset + index),
+            name: `User ${offset + index}`,
+            email: `user${offset + index}@local.test`,
+            emailVerified: index % 2 === 0,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          })),
+    });
+  };
+  await act(async () => root.render(<AdminUsersView />));
+  assert.equal(host.querySelectorAll(".admin-user-row").length, 50);
+  assert.match(host.textContent!, /51 users/);
+  assert.match(host.textContent!, /Unverified/);
+  assert.ok(button("Previous")?.disabled);
+  await click(button("Next"));
+  assert.equal(requests.at(-1)?.searchParams.get("offset"), "50");
+  assert.equal(host.querySelectorAll(".admin-user-row").length, 1);
+  assert.match(host.textContent!, /51–51 of 51/);
+  assert.ok(button("Next")?.disabled);
+  const input = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(
+      dom.window.HTMLInputElement.prototype,
+      "value",
+    )!.set!.call(input, "  ABSENT  ");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => host.querySelector("form")!.requestSubmit());
+  assert.equal(requests.at(-1)?.searchParams.get("offset"), "0");
+  assert.equal(requests.at(-1)?.searchParams.get("searchValue"), "absent");
+  assert.equal(requests.at(-1)?.searchParams.get("searchField"), "email");
+  assert.match(host.textContent!, /No users match this email/);
+  assert.ok(
+    requests.every((url) => url.pathname === "/api/auth/admin/list-users"),
+  );
+});
+
+test("owner user directory shows request errors and can retry", async () => {
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    attempts++;
+    return attempts === 1
+      ? Response.json({ message: "Unable to load users." }, { status: 500 })
+      : Response.json({ users: [], total: 0 });
+  };
+  await act(async () => root.render(<AdminUsersView />));
+  assert.equal(
+    host.querySelector('[role="alert"]')?.textContent,
+    "Unable to load users.",
+  );
+  await click(button("Try again"));
+  assert.match(host.textContent!, /No users to show/);
+  assert.equal(host.querySelector('[role="alert"]'), null);
+});
+
 test("search excerpts render complete Markdown and sanitized tables with independent navigation", async () => {
   const source = {
     documentId: "doc",

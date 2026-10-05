@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { betterAuth } from "better-auth";
-import { bearer, organization } from "better-auth/plugins";
+import { admin, bearer, organization } from "better-auth/plugins";
 import { getOAuthProviderApi } from "@better-auth/oauth-provider";
 import { adminAc, memberAc } from "better-auth/plugins/organization/access";
 import { apiKey } from "@better-auth/api-key";
@@ -35,6 +35,9 @@ export function createAuthentication(
     sendAuthEmail?: SendAuthEmail;
   },
 ) {
+  const ownerUserId = process.env.OWNER_USER_ID?.trim();
+  const isOwner = (userId: string) =>
+    Boolean(ownerUserId && userId === ownerUserId);
   const localDevelopment =
     process.env.AUTH_LOCAL_DEVELOPMENT === "true" &&
     ["localhost", "127.0.0.1", "[::1]"].includes(
@@ -99,6 +102,15 @@ export function createAuthentication(
     ],
     plugins: [
       bearer(),
+      admin({
+        adminUserIds: ownerUserId ? [ownerUserId] : [],
+        schema: {
+          user: {
+            fields: { banReason: "ban_reason", banExpires: "ban_expires" },
+          },
+          session: { fields: { impersonatedBy: "impersonated_by" } },
+        },
+      }),
       organization({
         allowUserToCreateOrganization: false,
         disableOrganizationDeletion: true,
@@ -321,6 +333,15 @@ export function createAuthentication(
       maxPasswordLength: 128,
       requireEmailVerification: true,
       autoSignIn: false,
+      customSyntheticUser: ({ coreFields, additionalFields, id }) => ({
+        ...coreFields,
+        role: "user",
+        banned: false,
+        banReason: null,
+        banExpires: null,
+        ...additionalFields,
+        id,
+      }),
       revokeSessionsOnPasswordReset: true,
       resetPasswordTokenExpiresIn: 3600,
       password: {
@@ -364,6 +385,21 @@ export function createAuthentication(
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path.startsWith("/admin/")) {
+          const session = await getSessionFromCtx(ctx, {
+            disableCookieCache: true,
+          });
+          if (!session)
+            throw new APIError("UNAUTHORIZED", { message: "Please sign in" });
+          if (!session.user.emailVerified || !isOwner(session.user.id))
+            throw new APIError("FORBIDDEN", {
+              message: "Deployment owner access required",
+            });
+          if (ctx.path !== "/admin/list-users")
+            throw new APIError("FORBIDDEN", {
+              message: "User administration is read-only",
+            });
+        }
         if (
           ctx.path === "/oauth2/register" &&
           ctx.body?.application_type === undefined &&
@@ -750,5 +786,5 @@ export function createAuthentication(
       plugin.options as Parameters<typeof getOAuthProviderApi>[1],
     ).requireActiveAccessToken(token);
   }
-  return { auth, validateOAuthToken };
+  return { auth, validateOAuthToken, isOwner };
 }

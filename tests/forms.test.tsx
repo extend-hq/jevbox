@@ -397,6 +397,7 @@ const me: Me = {
   user: { id: "member", name: "Member", email: "member@example.test" },
   organization: { id: "org", name: "Organization" },
   role: "admin",
+  isOwner: false,
   organizations: [],
   chatEnabled: true,
   chatModels: [],

@@ -36,6 +36,14 @@ Required runtime settings:
 
 Generate secrets with `openssl rand -hex 32`. Store them in your cloud secret manager or Kubernetes Secret, not Git or image build arguments. Provider keys are configured afterward through the application. The image runs as UID/GID 1000; its scratch directory must be writable by that user. PostgreSQL and SpiceDB are required; startup fails when either is unavailable.
 
+## Owner user directory
+
+Set the optional `OWNER_USER_ID` environment variable to your existing Better Auth user ID and restart the web service. In Render, add it under the web service's Environment settings. While signed in, open `/api/me` and copy `user.id` to get your account's ID.
+
+The configured account sees **Settings → All users** at `/settings/users`, with email search, pagination, verification status, and signup dates across all organizations. Access requires a verified session for that exact account. Organization admin roles do not grant access. Leaving the variable unset disables the directory for everyone.
+
+The directory uses Better Auth's Admin plugin. Its user-list endpoint is restricted to the configured owner, and all other admin operations are rejected, including role changes, deletion, and impersonation. The database migration adds the plugin's user and session fields automatically on startup.
+
 ## Request and upload limits
 
 The defaults support concurrent users on one web instance. Authenticated browser, REST, and MCP requests share per-user buckets across tabs and credentials. Anonymous requests and native authentication endpoints use trusted client IPs. These admission ceilings do not change Render service sizes or background-worker concurrency.
