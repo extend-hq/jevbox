@@ -6,21 +6,15 @@ A full stack, permission-aware document library. Browse with Extend UI Finder, i
 
 [Render setup requirements](docs/deployment.md#render): prepare the shared environment group, private S3 bucket, and SMTP credentials before deploying.
 
-## See it in action
-
-### Chat, with the evidence beside you
+### Self organizing drive & search through folder trees in chat
 
 Ask questions across your library, follow inline citations, and preview the original source without leaving the conversation.
 
+<img width="1866" height="1288" alt="jevbox" src="https://github.com/user-attachments/assets/97f8a22b-7736-46b3-8a96-82fb69d9aab5" />
+
+
 ![Jevbox chat with cited answers, attached documents, and an original-source preview](docs/screenshots/chat.png)
 
-### A Finder in three dimensions
-
-Explore folders and documents in a spatial library, then move closer to reveal their structure.
-
-![Jevbox's 3D Finder displaying a spatial library of documents in dark mode](docs/screenshots/finder-3d.png)
-
-### Your library, your view
 
 Switch between visual browsing, a compact outline, folder columns, and full-page previews.
 
