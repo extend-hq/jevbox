@@ -6,7 +6,11 @@ import { FileText, Folder, IndexTreeIcon, ShapeTriangle } from "./icons";
 import { blockStyle } from "./block-type-badge";
 import { ResourceThumbnail } from "./resource-thumbnail";
 import { OutlineTree } from "./outline-tree";
-import { retrievalNodeId, retrievalOutline } from "../lib/retrieval-outline";
+import {
+  retrievalNodeId,
+  retrievalOutline,
+  type RetrievalSource,
+} from "../lib/retrieval-outline";
 
 function SectionIcon({ step }: { step: RetrievalStep }) {
   const type =
@@ -32,6 +36,7 @@ function formatLatency(durationMs: number | undefined) {
 
 export function RetrievalTree({
   trace,
+  sources,
   retrievalDurationMs,
   activeDocumentId,
   activeNodeId,
@@ -40,6 +45,7 @@ export function RetrievalTree({
   defaultOpen = false,
 }: {
   trace: RetrievalStep[];
+  sources?: readonly RetrievalSource[];
   retrievalDurationMs?: number;
   activeDocumentId?: string;
   activeNodeId?: string;
@@ -49,7 +55,10 @@ export function RetrievalTree({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const latency = formatLatency(retrievalDurationMs);
-  const nodes = useMemo(() => retrievalOutline(trace), [trace]);
+  const nodes = useMemo(
+    () => retrievalOutline(trace, sources),
+    [trace, sources],
+  );
   const documents = trace.filter((step) => step.stage === "document");
   const selectedIndex = trace.findIndex(
     (step) =>
@@ -103,9 +112,11 @@ export function RetrievalTree({
             selected={selected}
             label="Retrieval path"
             className="retrieval-tree"
-            rowClassName={() => "retrieval-node"}
-            accessibleLabel={({ step }) =>
-              step.page ? `${step.label}, page ${step.page}` : step.label
+            rowClassName={({ filteredOut }) =>
+              `retrieval-node${filteredOut ? " retrieval-node-filtered" : ""}`
+            }
+            accessibleLabel={({ step, filteredOut }) =>
+              `${step.label}${step.page ? `, page ${step.page}` : ""}${filteredOut ? ", not included in sources" : ""}`
             }
             canSelect={({ step }) =>
               (step.stage === "document" || step.stage === "section") &&

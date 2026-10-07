@@ -5347,6 +5347,10 @@ label textarea {
   flex-shrink: 0;
   color: var(--muted-foreground);
 }
+.retrieval-node-filtered {
+  opacity: 0.5;
+  filter: grayscale(1);
+}
 .retrieval-node > svg[data-tone],
 .index-node-icon[data-tone] {
   color: var(--block-badge-foreground, var(--muted-foreground));

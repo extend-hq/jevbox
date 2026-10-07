@@ -507,6 +507,7 @@ export function ChatView({
   const action = useAction();
   const [preview, setPreview] = useState<{
     source: Source;
+    sources: Source[];
     trace: NonNullable<Message["trace"]>;
     retrievalDurationMs?: number;
     focusRequest?: number;
@@ -520,6 +521,7 @@ export function ChatView({
     nodeId?: string,
     onlyIfOpen = false,
     retrievalDurationMs?: number,
+    sources: Source[] = [],
   ) => {
     if (onlyIfOpen && !preview) return;
     if (
@@ -547,6 +549,7 @@ export function ChatView({
         page: section?.page ?? 1,
       },
       trace,
+      sources,
       retrievalDurationMs,
     });
     setPreviewTab("index");
@@ -1266,6 +1269,7 @@ export function ChatView({
                                         onSourcePreview={(source) => {
                                           setPreview({
                                             source,
+                                            sources: message.sources ?? [],
                                             focusPage: source.page,
                                             trace: message.trace ?? [],
                                             retrievalDurationMs:
@@ -1305,6 +1309,8 @@ export function ChatView({
                                               onPreview={(source) => {
                                                 setPreview({
                                                   source,
+                                                  sources:
+                                                    message.sources ?? [],
                                                   focusPage: source.page,
                                                   trace: message.trace ?? [],
                                                   retrievalDurationMs:
@@ -1322,6 +1328,7 @@ export function ChatView({
                                         {message.trace?.length ? (
                                           <RetrievalTree
                                             trace={message.trace}
+                                            sources={message.sources ?? []}
                                             retrievalDurationMs={
                                               message.retrievalDurationMs
                                             }
@@ -1338,6 +1345,7 @@ export function ChatView({
                                                 nodeId,
                                                 false,
                                                 message.retrievalDurationMs,
+                                                message.sources ?? [],
                                               )
                                             }
                                             onPreview={(documentId, nodeId) =>
@@ -1347,6 +1355,7 @@ export function ChatView({
                                                 nodeId,
                                                 true,
                                                 message.retrievalDurationMs,
+                                                message.sources ?? [],
                                               )
                                             }
                                           />
@@ -1669,6 +1678,7 @@ export function ChatView({
             <div className="source-preview-retrieval">
               <RetrievalTree
                 trace={preview.trace}
+                sources={preview.sources}
                 retrievalDurationMs={preview.retrievalDurationMs}
                 activeDocumentId={preview.source.documentId}
                 activeNodeId={preview.source.nodeId}
@@ -1680,6 +1690,7 @@ export function ChatView({
                     nodeId,
                     false,
                     preview.retrievalDurationMs,
+                    preview.sources,
                   )
                 }
                 onPreview={(documentId, nodeId) =>
@@ -1689,6 +1700,7 @@ export function ChatView({
                     nodeId,
                     true,
                     preview.retrievalDurationMs,
+                    preview.sources,
                   )
                 }
               />

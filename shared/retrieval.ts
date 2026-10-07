@@ -4,6 +4,7 @@ export type RetrievalStep = {
   resourceId?: string;
   parentId?: string | null;
   nodeId?: string;
+  passageId?: string;
   parentNodeId?: string;
   blockType?: string;
   page?: number;

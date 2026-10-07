@@ -541,6 +541,7 @@ export async function retrieveDocuments(
             label: source.title,
             resourceId: source.documentId,
             nodeId: source.nodeId,
+            passageId: source.passageId,
             page: source.page,
             routeScore: source.routeScore,
           })),

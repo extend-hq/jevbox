@@ -5,6 +5,14 @@ export type RetrievalTreeNode = {
   title: string;
   step: RetrievalStep;
   children: RetrievalTreeNode[];
+  filteredOut: boolean;
+};
+
+export type RetrievalSource = {
+  documentId: string;
+  nodeId: string;
+  passageId?: string;
+  page: number;
 };
 
 export function retrievalNodeId(step: RetrievalStep, index: number) {
@@ -22,12 +30,21 @@ export function retrievalNodeId(step: RetrievalStep, index: number) {
   ]);
 }
 
-export function retrievalOutline(trace: RetrievalStep[]) {
+export function retrievalOutline(
+  trace: RetrievalStep[],
+  sources?: readonly RetrievalSource[],
+) {
   const nodes = new Map<string, RetrievalTreeNode>();
   trace.forEach((step, index) => {
     const id = retrievalNodeId(step, index);
     if (!nodes.has(id))
-      nodes.set(id, { id, title: step.label, step, children: [] });
+      nodes.set(id, {
+        id,
+        title: step.label,
+        step,
+        children: [],
+        filteredOut: sources !== undefined,
+      });
   });
   const categories = new Map<string, RetrievalTreeNode>();
   const documents = new Map<string, RetrievalTreeNode>();
@@ -61,6 +78,50 @@ export function retrievalOutline(trace: RetrievalStep[]) {
       parent.children.push(node);
       parents.set(node.id, parent);
     } else roots.push(node);
+  }
+  if (sources) {
+    const includedDocuments = new Set(
+      sources.map((source) => source.documentId),
+    );
+    const includedSections = new Set(
+      sources.map((source) =>
+        JSON.stringify([source.documentId, source.nodeId]),
+      ),
+    );
+    const includedPassages = new Set(
+      sources.map((source) =>
+        JSON.stringify([source.documentId, source.passageId]),
+      ),
+    );
+    const includedPages = new Set(
+      sources.map((source) =>
+        JSON.stringify([source.documentId, source.nodeId, source.page]),
+      ),
+    );
+    for (const node of nodes.values()) {
+      const { step } = node;
+      const included =
+        step.stage === "document"
+          ? includedDocuments.has(step.resourceId ?? "")
+          : step.stage === "section"
+            ? includedSections.has(
+                JSON.stringify([step.resourceId, step.nodeId]),
+              )
+            : step.stage === "passage" &&
+              (step.passageId
+                ? includedPassages.has(
+                    JSON.stringify([step.resourceId, step.passageId]),
+                  )
+                : includedPages.has(
+                    JSON.stringify([step.resourceId, step.nodeId, step.page]),
+                  ));
+      if (!included) continue;
+      let current: RetrievalTreeNode | undefined = node;
+      while (current?.filteredOut) {
+        current.filteredOut = false;
+        current = parents.get(current.id);
+      }
+    }
   }
   return roots;
 }
