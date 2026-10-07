@@ -5,6 +5,7 @@ import { ProviderResponseError } from "./provider-http";
 import { createJev, filingMenuSize } from "./jev";
 import { getDecisionConnection } from "./decision-provider";
 import { clefFilingImages } from "./clef-images";
+import { openaiDecisionLimits } from "./openai-decisions";
 import { availableChatModels, generateAnswer } from "./ai";
 import { getSettings } from "./providers";
 import { flatten, type ParsedDocument } from "./indexing";
@@ -248,11 +249,15 @@ export async function planFiling(options: {
   return result("depth_limit");
 }
 
-function documentState(document: Resource, parsed: ParsedDocument) {
+function documentState(
+  document: Resource,
+  parsed: ParsedDocument,
+  expanded = false,
+) {
   const passages = flatten(parsed.nodes).flatMap((node) =>
     (node.passages ?? []).map((passage) => ({ node, passage })),
   );
-  const count = Math.min(12, passages.length);
+  const count = Math.min(expanded ? 96 : 12, passages.length);
   const samples = Array.from(
     { length: count },
     (_, i) =>
@@ -260,26 +265,67 @@ function documentState(document: Resource, parsed: ParsedDocument) {
         Math.round((i * (passages.length - 1)) / Math.max(1, count - 1))
       ],
   );
-  return {
+  const state = {
     name: document.name,
     outline: flatten(parsed.nodes)
       .map((node) => node.title)
       .join("; ")
-      .slice(0, 1200),
+      .slice(0, expanded ? 24000 : 1200),
     passages: samples.map(({ node, passage }) => ({
       title: node.title.slice(0, 120),
       page: passage.page,
-      text: passage.content.slice(0, 900),
+      text: passage.content.slice(0, expanded ? 4000 : 900),
     })),
+    ...(expanded
+      ? {
+          totalPassages: passages.length,
+          sampledPassages: samples.length,
+          coverage:
+            "Passages and page images may be sampled or shortened. Do not infer absence from omitted content.",
+        }
+      : {}),
   };
+  if (expanded) {
+    const budget =
+      openaiDecisionLimits.inputTokens -
+      openaiDecisionLimits.filingImages * openaiDecisionLimits.imageTokens -
+      64_000;
+    const original = state.passages.map((passage) => passage.text);
+    let low = 0,
+      high = 4000;
+    let length = high;
+    while (low <= high) {
+      const next = Math.floor((low + high) / 2);
+      state.passages.forEach((passage, index) => {
+        passage.text = original[index].slice(0, next);
+      });
+      if (Buffer.byteLength(JSON.stringify(state), "utf8") <= budget) {
+        length = next;
+        low = next + 1;
+      } else {
+        high = next - 1;
+      }
+    }
+    state.passages.forEach((passage, index) => {
+      passage.text = original[index].slice(0, length);
+    });
+  }
+  return state;
 }
 
 export function createOrganization(
   store: Store,
   fetcher: typeof fetch = fetch,
 ) {
-  const reorganization = createReorganization(store, fetcher, (document) =>
-    documentState(document, JSON.parse(document.parsed!)),
+  const reorganization = createReorganization(
+    store,
+    fetcher,
+    (document, connection) =>
+      documentState(
+        document,
+        JSON.parse(document.parsed!),
+        connection.provider === "openai",
+      ),
   );
   async function file(
     document: Resource,
@@ -428,10 +474,22 @@ export function createOrganization(
     for (const folder of folders)
       if (isDescendant(folder) || folder.id === scopeId)
         eligible.add(folder.id);
-    const state = documentState(document, JSON.parse(document.parsed!));
+    const state = documentState(
+      document,
+      JSON.parse(document.parsed!),
+      decisionConnection.provider === "openai",
+    );
     const images =
-      decisionConnection.provider === "cloudflare"
-        ? await clefFilingImages(store, actor, document, signal)
+      decisionConnection.provider !== "typesafe"
+        ? await clefFilingImages(
+            store,
+            actor,
+            document,
+            signal,
+            decisionConnection.provider === "openai"
+              ? openaiDecisionLimits.filingImages
+              : undefined,
+          )
         : [];
     const jev = createJev(decisionConnection, fetcher, signal);
     async function checkFolders() {

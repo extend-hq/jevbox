@@ -271,8 +271,8 @@ export async function retrieveDocuments(
   }
   const eligible = new Set(docs.map((doc) => doc.id));
   const documentNodes = new Map<string, RouteNode<Value>>();
-  const clef =
-    typeof connection !== "string" && connection.provider === "cloudflare";
+  const multimodal =
+    typeof connection !== "string" && connection.provider !== "typesafe";
   const visualDocuments = new Map<
     string,
     { document: Resource; parsed: ParsedDocument }
@@ -306,7 +306,7 @@ export async function retrieveDocuments(
           let parsed = withSearchPassages(
             JSON.parse(current.parsed) as ParsedDocument,
           );
-          if (clef) {
+          if (multimodal) {
             parsed = withClefVisualPassages(parsed);
             visualDocuments.set(current.id, { document: current, parsed });
           }
@@ -460,7 +460,9 @@ export async function retrieveDocuments(
   const passageCounts = new Map<string, number>();
   let scored = 0;
   let coverageChecked = "";
-  const visuals = clef ? createClefImages(store, actor, signal) : undefined;
+  const visuals = multimodal
+    ? createClefImages(store, actor, signal)
+    : undefined;
   try {
     while (
       (!traversal.exhausted || candidates.length) &&

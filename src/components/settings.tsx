@@ -1,6 +1,7 @@
 import { authClient, authData, organizationMembers } from "@/lib/auth-client";
 import { MessageSquareOutline } from "./icons";
 import { ChatProviderSetup, type ProviderDraft } from "./chat-provider-setup";
+import { OpenAIKeyField } from "./openai-key-field";
 import { notifySuccess } from "@/lib/notifications";
 import { ProviderLogo } from "./provider-logo";
 import { PersonAvatar } from "./person-avatar";
@@ -34,6 +35,7 @@ import type {
   CloudflareModel,
   DecisionProvider,
 } from "../../shared/decision-model";
+import { openaiDecisionModel } from "../../shared/decision-model";
 import { Choice, Loading, useAction } from "./common";
 export function SettingsView({
   me,
@@ -65,7 +67,9 @@ export function SettingsView({
   const decisionConfigured = Boolean(
     decisionProvider === "typesafe"
       ? settings?.configured.jevKey
-      : settings?.configured.cloudflareKey && settings?.cloudflareAccountId,
+      : decisionProvider === "openai"
+        ? settings?.configured.openaiKey
+        : settings?.configured.cloudflareKey && settings?.cloudflareAccountId,
   );
   const refresh = async () => {
     const m = await organizationMembers(me.organization.id);
@@ -88,7 +92,11 @@ export function SettingsView({
       setRemovedProviders([]);
       setProviderDrafts(
         providerCatalog
-          .filter((item) => s.providers?.[item.id]?.configured)
+          .filter(
+            (item) =>
+              s.providers?.[item.id]?.configured &&
+              (item.id !== "openai" || s.providers[item.id].chatConfigured),
+          )
           .map((item) => ({
             id: item.id,
             provider: item.id,
@@ -103,6 +111,25 @@ export function SettingsView({
       );
     }
   };
+  const openaiKeyField = (name: string) => (
+    <OpenAIKeyField
+      name={name}
+      value={keys.openaiKey}
+      configured={
+        Boolean(settings?.configured.openaiKey) &&
+        !(removedProviders.includes("openai") && decisionProvider !== "openai")
+      }
+      onChange={(value) => {
+        setSaved(false);
+        setKeys((current) => {
+          const next = { ...current };
+          if (value === undefined) delete next.openaiKey;
+          else next.openaiKey = value;
+          return next;
+        });
+      }}
+    />
+  );
   useEffect(() => {
     void action.run(refresh);
   }, []);
@@ -220,7 +247,8 @@ export function SettingsView({
                         providerEnabled: draft.enabled,
                         model: draft.model,
                         models: parseModelList(draft.models),
-                        ...(draft.key !== undefined
+                        ...(draft.provider !== "openai" &&
+                        draft.key !== undefined
                           ? { providerKey: draft.key }
                           : {}),
                         ...(draft.config.trim()
@@ -286,7 +314,11 @@ export function SettingsView({
                 <Tabs
                   value={decisionProvider}
                   onValueChange={(value) => {
-                    if (value === "typesafe" || value === "cloudflare") {
+                    if (
+                      value === "typesafe" ||
+                      value === "cloudflare" ||
+                      value === "openai"
+                    ) {
                       setDecisionProvider(value);
                       setSaved(false);
                     }
@@ -304,6 +336,10 @@ export function SettingsView({
                     <TabsTab value="cloudflare" type="button">
                       <ProviderLogo provider="cloudflare" size={16} />
                       Cloudflare
+                    </TabsTab>
+                    <TabsTab value="openai" type="button">
+                      <ProviderLogo provider="openai" size={16} />
+                      OpenAI
                     </TabsTab>
                   </TabsList>
                   <TabsPanel value="typesafe" className="space-y-4 pt-3">
@@ -374,10 +410,21 @@ export function SettingsView({
                       .
                     </p>
                   </TabsPanel>
+                  <TabsPanel value="openai" className="space-y-4 pt-3">
+                    {openaiKeyField("decision-openai-key")}
+                    <Field name="openaiDecisionModel">
+                      <FieldLabel>Model</FieldLabel>
+                      <Input type="text" value={openaiDecisionModel} readOnly />
+                      <FieldDescription>
+                        OpenAI Decisions evaluates text and images for search
+                        and filing.
+                      </FieldDescription>
+                    </Field>
+                  </TabsPanel>
                 </Tabs>
                 <p className="field-note">
                   Save to use this provider for search, evidence scoring, and
-                  automatic filing across your organization. Both providers’
+                  automatic filing across your organization. Providers’
                   credentials are kept when you switch.
                 </p>
               </div>
@@ -407,6 +454,11 @@ export function SettingsView({
                         settings.providers?.[draft.provider]?.hasConfig,
                       )}
                       busy={action.busy}
+                      apiKeyField={
+                        draft.provider === "openai"
+                          ? openaiKeyField(`${draft.id}-openai-key`)
+                          : undefined
+                      }
                       onChange={(patch) => {
                         setSaved(false);
                         setProviderDrafts((items) =>

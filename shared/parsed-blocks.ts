@@ -1,6 +1,7 @@
 export type ParsedBlock = {
   id: string;
   type: string;
+  figureType?: string;
   content: string;
   page: number;
   rotationApplied?: number;

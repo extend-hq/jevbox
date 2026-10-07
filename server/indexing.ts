@@ -200,6 +200,18 @@ const chunkSchema = z
             id: z.string().optional(),
             type: z.string(),
             content: z.string().default(""),
+            details: z
+              .object({
+                figureType: z
+                  .string()
+                  .trim()
+                  .min(1)
+                  .max(100)
+                  .nullish()
+                  .catch(undefined),
+              })
+              .nullish()
+              .catch(undefined),
             boundingBox: boundingBoxSchema.nullish().catch(undefined),
             polygon: z
               .array(
@@ -276,6 +288,9 @@ export function buildIndex(
         id,
         type: b.type,
         content: b.content,
+        ...(b.type === "figure" && b.details?.figureType
+          ? { figureType: b.details.figureType }
+          : {}),
         page: b.metadata?.page?.number ?? page,
         ...(b.metadata?.page?.width && b.metadata.page.height
           ? {

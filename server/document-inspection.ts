@@ -174,9 +174,11 @@ export async function inspectDocument(
           type: block.type,
           figureType:
             block.type === "figure"
-              ? (block.content.match(
+              ? (block.figureType ??
+                block.content.match(
                   /<figure\b[^>]*\btype=["']([^"']+)["']/i,
-                )?.[1] ?? null)
+                )?.[1] ??
+                null)
               : null,
           extractedContent: block.content.slice(0, 1200),
           contentTruncated: block.content.length > 1200,

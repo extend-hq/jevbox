@@ -40,7 +40,7 @@ function sample<T>(items: T[], count: number) {
   );
 }
 
-function filingPages(parsed: ParsedDocument) {
+function filingPages(parsed: ParsedDocument, imageLimit: number) {
   const pages = Array.from({ length: parsed.pages }, (_, i) => i + 1);
   const visual = [
     ...new Set(
@@ -52,13 +52,13 @@ function filingPages(parsed: ParsedDocument) {
   return [
     ...new Set([
       1,
-      ...sample(visual, 2),
+      ...sample(visual, Math.max(2, Math.floor(imageLimit / 2))),
       parsed.pages,
-      ...sample(pages, clefImageLimit),
+      ...sample(pages, imageLimit),
     ]),
   ]
     .filter((page) => pages.includes(page))
-    .slice(0, clefImageLimit)
+    .slice(0, imageLimit)
     .sort((a, b) => a - b);
 }
 
@@ -111,6 +111,7 @@ export function createClefImages(
   actor: Actor,
   signal: AbortSignal = new AbortController().signal,
   renderer = createThumbnailRenderer(),
+  filingImageLimit: number = clefImageLimit,
 ) {
   type Page = { body: Buffer; rotation?: number };
   const pages = new Map<string, Promise<Page>>();
@@ -172,7 +173,7 @@ export function createClefImages(
         } catch {
           await check(document);
           throw new ProviderResponseError(
-            "Unable to render visual evidence for Clef. Retry the operation.",
+            "Unable to render visual evidence. Retry the operation.",
           );
         }
         await check(document);
@@ -258,11 +259,11 @@ export function createClefImages(
     } catch {
       await check(document);
       throw new ProviderResponseError(
-        "Unable to prepare visual evidence for Clef. Retry the operation.",
+        "Unable to prepare visual evidence. Retry the operation.",
       );
     }
     throw new ProviderResponseError(
-      "Visual evidence exceeds Clef's image limit. Retry with a smaller document.",
+      "Visual evidence exceeds the image preparation limit. Retry with a smaller document.",
     );
   }
 
@@ -279,7 +280,7 @@ export function createClefImages(
       const parsed = JSON.parse(document.parsed) as ParsedDocument;
       const selected = document.mime.startsWith("image/")
         ? [1]
-        : filingPages(parsed);
+        : filingPages(parsed, filingImageLimit);
       const result = [];
       for (const page of selected) result.push(await image(document, page));
       await check(document);
@@ -321,8 +322,9 @@ export async function clefFilingImages(
   actor: Actor,
   document: Resource,
   signal: AbortSignal,
+  imageLimit: number = clefImageLimit,
 ) {
-  const images = createClefImages(store, actor, signal);
+  const images = createClefImages(store, actor, signal, undefined, imageLimit);
   try {
     return await images.filing(document);
   } finally {

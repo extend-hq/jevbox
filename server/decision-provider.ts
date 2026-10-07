@@ -2,6 +2,7 @@ import type {
   CloudflareModel,
   DecisionProvider,
 } from "../shared/decision-model";
+import { openaiDecisionModel } from "../shared/decision-model";
 
 export type DecisionSettings = {
   decisionProvider?: DecisionProvider;
@@ -9,10 +10,12 @@ export type DecisionSettings = {
   cloudflareAccountId?: string;
   cloudflareKey?: string;
   cloudflareModel?: CloudflareModel;
+  credentials?: Record<string, { apiKey?: string }>;
 };
 
 export type DecisionConnection =
   | { provider: "typesafe"; key: string }
+  | { provider: "openai"; key: string; model: typeof openaiDecisionModel }
   | {
       provider: "cloudflare";
       key: string;
@@ -23,6 +26,12 @@ export type DecisionConnection =
 export function getDecisionConnection(
   settings: DecisionSettings,
 ): DecisionConnection | undefined {
+  if (settings.decisionProvider === "openai") {
+    const key = settings.credentials?.openai?.apiKey?.trim();
+    return key
+      ? { provider: "openai", key, model: openaiDecisionModel }
+      : undefined;
+  }
   if (settings.decisionProvider === "cloudflare") {
     const key = settings.cloudflareKey?.trim();
     const accountId = settings.cloudflareAccountId?.trim();

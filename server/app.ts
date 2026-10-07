@@ -420,6 +420,7 @@ export async function createApp(options: {
         extendKey: Boolean(s.extendKey),
         jevKey: Boolean(s.jevKey),
         cloudflareKey: Boolean(s.cloudflareKey),
+        openaiKey: Boolean(s.credentials?.openai?.apiKey),
       },
       providers: Object.fromEntries(
         Object.entries(s.credentials ?? {}).map(([key, value]) => [
@@ -431,6 +432,11 @@ export async function createApp(options: {
             models: value.models ?? [],
             hasConfig: Boolean(
               value.config && Object.keys(value.config).length,
+            ),
+            chatConfigured: Boolean(
+              value.model ||
+              value.models?.length ||
+              (s.provider === key && s.model && value.enabled !== false),
             ),
           },
         ]),
@@ -490,6 +496,7 @@ export async function createApp(options: {
       const common = {
         extendKey: z.string().max(1000).optional(),
         jevKey: z.string().max(1000).optional(),
+        openaiKey: z.string().max(10000).optional(),
         decisionProvider: z.enum(decisionProviders).optional(),
         cloudflareKey: z.string().max(1000).optional(),
         cloudflareAccountId: z
@@ -615,7 +622,16 @@ export async function createApp(options: {
               400,
               "A provider cannot be saved and removed together.",
             );
-          delete s.credentials[provider];
+          if (provider === "openai" && s.decisionProvider === "openai") {
+            const credential = s.credentials.openai;
+            if (credential) {
+              credential.model = "";
+              credential.models = [];
+              credential.enabled = false;
+            }
+          } else {
+            delete s.credentials[provider];
+          }
         }
       }
       for (const setup of setups) {
@@ -628,6 +644,18 @@ export async function createApp(options: {
           credential.apiKey = setup.providerKey.trim();
         if (setup.providerConfig !== undefined)
           credential.config = setup.providerConfig;
+      }
+      if (input.openaiKey !== undefined) {
+        const chatKey = setups.find(
+          (setup) => setup.provider === "openai",
+        )?.providerKey;
+        if (chatKey !== undefined && chatKey.trim() !== input.openaiKey.trim())
+          throw new HttpError(
+            400,
+            "OpenAI chat and decisions share one API key. Enter the same key in both fields.",
+          );
+        (s.credentials.openai ??= { enabled: false }).apiKey =
+          input.openaiKey.trim();
       }
       if (!("chatProviders" in input)) {
         s.provider = input.provider;

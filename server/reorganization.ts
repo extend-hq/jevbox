@@ -1,8 +1,12 @@
 import { queues, type BackgroundJob } from "./jobs";
 import { randomUUID } from "node:crypto";
 import { createJev } from "./jev";
-import { getDecisionConnection } from "./decision-provider";
+import {
+  getDecisionConnection,
+  type DecisionConnection,
+} from "./decision-provider";
 import { clefFilingImages } from "./clef-images";
+import { openaiDecisionLimits } from "./openai-decisions";
 import { getSettings } from "./providers";
 import { retrieveDocuments } from "./retrieval";
 import { pinnedFolderIds } from "./folder-pinning";
@@ -66,7 +70,7 @@ export async function enqueueReorganization(
 export function createReorganization(
   store: Store,
   fetcher: typeof fetch,
-  evidence: (document: Resource) => unknown,
+  evidence: (document: Resource, connection: DecisionConnection) => unknown,
 ) {
   async function review(event: Review, attemptId: string, job: BackgroundJob) {
     const settings = await getSettings(store, event.org_id);
@@ -319,16 +323,24 @@ export function createReorganization(
         }
         if (await check()) {
           const images =
-            decisionConnection.provider === "cloudflare"
-              ? await clefFilingImages(store, actor, document, signal)
+            decisionConnection.provider !== "typesafe"
+              ? await clefFilingImages(
+                  store,
+                  actor,
+                  document,
+                  signal,
+                  decisionConnection.provider === "openai"
+                    ? openaiDecisionLimits.filingImages
+                    : undefined,
+                )
               : [];
-          if (decisionConnection.provider === "cloudflare" && !(await check()))
+          if (decisionConnection.provider !== "typesafe" && !(await check()))
             continue;
           const describe = (nodes: Resource[]) =>
             nodes.map(({ name, description }) => ({ name, description }));
           const probabilities = await jev.decide(
             {
-              document: evidence(document),
+              document: evidence(document, decisionConnection),
               current: describe(currentPath),
               uploadAffectedPaths: targets.map(describe),
             },

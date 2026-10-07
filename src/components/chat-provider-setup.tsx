@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import { providerCatalog } from "../../shared/providers";
 import {
   validateLength,
@@ -34,6 +34,7 @@ export function ChatProviderSetup({
   busy,
   onChange,
   onRemove,
+  apiKeyField,
 }: {
   draft: ProviderDraft;
   usedProviders: string[];
@@ -42,6 +43,7 @@ export function ChatProviderSetup({
   busy: boolean;
   onChange: (patch: Partial<ProviderDraft>) => void;
   onRemove: () => void;
+  apiKeyField?: ReactNode;
 }) {
   const advanced = useRef<HTMLDetailsElement>(null);
   const provider = providerCatalog.find((item) => item.id === draft.provider)!;
@@ -133,43 +135,47 @@ export function ChatProviderSetup({
         />
         <FieldError />
       </Field>
-      <Field
-        name={name("key")}
-        validate={(value) => validateLength(value, 10000)}
-      >
-        <FieldLabel>API key</FieldLabel>
-        <Input
+      {apiKeyField ?? (
+        <Field
           name={name("key")}
-          type="password"
-          autoComplete="off"
-          maxLength={10000}
-          value={draft.key ?? ""}
-          placeholder={
-            configured
-              ? "Configured · leave blank to keep"
-              : "Paste your API key"
-          }
-          onChange={(event) =>
-            onChange({ key: event.target.value || undefined })
-          }
-        />
-        <FieldError />
-        {configured && (
-          <Button
-            variant="ghost"
-            size="xs"
-            className="justify-self-start"
-            onClick={() => onChange({ key: draft.key === "" ? undefined : "" })}
-          >
-            {draft.key === "" ? "Keep saved key" : "Clear saved key on save"}
-          </Button>
-        )}
-        {draft.key === "" && (
-          <FieldDescription>
-            The saved key will be removed when you save.
-          </FieldDescription>
-        )}
-      </Field>
+          validate={(value) => validateLength(value, 10000)}
+        >
+          <FieldLabel>API key</FieldLabel>
+          <Input
+            name={name("key")}
+            type="password"
+            autoComplete="off"
+            maxLength={10000}
+            value={draft.key ?? ""}
+            placeholder={
+              configured
+                ? "Configured · leave blank to keep"
+                : "Paste your API key"
+            }
+            onChange={(event) =>
+              onChange({ key: event.target.value || undefined })
+            }
+          />
+          <FieldError />
+          {configured && (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="justify-self-start"
+              onClick={() =>
+                onChange({ key: draft.key === "" ? undefined : "" })
+              }
+            >
+              {draft.key === "" ? "Keep saved key" : "Clear saved key on save"}
+            </Button>
+          )}
+          {draft.key === "" && (
+            <FieldDescription>
+              The saved key will be removed when you save.
+            </FieldDescription>
+          )}
+        </Field>
+      )}
       <details
         ref={advanced}
         className="advanced-config"
