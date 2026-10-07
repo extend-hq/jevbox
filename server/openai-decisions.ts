@@ -276,6 +276,7 @@ export async function evaluateOpenAIDecisions(
         },
         body: requestBody(prepare(sourceState, entries), images),
       },
+      { retryTransientErrors: true },
     );
     const parsed = z
       .object({ answers: z.array(answerSchema) })

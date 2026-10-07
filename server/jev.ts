@@ -169,15 +169,20 @@ export function createJev(
     const answers: Record<string, unknown> = {};
     for (const request of requests) {
       signal?.throwIfAborted();
-      const response = await jsonRequest(fetcher, url, {
-        signal,
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${config.key}`,
-          "Content-Type": "application/json",
+      const response = await jsonRequest(
+        fetcher,
+        url,
+        {
+          signal,
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${config.key}`,
+            "Content-Type": "application/json",
+          },
+          body: request.body,
         },
-        body: request.body,
-      });
+        { retryTransientErrors: true },
+      );
       const parsed = cloudflare
         ? z
             .object({ success: z.literal(true), result: answerSchema })
