@@ -105,7 +105,7 @@
     "media-chrome": "^4.19.3",
     "metal-fx": "2.0.11",
     "multer": "^2.0.2",
-    "nodemailer": "10.0.15",
+    "nodemailer": "10.1.4",
     "papaparse": "^5.7.0",
     "pdf-lib": "^1.17.1",
     "pg": "^8.23.1",
