@@ -425,8 +425,8 @@ importers:
         specifier: ^2.0.2
         version: 2.4.0
       nodemailer:
-        specifier: 10.0.15
-        version: 10.0.15
+        specifier: 10.1.4
+        version: 10.1.4
       papaparse:
         specifier: ^5.7.0
         version: 5.7.0
@@ -3249,8 +3249,8 @@ packages:
     resolution: {integrity: sha512-kQK9LGGFiHtrWiNhZtA7Qbw17AQz+dmsEKODRIVTXA9+e5MS/2gZEBhYJt13GrAz5/IOZKddH/0Z3TP/Zgo+yw==}
     engines: {node: '>=18'}
 
-  nodemailer@10.0.15:
-    resolution: {integrity: sha512-EUqp5PhtcsYXs9Fq/lS7s/8zlTrnBqmzZWzFFROrNikMiz+om/YRKMwqN907t+0A1KKyT8jd39CBUbFZmaZmcA==}
+  nodemailer@10.1.4:
+    resolution: {integrity: sha512-EsMnOR2oRv4LGnWvHgcVYkkQ4O2j8KO4WTw6l+PHR4sOXo8SAgIraxtEnGDmotjbhv0hDsu3IuDIFZm8iXwO4A==}
     engines: {node: '>=20.0.0'}
 
   non-error@0.1.0:
@@ -6784,7 +6784,7 @@ snapshots:
 
   node-releases@2.0.57: {}
 
-  nodemailer@10.0.15: {}
+  nodemailer@10.1.4: {}
 
   non-error@0.1.0: {}
 
