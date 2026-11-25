@@ -125,7 +125,7 @@
     "three": "^0.186.1",
     "tsx": "^4.20.5",
     "undici": "^8.12.2",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.3.1",
